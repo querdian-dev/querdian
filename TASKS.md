@@ -212,7 +212,7 @@ picking up any task — section references (§) point there.
         route).
   - [ ] Route templates carry a parameter allow-list (PLAN §9); `storeMatch[]` and unlisted params are dropped/rejected; Loki `detected_labels` and Loki POST on `query`/`query_range` are decided by a black-box test (record result in `docs/endpoints.md`).
 
-### [ ] T1.9 — Proxy core and request normalisation
+### [x] T1.9 — Proxy core and request normalisation
 - **Depends on:** T1.8
 - **Files:** `internal/proxy/*`, `internal/fanout/fanout.go` (executor only, no merges), tests
 - **Description:** PLAN §9: method checks, param merging, duplicate detection, header
@@ -220,12 +220,12 @@ picking up any task — section references (§) point there.
   parallelism, cancellation, all-or-nothing errors, byte cap), error writer with JSON format and
   `traceId`, `X-Trace-Id` header.
 - **Acceptance:**
-  - [ ] Tests with httptest upstreams: client `X-Scope-OrgID`, `Authorization`, `baggage` never
+  - [x] Tests with httptest upstreams: client `X-Scope-OrgID`, `Authorization`, `baggage` never
         reach upstream; tenant header set from Effective.
-  - [ ] POST with URL `query` + form `query` → 400; POST forwarded with empty URL query.
-  - [ ] Fan-out: one branch fails → 502, other branches cancelled (verify via context).
-  - [ ] Merge byte cap → 502 `merge_too_large`.
-  - [ ] Omitted optional enforcement params still get the policy filter; merge plans force `Accept: application/json`.
+  - [x] POST with URL `query` + form `query` → 400; POST forwarded with empty URL query.
+  - [x] Fan-out: one branch fails → 502, other branches cancelled (verify via context).
+  - [x] Merge byte cap → 502 `merge_too_large`.
+  - [x] Merge plans force `Accept: application/json`; unlisted parameters (e.g. `storeMatch[]`) → 400; escaped slashes in the path → 400.
 
 ### [x] T1.10 — Observability foundation ∥
 - **Depends on:** T0.1
@@ -284,6 +284,7 @@ picking up any task — section references (§) point there.
 - **Acceptance:**
   - [ ] Tests for: no user `match[]`, one, several; × 1 and 3 terms.
   - [ ] `labels` response filtering is streaming-safe (bounded buffering, cap applies).
+  - [ ] When the client omits `match[]`, one policy `match[]` per term is still sent (omission is never a pass-through).
 
 ### [ ] T2.4 — Prometheus E2E and semantic equivalence
 - **Depends on:** T2.2, T2.3
@@ -345,6 +346,7 @@ picking up any task — section references (§) point there.
 - **Files:** `internal/fanout/stringset.go`, `internal/enforce/logql/metadata.go`, tests
 - **Acceptance:**
   - [ ] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
+  - [ ] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
 
 ### [ ] T3.6 — Loki stats, volume, patterns
 - **Depends on:** T3.3, T1.9
