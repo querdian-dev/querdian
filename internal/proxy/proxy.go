@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
@@ -53,7 +56,7 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	SetTraceHeader(w.Header(), ctx)
 
 	if plan.Merge == enforce.MergeNone && len(plan.Requests) == 1 {
-		p.stream(w, r, base, t, plan.Requests[0])
+		p.stream(w, r, base, t, plan)
 		return
 	}
 	if merge == nil {
@@ -84,23 +87,70 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	}
 }
 
-func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t Target, up enforce.Upstream) {
+// DefaultFilterBytes caps response buffering for plans with a ResponseFilter that set no limit.
+const DefaultFilterBytes = 16 << 20
+
+// errFilterTooLarge marks a response that exceeded the ResponseFilter buffering cap.
+var errFilterTooLarge = errors.New("response too large to filter")
+
+func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t Target, plan enforce.Plan) {
+	up := plan.Requests[0]
+	filter := plan.ResponseFilter
 	rp := &httputil.ReverseProxy{
 		Transport:     p.Transport,
 		FlushInterval: -1, // stream responses as they arrive
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			prepare(pr.Out, pr.In, base, t.UpstreamPath, up.Query, t.Backend, t.Effective)
+			if filter != nil {
+				pr.Out.Header.Set("Accept-Encoding", "identity") // the filter needs the plain body
+			}
 			pr.SetXForwarded()
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del(TraceHeader) // ours is authoritative
-			return nil
+			if filter == nil || resp.StatusCode < 200 || resp.StatusCode > 299 {
+				return nil
+			}
+			return applyFilter(resp, filter, plan.ResponseFilterMaxBytes)
 		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, errFilterTooLarge) {
+				WriteError(w, r, http.StatusBadGateway, "merge_too_large", "upstream response too large")
+				return
+			}
 			WriteError(w, r, http.StatusBadGateway, errorTypeUpstream, "upstream request failed")
 		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// applyFilter replaces a 2xx response body with the filtered one. Any problem fails the request: the
+// unfiltered body must never reach the client.
+func applyFilter(resp *http.Response, filter func([]byte) ([]byte, error), limit int64) error {
+	if ce := resp.Header.Get("Content-Encoding"); ce != "" && ce != "identity" {
+		_ = resp.Body.Close()
+		return errors.New("compressed upstream response cannot be filtered")
+	}
+	if limit <= 0 {
+		limit = DefaultFilterBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	_ = resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	if int64(len(body)) > limit {
+		return errFilterTooLarge
+	}
+	out, err := filter(body)
+	if err != nil {
+		return err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(out))
+	resp.ContentLength = int64(len(out))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
+	resp.Header.Del("Etag")
+	return nil
 }
 
 func writeFanoutError(w http.ResponseWriter, r *http.Request, err error) {
