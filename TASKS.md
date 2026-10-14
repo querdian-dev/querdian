@@ -331,29 +331,31 @@ picking up any task — section references (§) point there.
   - [ ] Log query + 2 terms → `Plan` with 2 requests, `MergeLokiStreams`.
   - [ ] `label_replace` string arguments are scanned for denied labels; tests cover overwriting/removing a policy label.
 
-### [ ] T3.4 — Loki stream merge
+### [x] T3.4 — Loki stream merge
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/loki_streams.go`, tests
 - **Description:** PLAN §7.3 merge semantics for `query` / `query_range` log results (both
   directions), stats summing, response format preserved (incl. `encodingFlags` if present).
 - **Acceptance:**
-  - [ ] Unit tests: overlapping streams deduped, limit truncation correct both directions,
+  - [x] Unit tests: overlapping streams deduped, limit truncation correct both directions,
         empty branches, identical label sets across branches.
-  - [ ] Property test: merge(top-L(A), top-L(B)) == top-L(A ∪ B) on random data.
+  - [x] Property test: merge(top-L(A), top-L(B)) == top-L(A ∪ B) on random data.
 
-### [ ] T3.5 — Loki label, detected_* and series endpoints
+### [x] T3.5 — Loki label, detected_* and series endpoints
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/stringset.go`, `internal/enforce/logql/metadata.go`, tests
 - **Acceptance:**
-  - [ ] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
-  - [ ] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
+  - [x] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
+  - [x] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
 
-### [ ] T3.6 — Loki stats, volume, patterns
+### [x] T3.6 — Loki stats, volume, patterns
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/sumcounts.go`, tests
 - **Acceptance:**
-  - [ ] Summation per response type; `Effective.Disjoint=false` sets span attribute
+  - [x] Summation per response type; `Effective.Disjoint=false` sets span attribute
         `merge.approximate=true` and a response warning field if the API supports warnings.
+        (None of the four APIs has a warnings field; the marker is the response header
+        `X-Querdian-Approximate: true`, see `fanout.ApproximateHeader`.)
 
 ### [x] T3.7 — Loki tail WebSocket fan-out
 - **Depends on:** T3.3, T1.9

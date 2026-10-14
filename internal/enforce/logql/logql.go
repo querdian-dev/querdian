@@ -3,8 +3,8 @@
 // policy: injection for a single term, or-lifting for metric queries with several terms, and
 // one fanned-out request per term for log queries.
 //
-// This file handles the query and query_range endpoints; the metadata endpoints follow in later
-// tasks.
+// This file handles the query and query_range endpoints; metadata.go handles labels, label values,
+// detected_*, and series, and later files the index and pattern endpoints.
 package logql
 
 import (
@@ -40,6 +40,14 @@ type enforcer struct{}
 // A term without matchers injects nothing for that term. The policy's __tenant_id__ matchers are
 // ordinary matchers here; Inject guarantees every selector keeps a non-__tenant_id__ anchor.
 func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, eff policy.Effective) (enforce.Plan, error) {
+	switch ep.Template {
+	case tmplLabels, tmplLabelValues, tmplDetectedLabels, tmplDetectedFields, tmplDetectedValues:
+		return planStringSet(ep, params, eff)
+	case tmplIndexStats, tmplIndexVolume, tmplIndexVolumeRange, tmplPatterns:
+		return planSum(params, eff)
+	case tmplSeries:
+		return planSeries(params, eff)
+	}
 	param := ep.Param
 	if param == "" {
 		param = "query"
