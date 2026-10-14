@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -26,6 +27,16 @@ type Proxy struct {
 	// Transport sends upstream requests; nil means http.DefaultTransport. T1.11 passes an otelhttp transport.
 	Transport http.RoundTripper
 	Limits    config.Limits
+	// Logger receives one warning per failed merge or fan-out, with the cause (never response bodies,
+	// except a truncated upstream error text). Nil discards.
+	Logger *slog.Logger
+}
+
+func (p *Proxy) logger() *slog.Logger {
+	if p.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return p.Logger
 }
 
 // Target describes where and how a plan is executed.
@@ -82,10 +93,13 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 		MaxBytes:    p.Limits.MaxMergeBytes,
 	})
 	if err != nil {
+		p.logger().WarnContext(ctx, "fan-out failed", "backend", t.Backend.Name, "route", t.Endpoint.Template, "error", err.Error())
 		writeFanoutError(w, r, err)
 		return
 	}
 	if err := merge(w, r, resps); err != nil {
+		p.logger().WarnContext(ctx, "merge failed", "backend", t.Backend.Name, "route", t.Endpoint.Template,
+			"branches", len(resps), "error", err.Error())
 		WriteError(w, r, http.StatusBadGateway, errorTypeUpstream, "cannot merge upstream responses")
 	}
 }

@@ -2,8 +2,10 @@ package framework
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,6 +108,7 @@ func StartProxy(t testing.TB, o ProxyOptions) *Proxy {
 		TailPlanners: map[config.BackendType]server.TailPlanner{config.BackendLoki: enforcelogql.PlanTail},
 		Metrics:      metrics,
 		Gatherer:     reg,
+		Logger:       slog.New(slog.NewTextHandler(testLogWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
 	hs := httptest.NewServer(srv.ProxyHandler())
 	t.Cleanup(hs.Close)
@@ -137,3 +140,13 @@ func (p *Proxy) As(user string, groups ...string) *Client {
 
 // Anonymous returns a client without credentials.
 func (p *Proxy) Anonymous() *Client { return &Client{Base: p.URL, t: p.t, http: http.DefaultClient} }
+
+// testLogWriter forwards proxy log lines (merge/fan-out failures) to the test log, so a 502 in an E2E run
+// can be traced to its cause.
+type testLogWriter struct{ t testing.TB }
+
+func (w testLogWriter) Write(b []byte) (int, error) {
+	w.t.Helper()
+	w.t.Log("proxy: " + strings.TrimRight(string(b), "\n"))
+	return len(b), nil
+}

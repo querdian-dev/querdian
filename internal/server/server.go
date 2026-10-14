@@ -106,7 +106,7 @@ func New(d Deps) *Server {
 			otelhttp.WithPropagators(observability.NewPropagator()),
 			otelhttp.WithSpanNameFormatter(func(string, *http.Request) string { return "upstream" }),
 		)
-		s.proxies[b.Name] = &proxy.Proxy{Transport: rt, Limits: d.Config.Limits}
+		s.proxies[b.Name] = &proxy.Proxy{Transport: rt, Limits: d.Config.Limits, Logger: logger}
 	}
 	return s
 }
