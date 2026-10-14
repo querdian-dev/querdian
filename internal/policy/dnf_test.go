@@ -87,7 +87,7 @@ func TestNormaliseTable(t *testing.T) {
 		{"merge two equals", []Term{tm("", "a=1"), tm("", "a=2")}, "a=~(?:1)|(?:2)", false, true, ""},
 		{"merge equal and regex", []Term{tm("", "a=1"), tm("", "a=~x|y")}, "a=~(?:1)|(?:x|y)", false, true, ""},
 		{"merge with shared other matcher", []Term{tm("", "n=ns", "a=1"), tm("", "n=ns", "a=2")}, "a=~(?:1)|(?:2),n=ns", false, true, ""},
-		{"merge to fixpoint of three", []Term{tm("", "a=1"), tm("", "a=2"), tm("", "a=3")}, "a=~(?:(?:1)|(?:2))|(?:3)", false, true, ""},
+		{"merge to fixpoint of three", []Term{tm("", "a=1"), tm("", "a=2"), tm("", "a=3")}, "a=~(?:1)|(?:2)|(?:3)", false, true, ""},
 		{"merge escapes regex metacharacters in Equal", []Term{tm("", "a=1.5"), tm("", "a=2")}, `a=~(?:1\.5)|(?:2)`, false, true, ""},
 		{"no merge different other matcher", []Term{tm("", "n=x", "a=1"), tm("", "n=y", "a=2")}, "a=1,n=x | a=2,n=y", false, true, ""},
 		{"no merge across tenants", []Term{tm("t1", "a=1"), tm("t2", "a=2")}, "t1:a=1 | t2:a=2", false, true, "t1,t2"},
