@@ -466,8 +466,11 @@ picking up any task — section references (§) point there.
   - [ ] From zero to working isolation demo in ≤ 15 minutes on a laptop.
   - [ ] Two demo users demonstrably see different data in Grafana.
 
-### [ ] T5.4 — Documentation ∥
+### [~] T5.4 — Documentation ∥
 - **Depends on:** T2.4, T3.8, T4.6
+- **Status:** written against the code at `integrate-m3-m4` (T2.4, T3.8, T4.6 still open). Revisit after
+  they land (differential/E2E findings) and when the chart, image and dashboards exist; the
+  quickstart and dashboards docs belong to T5.3 / T5.5.
 - **Files:** `docs/**`
 - **Description:** Policy guide (CRDs, union semantics, tenants, denied labels), operations
   (config, scaling, upgrades), security model + `docs/security/threat-model.md` (PLAN §12),
@@ -475,8 +478,9 @@ picking up any task — section references (§) point there.
   upstream errors), known limitations (absent edge cases, approximate stats under overlap,
   unsupported syntax → 400).
 - **Acceptance:**
-  - [ ] Every reason code and status reason documented.
-  - [ ] Namespace-label integrity requirement prominent in policy guide and security model.
+  - [x] Every reason code and status reason documented (cross-checked against `handler.go`,
+        `internal/policy/types.go` and `internal/auth/errors.go`).
+  - [x] Namespace-label integrity requirement prominent in policy guide and security model.
 
 ### [x] T5.5 — Grafana dashboard ∥
 - **Depends on:** T1.10
