@@ -456,8 +456,14 @@ No matched rule → `ErrNoGrant` → 403.
   - Else if backend `tenantFederation: tenantIdLabel` → each term gets an extra matcher
     `__tenant_id__="<tenant>"`.
   - Else → reject (403, reason `cross_tenant_union_unsupported`).
-- Which backends support `__tenant_id__` filtering is verified in `T0.4`; defaults in docs follow
-  that research.
+- Which backends support `__tenant_id__` filtering is verified in `T0.4` (Loki and Mimir: label
+  matcher works; Tempo: silently matches nothing, so `none`); defaults in docs follow that research.
+- The `__tenant_id__` matcher is injected **only** when the outgoing tenant header is a
+  federation header (`t1|t2|…`). With a single-tenant header the label does not exist and a
+  filter on it silently returns an empty result.
+- Loki rejects a selector whose only matcher is `__tenant_id__` (400). The rewriter guarantees at
+  least one other non-empty matcher in every selector, otherwise the request is rejected
+  (`ErrUnsupported`).
 
 ---
 
@@ -534,6 +540,10 @@ reason), `ErrTooComplex` (403).
 Enforcement:
 - Denied labels: any identifier token outside strings that equals a denied label name, anywhere in
   the query (selector or pipeline) → `ErrDeniedLabel` (conservative).
+- `label_replace` (and any function taking label names as string arguments) can overwrite or
+  remove any label, including policy labels, and its names are strings that the identifier scan
+  skips. Its string arguments are therefore scanned for denied labels as well, and the injected
+  selectors always sit inside the function so the policy applies before the label is rewritten.
 - Single term: inject matchers into every stream selector.
 - Metric query, multiple terms: or-lift at range-aggregation level, analogous to PromQL.
 - Log query, multiple terms: **fan-out**, one request per term, `MergeLokiStreams`:
@@ -564,9 +574,19 @@ Enforcement:
 - Denied attributes: any attribute token equal to a denied name → `ErrDeniedLabel`.
 - Search, metrics, tag values (`q` param): inject.
 - `api/search` legacy `tags=` parameter without `q` → `ErrUnsupported` (400).
+- `&&` and `||` have equal precedence and associate left to right (T0.5). Injection therefore
+  parenthesises the original filter, the whole DNF and every disjunct explicitly.
 - Search responses (`MergeTempoSearch`, single request still uses this merge for rewriting):
-  redact trace-level metadata (`rootServiceName`, `rootTraceName`, root span duration fields)
-  when the root span is not known to match the policy. Buffered, capped by `maxMergeBytes`.
+  redact trace-level metadata when the root span is not known to match the policy:
+  `rootServiceName`, `rootTraceName` (returned even if only a child span matched) and
+  `serviceStats` (lists every service of the trace with span and error counts). `durationMs`
+  and `startTimeUnixNano` are trace-level, not root-span-level; handling is decided in T4.4.
+  Both `spanSet` and `spanSets` are rewritten. Buffered, capped by `maxMergeBytes`.
+- Optional `q` on tag/tag-value endpoints: when absent, a policy-only filter `{ <dnf> }` is
+  injected; absence never means pass-through.
+- Trace by ID: a client-supplied `q` is rejected (400); only `start` and `end` are forwarded.
+- Legacy search parameters `tags`, `minDuration`, `maxDuration` are rejected (400) whether or
+  not `q` is present.
 - Trace by ID (`api/traces/<id>`, `api/v2/traces/<id>`), per backend `traceByID`:
   - `deny` → 403.
   - `filter` → fetch upstream (protobuf via `pkg/tempopb`, or JSON), drop spans whose
@@ -622,6 +642,13 @@ data source with URL `https://proxy/<pathPrefix>` calls.
 
 - Accept `GET` and `POST` (`application/x-www-form-urlencoded`) for query endpoints; `GET` only
   for others; WebSocket upgrade only for Loki `tail`.
+- **Parameter allow-list.** Each route template lists the parameters it forwards (e.g. Thanos
+  `dedup`, `partial_response`, `replicaLabels`, `max_source_resolution`; never `storeMatch[]`).
+  Any other parameter is dropped or rejected (400), decided per endpoint in `docs/endpoints.md`.
+- Optional enforcement parameters (`query`, `q`, `match[]` on metadata endpoints): when the client
+  omits them the enforcer still injects the policy filter; omission is never a pass-through.
+- Plans that merge responses require JSON (`Accept` is forced to `application/json`); Loki
+  Parquet and Tempo `application/vnd.grafana.llm` are not merged.
 - Merge URL query and form body the way Prometheus does, then:
   - more than one value for a single-valued enforcement param (`query`, `q`) → 400;
   - forward as: GET → rewritten URL query; POST → rewritten form body, empty URL query.

@@ -171,6 +171,7 @@ picking up any task — section references (§) point there.
         terms, multiple tenants with federation, multiple tenants without federation (reject),
         unrestricted + restricted mix, denied labels union.
   - [ ] Benchmark: resolve with 1,000 policies and 20 groups < 50µs/op.
+  - [ ] `__tenant_id__` is bound only for federation (multi-tenant) headers; test with single-tenant header. Selectors always keep at least one non-`__tenant_id__` matcher (see PLAN §6.4).
 
 ### [ ] T1.6 — Controller and snapshot lifecycle
 - **Depends on:** T1.5
@@ -207,6 +208,7 @@ picking up any task — section references (§) point there.
   - [ ] Table test for every endpoint row in `docs/endpoints.md`, plus path traversal /
         double-slash / encoded-slash / trailing-slash cases (all must not escape to a different
         route).
+  - [ ] Route templates carry a parameter allow-list (PLAN §9); `storeMatch[]` and unlisted params are dropped/rejected; Loki `detected_labels` and Loki POST on `query`/`query_range` are decided by a black-box test (record result in `docs/endpoints.md`).
 
 ### [ ] T1.9 — Proxy core and request normalisation
 - **Depends on:** T1.8
@@ -221,6 +223,7 @@ picking up any task — section references (§) point there.
   - [ ] POST with URL `query` + form `query` → 400; POST forwarded with empty URL query.
   - [ ] Fan-out: one branch fails → 502, other branches cancelled (verify via context).
   - [ ] Merge byte cap → 502 `merge_too_large`.
+  - [ ] Omitted optional enforcement params still get the policy filter; merge plans force `Accept: application/json`.
 
 ### [ ] T1.10 — Observability foundation ∥
 - **Depends on:** T0.1
@@ -323,6 +326,7 @@ picking up any task — section references (§) point there.
 - **Acceptance:**
   - [ ] Property fuzz analogous to T2.2.
   - [ ] Log query + 2 terms → `Plan` with 2 requests, `MergeLokiStreams`.
+  - [ ] `label_replace` string arguments are scanned for denied labels; tests cover overwriting/removing a policy label.
 
 ### [ ] T3.4 — Loki stream merge
 - **Depends on:** T3.3, T1.9
@@ -392,6 +396,7 @@ picking up any task — section references (§) point there.
   - [ ] `{ X }` → `{ (X) && (dnf) }`, empty filter → `{ dnf }`, for every filter in the query.
   - [ ] Property fuzz: every spanset filter in output contains the DNF; output re-parses.
   - [ ] Legacy `tags=` without `q` → 400.
+  - [ ] Injection parenthesises original filter, DNF and each disjunct (equal-precedence `&&`/`||`); absent `q` on tag endpoints yields a policy-only filter; legacy `tags`/`minDuration`/`maxDuration` → 400.
 
 ### [ ] T4.4 — Tempo search metadata redaction
 - **Depends on:** T4.3, T1.9
@@ -401,6 +406,7 @@ picking up any task — section references (§) point there.
 - **Acceptance:**
   - [ ] Unit tests with recorded response shapes (self-generated against a container, not copied
         from Tempo source).
+  - [ ] `rootServiceName`, `rootTraceName` and `serviceStats` redacted; both `spanSet` and `spanSets` rewritten; decision recorded on trace-level `durationMs`/`startTimeUnixNano`.
 
 ### [ ] T4.5 — Trace by ID filter
 - **Depends on:** T4.3, T1.9
@@ -410,6 +416,7 @@ picking up any task — section references (§) point there.
 - **Acceptance:**
   - [ ] Spans outside policy removed; empty result → 404; formats preserved.
   - [ ] `pkg/tempopb` is the only Tempo import (license job green).
+  - [ ] Client `q` on trace by ID → 400; only `start`/`end` forwarded.
 
 ### [ ] T4.6 — Tempo differential, E2E and equivalence
 - **Depends on:** T4.4, T4.5, T2.4 (framework)
