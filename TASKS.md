@@ -393,14 +393,14 @@ picking up any task — section references (§) point there.
         operators, pipelines, metrics functions, `select()`.
   - [x] Every spanset filter located with correct byte range; fuzz round-trip.
 
-### [ ] T4.3 — TraceQL injection and denied attributes
+### [x] T4.3 — TraceQL injection and denied attributes
 - **Depends on:** T4.2, T1.11
 - **Files:** `pkg/traceql/inject.go`, `internal/enforce/traceql/*`
 - **Acceptance:**
-  - [ ] `{ X }` → `{ (X) && (dnf) }`, empty filter → `{ dnf }`, for every filter in the query.
-  - [ ] Property fuzz: every spanset filter in output contains the DNF; output re-parses.
-  - [ ] Legacy `tags=` without `q` → 400.
-  - [ ] Injection parenthesises original filter, DNF and each disjunct (equal-precedence `&&`/`||`); absent `q` on tag endpoints yields a policy-only filter; legacy `tags`/`minDuration`/`maxDuration` → 400.
+  - [x] `{ X }` → `{ (X) && (dnf) }`, empty filter → `{ dnf }`, for every filter in the query.
+  - [x] Property fuzz: every spanset filter in output contains the DNF; output re-parses.
+  - [x] Legacy `tags=` without `q` → 400.
+  - [x] Injection parenthesises original filter, DNF and each disjunct (equal-precedence `&&`/`||`); absent `q` on tag endpoints yields a policy-only filter; legacy `tags`/`minDuration`/`maxDuration` → 400.
 
 ### [ ] T4.4 — Tempo search metadata redaction
 - **Depends on:** T4.3, T1.9
