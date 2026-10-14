@@ -256,15 +256,15 @@ picking up any task — section references (§) point there.
 
 ## M2 — PromQL (parallel with M3, M4 after M1)
 
-### [ ] T2.1 — PromQL single-term injection and denied labels
+### [x] T2.1 — PromQL single-term injection and denied labels
 - **Depends on:** T1.11
 - **Files:** `internal/enforce/promql/*`
 - **Description:** PLAN §7.2 parse, denied-label checks, single-term injection into every
   vector selector (incl. matrix selectors, subqueries, `@`, `offset`).
 - **Acceptance:**
-  - [ ] ≥ 60 table cases covering all PromQL expression node types.
-  - [ ] Output re-parses; every `VectorSelector` contains all term matchers.
-  - [ ] Denied label in matcher / `by` / `on` / `label_replace` → `ErrDeniedLabel`.
+  - [x] ≥ 60 table cases covering all PromQL expression node types.
+  - [x] Output re-parses; every `VectorSelector` contains all term matchers.
+  - [x] Denied label in matcher / `by` / `on` / `label_replace` → `ErrDeniedLabel`.
 
 ### [ ] T2.2 — PromQL or-lifting for multiple terms
 - **Depends on:** T2.1
