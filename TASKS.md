@@ -321,7 +321,7 @@ picking up any task — section references (§) point there.
   - [x] Fuzz round-trip: `Parse(String(Parse(x)))` equals `Parse(x)`.
   - [x] Query kind (log/metric) correct for all corpus entries.
 
-### [ ] T3.3 — LogQL injection, denied labels, or-lifting
+### [x] T3.3 — LogQL injection, denied labels, or-lifting
 - **Depends on:** T3.2, T1.11
 - **Files:** `pkg/logql/inject.go`, `internal/enforce/logql/*`
 - **Description:** Single-term injection into every stream selector; conservative denied-label

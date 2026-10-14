@@ -1,5 +1,5 @@
-// Package logql implements a clean-room LogQL lexer and parser (and, in
-// later tasks, an injector) for the Querdian access proxy.
+// Package logql implements a clean-room LogQL lexer, parser and policy
+// injector ([Inject], [OrLift], [DeniedLabel]) for the Querdian access proxy.
 //
 // # Clean-room provenance
 //
