@@ -57,7 +57,7 @@ picking up any task — section references (§) point there.
   - [x] `make build test lint` succeeds on a clean checkout.
   - [x] All listed files present and non-placeholder.
 
-### [ ] T0.2 — CI pipelines ∥
+### [~] T0.2 — CI pipelines ∥
 - **Depends on:** T0.1
 - **Files:** `.github/workflows/*.yml`, `renovate.json`, `.github/dependabot.yml` (only if
   Renovate is not used — pick one: Renovate)
