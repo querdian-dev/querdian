@@ -286,17 +286,17 @@ picking up any task — section references (§) point there.
   - [x] `labels` response filtering is streaming-safe (bounded buffering, cap applies).
   - [x] When the client omits `match[]`, one policy `match[]` per term is still sent (omission is never a pass-through).
 
-### [ ] T2.4 — Prometheus E2E and semantic equivalence
+### [x] T2.4 — Prometheus E2E and semantic equivalence
 - **Depends on:** T2.2, T2.3
 - **Files:** `test/e2e/prometheus/*`, `test/e2e/framework/*`
 - **Description:** testcontainers Prometheus with seeded data (backfilled via promtool TSDB
   blocks or remote-write from the test). Framework reused by M3/M4: start upstream, start proxy
   in-process with a static Snapshot (no k8s), issue requests as a user.
 - **Acceptance:**
-  - [ ] Isolation: user A never sees series of namespace B across all enforced endpoints.
-  - [ ] Equivalence: for a corpus of ≥ 40 queries × term sets, rewritten result equals the union
+  - [x] Isolation: user A never sees series of namespace B across all enforced endpoints.
+  - [x] Equivalence: for a corpus of ≥ 40 queries × term sets, rewritten result equals the union
         of per-term results computed by the test.
-  - [ ] Runs in CI under 5 minutes.
+  - [x] Runs in CI under 5 minutes.
 
 ---
 
