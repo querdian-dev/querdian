@@ -1,0 +1,166 @@
+{ }
+{ span.a = "x" }
+{ span.a =~ "x" }
+{ span.a =~ "x.*" }
+{ span.a =~ ".*x.*" }
+{ span.a !~ "x" }
+{ span.a =~ "x|y" }
+{ span.a =~ "y|z" }
+{ span.a =~ "" }
+{ span.a = "x" || span.a = "y" && span.http.status_code = 200 }
+{ span.a = "x" || span.a = "y" && span.http.status_code = 500 }
+{ span.a = "y" && span.http.status_code = 200 || span.a = "x" }
+{ (span.a = "x" || span.a = "y") && span.http.status_code = 500 }
+{ span.a = "x" || (span.a = "y" && span.http.status_code = 200) }
+{ (span.a = "x") && (span.a = "x") }
+{ ((span.a = "x")) }
+{ (span.a = "x" && span.http.status_code = 200) || (span.a = "y") }
+{ !(span.a = "x") }
+{ span.a = "x" && !(span.http.status_code = 200) }
+{ span.http.status_code >= 200 && span.http.status_code < 300 }
+{ span.http.status_code > 100 * 4 }
+{ span.http.status_code = 100 + 400 }
+{ span.http.status_code = 1000 / 2 }
+{ span.http.status_code = 1000 % 600 }
+{ span.http.status_code = 5 ^ 2 }
+{ span.http.status_code - 1 = 499 }
+{ span.http.status_code != 200 }
+{ span.http.status_code <= 200 }
+{ span."weird name" = "w" }
+{ span.weird name = "w" }
+{ span."dash-name" = "d" }
+{ span.dash-name = "d" }
+{ span."slash/name" = "s" }
+{ span.slash/name = "s" }
+{ span."http.status_code" = 500 }
+{ span.http.status_code = 500 }
+{ .http.status_code = 500 }
+{ ."http.status_code" = 500 }
+{ resource."service.name" = "backend" }
+{ resource.service.name = "backend" }
+{ resource.team = "t1" }
+{ .team = "t1" }
+{ span.team = "t1" }
+{ resource.a = "x" }
+{ span."a\"b" = "x" }
+{ span."a\\b" = "x" }
+{ span."a\nb" = "x" }
+{ span."" = "x" }
+{ span.a = "x\"" }
+{ span.a = 'x' }
+{ span.a = `x` }
+{ name = "db query" }
+{ span:name = "db query" }
+{ span:status = error }
+{ status = error }
+{ status = ok }
+{ status = unset }
+{ span:status = ok }
+{ span:kind = client }
+{ kind = client }
+{ kind = server }
+{ span:duration > 200ms }
+{ duration > 200ms }
+{ duration > 0.2s }
+{ duration > 1m }
+{ duration > 1h }
+{ duration > 1d }
+{ duration > 1us }
+{ duration > 1ns }
+{ trace:duration > 500ms }
+{ traceDuration > 500ms }
+{ trace:rootName = "GET /" }
+{ rootName = "GET /" }
+{ trace:rootService = "frontend" }
+{ rootServiceName = "frontend" }
+{ trace:id = "00000000000000000000000000000001" }
+{ span:id = "0000000000000002" }
+{ span:parentID = "0000000000000001" }
+{ span:childCount = 2 }
+{ childCount = 2 }
+{ span:statusMessage = "" }
+{ statusMessage = "" }
+{ instrumentation:name = "s2" }
+{ instrumentation.name = "s2" }
+{ instrumentation:version = "1.0" }
+{ event:name = "x" }
+{ link:spanID = "x" }
+{ event:timeSinceStart > 1s }
+{ span.nonexist = nil }
+{ span.a != nil }
+{ span.a = nil }
+{ parent.span.a = "x" }
+{ parent.resource.service.name = "frontend" }
+{ resource.service.name = "frontend" } >> { span.a = "y" }
+{ resource.service.name = "frontend" } > { span.a = "y" }
+{ span.a = "y" } < { resource.service.name = "frontend" }
+{ span.a = "y" } << { resource.service.name = "frontend" }
+{ span.a = "y" } ~ { span.a = "xy" }
+{ span.a = "y" } &>> { resource.service.name = "frontend" }
+{ resource.service.name = "frontend" } &>> { span.a = "y" }
+{ resource.service.name = "frontend" } &> { span.a = "y" }
+{ span.a = "y" } &< { resource.service.name = "frontend" }
+{ span.a = "y" } &~ { span.a = "xy" }
+{ span.a = "y" } !~ { span.a = "xy" }
+{ span.a = "y" } !> { span.a = "xy" }
+{ span.a = "y" } !>> { span.a = "xy" }
+{ span.a = "y" } !< { span.a = "xy" }
+{ span.a = "y" } !<< { span.a = "xy" }
+{ span.a = "y" } && { span.a = "xy" }
+{ span.a = "y" } || { span.a = "z" }
+{ span.a = "y" } && { span.a = "z" }
+{ span.a = "y" } >> { span.a = "xy" }
+({ span.a = "y" }) && ({ span.a = "xy" })
+{ span.a = "y" } && { span.a = "xy" } && { span.a = "x" }
+{ span.a = "y" } | count() > 0
+{ resource.service.name = "backend" } | count() > 1
+{ } | count() = 3
+{ } | avg(duration) > 100ms
+{ } | max(duration) > 900ms
+{ } | min(duration) < 30ms
+{ } | sum(duration) > 1s
+{ } | avg(span.http.status_code) > 300
+{ } | by(resource.service.name) | count() > 1
+{ } | select(span.a, resource.service.name)
+{ } | select(span.a) | count() > 1
+{ } | coalesce()
+{ } | by(resource.service.name) | coalesce() | count() > 1
+{ span.a = "x" } | { span.a = "y" }
+{ } | count() > 1 | { span.a = "y" }
+count() > 1
+{ } | count() > 1 && avg(duration) > 1ms
+{ } | count() > 1 || count() < 1
+{ } | (count() > 1)
+{ } | count() > 1 + 1
+{ } | count() + 1 > 2
+{ } | max(duration) - min(duration) > 100ms
+{ } | rate()
+{ } | rate() by (resource.service.name)
+{ } | count_over_time()
+{ } | quantile_over_time(duration, .5, .9)
+{ } | histogram_over_time(duration)
+{ } | compare({status=error})
+{ } | min_over_time(duration)
+{ } | topk(1)
+({ } | rate()) / ({ } | rate())
+{ } | rate() with (exemplars=true)
+{ span.a = "x" # comment }
+{ span.a = "x" } // c
+{ true }
+{ false }
+{ span.a = "x" && true }
+{ 1 = 1 }
+{ "a" = "a" }
+{ span.http.status_code = 200.0 }
+{ span.http.status_code = -1 }
+{ span.http.status_code > minInt }
+{ span.http.status_code < maxInt }
+{ span.a = "X" }
+{ span.A = "x" }
+{ SPAN.a = "x" }
+{ span.a = "x" AND span.a = "x" }
+{ span.a = "x" and span.a = "x" }
+{ span.a = "x" & span.a = "x" }
+{span.a="x"&&span.a="x"}
+{span.a="x"||span.a="y"}
+{span.a="x"}>>{span.a="y"}

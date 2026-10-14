@@ -1,0 +1,86 @@
+{app="foo"}
+{app="foo"} |= "hello"
+{app="bar"} |= "x#y"
+{app="bar"} |= "x#y" # c
+{app="bar"} |= `x#y`
+{app="foo"} |= "hello" # c |= "zzz"
+{app="foo"} |= "hello" or "bad"
+{app="foo"} |= "hello" or "nomatch"
+{app="foo"} != "hello" or "nomatch"
+{app="foo"} |= "\x41"
+{app="foo"} |= "\n"
+{app="foo"} |= "ä"
+{app="foo"} |= "\a\b\f\r\t\v"
+{app="foo"} |= `\n`
+{app="foo"} |= "msg=\"hello\""
+{app="foo"} |= `msg="hello"`
+{app="foo"} |~ "msg=\"hel+o\""
+{app="foo"} |~ `msg="hel+o"`
+{app="foo"} |~ "msg=\\\"hel+o\\\""
+{app="foo"} | logfmt | level="info" or level="error" and msg="bad"
+{app="foo"} | logfmt | (level="info" or level="error") and msg="bad"
+{app="foo"} | logfmt | level="error" and msg="bad" or level="info"
+{app="foo"} | logfmt | level="info" and msg="bad" or level="error"
+{app="foo"} | logfmt | level="info" or msg="hello" and level="error"
+{app="foo"} | logfmt | level="info" msg="bad"
+{app="foo"} | logfmt | level="error", msg="bad" or level="info"
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "a:c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "(a)")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "a:.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", ":c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "a:c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "", "service", "a:c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "(?i)A:C")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "a:c\n")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "(")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "ap p", "zz", "service", "a:c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "zz")
+vector(1) or vector(2) and vector(3) unless vector(3)
+vector(1) unless vector(2) and vector(2)
+vector(1) and vector(2) unless vector(2)
+vector(1) + vector(2) * vector(3)
+vector(10) - vector(2) - vector(3)
+vector(2) * vector(3) % vector(4)
+vector(1) < bool vector(2) == bool vector(1)
+vector(5) > vector(2) + vector(1)
+vector(2) ^ vector(3) * vector(2)
+vector(1) or vector(2) > vector(1)
+2 + 3 * 4
+10 - 2 - 3
+2 ^ 3 ^ 2
+-2 ^ 2
+(1 + 2) * 3
+1 == bool 1
+1 > 2
+5 % 3
+sum(count_over_time({app="foo"}[5m])) > 1 and on() vector(1)
+sum(count_over_time({app="foo"}[5m])) unless on() vector(1)
+sum(count_over_time({app="foo"}[5m])) unless vector(1)
+{app="foo"} | logfmt | duration > 1d
+{app="foo"} | logfmt | duration >= 250ms
+{app="foo"} | logfmt | duration > 0.25s
+{app="foo"} | logfmt | duration > 1h1m1s
+{app="foo"} | logfmt | duration > 1.5h
+{app="foo"} | logfmt | duration > 1s1ms
+{app="foo"} | logfmt | duration > 1M
+{app="foo"} | logfmt | size > 1B
+{app="foo"} | logfmt | size >= 2KB
+{app="foo"} | logfmt | size > 2KiB
+{app="foo"} | logfmt | size > 2K
+{app="foo"} | logfmt | size > 2Ki
+{app="foo"} | logfmt | size > 2m
+{app="foo"} | logfmt | size > 2TiB
+{app="foo"} | logfmt | size > 2PB
+{app="foo"} | logfmt | size > 2EB
+{app="foo"} | logfmt | size > 1.5KB
+{app="foo"} | logfmt | size > 1e3
+{app="foo"} | logfmt | size > 1000
+count_over_time({app="foo"}[1y])
+count_over_time({app="foo"}[1.5m])
+count_over_time({app="foo"}[500ms])
+count_over_time({app="foo"}[1m30s])
+count_over_time({app="foo"}[1us])
+count_over_time({app="foo"}[0s])
+count_over_time({app="foo"}[5])
+count_over_time({app="foo"}[5m:1m])
+count_over_time({app="foo"}[5M])

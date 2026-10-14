@@ -1,153 +1,195 @@
 # TraceQL language research (T0.5)
 
-Status: **docs-only, nothing verified against a running container.** The container runtime
-(Podman machine) was not running when this was written, so every example below is
-`unverified`. Items the public docs do not state are listed under "Open items" and must be
-settled by black-box experiments against a pinned Tempo container before `pkg/traceql` relies on
-them. Pages were read on 2026-10-14 in their `latest` version. Verified-against Tempo version:
-**none yet** (pin it when experiments are run).
+Method: public docs (grafana.com/docs, list at the end) plus black-box experiments against a
+Tempo container. No Tempo source, grammar or tests were read; nothing from evoila/janus.
 
-Clean room: only grafana.com/docs pages (list at the end) were used. No Tempo source, grammar or
-tests were read, nothing from evoila/janus.
+**Verified-against:** `docker.io/grafana/tempo:2.9.0` (image id
+`84944a38730995ce06b71da44c68727fee034bd8b93fa9c2bdaad7459974ee5f`), single binary, local
+storage, OTLP/HTTP ingest, searched through `GET /api/search?q=...`. Config and fixtures:
+`hack/research/languages/tempo.yaml`, `tempo_push.py`, `tempo_run.py`, `tempo_cases*.txt`.
+The containers were removed afterwards.
 
-Legend: `[doc]` stated by a public doc page, `[unverified]` not run against a container,
-`[undocumented]` docs are silent.
+Legend: **[V]** verified by running it against Tempo 2.9.0; **[doc]** stated in docs only (not
+run); **[?]** inconclusive / not exercised. Anything without a tag is docs-only.
+Where behaviour differs from the docs this is called out as **DIFFERS**.
 
-## 1. Regex matching (`=~`, `!~`)  [doc] [unverified]
+Fixture (searched with `/api/search`), one attribute `a` on spans, `http.status_code` where noted:
+- Trace 1: root `GET /` (frontend, a="x", http.status_code=200, 1000 ms); child `db query`
+  (backend, a="y", http.status_code=500, status error, kind client, extra attributes
+  `weird name`, `dash-name`, `slash/name`, resource attr `team`); child `cache` (backend, a="xy").
+- Trace 2: root `POST /x` (other, a="z", 20 ms).
+- Trace 3: root `root3` (rootsvc, 100 ms) with child `child3` (childsvc, +50 ms, 500 ms).
+- Trace 4: a single child span whose parent is never sent (no root span).
 
-- Regexes use Go (RE2) syntax and are **fully anchored at both ends**: `{ span.foo =~ "bar" }`
-  behaves like `^bar$`. For substring matching write `.*bar.*`.
-- `!~` is the negation of the same anchored match.
-- Implication for Querdian: do not assume `=~` is a substring match; emit explicit alternation
-  (`"a|b"`), which must be confirmed to be anchored as a whole.
-- Experiments needed: `"a|b"` is `^(?:a|b)$` and not `^a|b$`; multi-line values; empty regex.
+## 1. Regex matching (`=~`, `!~`)  [V]
 
-## 2. `&&` / `||` inside a spanset filter  [undocumented]
+- Fully anchored at both ends, Go (RE2) syntax: `{ span.a =~ "x" }` matches span `a="x"` but
+  not `a="xy"`; `{ span.a =~ "x.*" }` matches both.
+- Alternation is anchored as a whole group: `{ span.a =~ "x|y" }` matches `x` and `y` and
+  not `xy` (equals `^(?:x|y)$`).
+- `!~` is the exact complement: `{ span.a !~ "x" }` returns spans `y`, `xy` and `z`.
+- `{ span.a =~ "" }` returns nothing.
+- Implication: emitting `=~ "a|b"` for policy values is safe; no extra anchors are needed.
 
-The docs define `&&` ("both conditions match") and `||` ("either condition matches") inside
-`{ ... }`, e.g. `{ span.http.status_code >= 200 && span.http.status_code < 300 }`.
-They **do not state a precedence** and the page read does not show parenthesised grouping.
-Do not assume `&&` binds tighter than `||`. Safe rule for the injector (PLAN §7.4): always wrap
-operands in parentheses: `{ (X) && (dnf) }`, with the DNF written `(a && b) || (c && d)`.
-Experiments to run (all `unverified`): compare result sets of `{ A || B && C }`,
-`{ (A || B) && C }`, `{ A || (B && C) }` on a fixture trace where they differ; check that
-parentheses are accepted inside a filter.
+## 2. `&&` / `||` precedence inside a spanset filter  [V] **DIFFERS / undocumented**
 
-## 3. Operator list
+The docs do not state precedence. Experiment result for Tempo 2.9.0: **`&&` and `||` have
+equal precedence and associate left to right.** Evidence (spans: 1 = x/200, 2 = y/500, 3 = xy/-):
+| Query | Result | Reading |
+|---|---|---|
+| `{ a="xy" \|\| a="x" && sc=500 }` | nothing | `((xy \|\| x) && 500)`; "&& binds tighter" would give span 3 |
+| `{ a="x" && sc=200 \|\| a="y" && sc=500 }` | span 2 only | `(((x && 200) \|\| y) && 500)`; "&& tighter" would give 1 and 2 |
+| `{ a="y" \|\| a="x" && sc=200 }` | span 1 only | `((y \|\| x) && 200)`; "&& tighter" would give 1 and 2 |
+| `{ a="x" && sc=200 \|\| a="y" }` | spans 1, 2 | `((x && 200) \|\| y)` |
+| `{ a="z" && a="x" \|\| a="xy" }` | span 3 | left to right |
+Parentheses are accepted, nest arbitrarily (`{ ((a = "x")) }`) and override this:
+`{ a="y" || (a="x" && sc=200) }` returns spans 1 and 2; `{ (a="y" || a="x") && sc=200 }` span 1.
 
-### Comparison  [doc] [unverified]
-`=`  `!=`  `>`  `>=`  `<`  `<=`  `=~`  `!~`
+**Consequence for the injector (critical):** never emit an un-parenthesised mix. The planned
+`{ (X) && (dnf) }` with each side parenthesised is required, and a DNF such as
+`a && b || c && d` must always be written `(a && b) || (c && d)`. Do not rely on any precedence
+and re-verify on version bumps (this behaviour is surprising and may be fixed upstream).
 
-### Logical  [doc]
-`&&`  `||` (inside a filter and between spansets).
+## 3. Operators
 
-### Arithmetic  [doc, partial]
-Docs say arbitrary arithmetic is supported, example
-`{ span.http.request_content_length > 10 * 1024 * 1024 }`. The full set is not listed on the
-page read (expect `+ - * / % ^`: **unverified**). On metrics results: `+ - * /` and comparisons.
+### Comparison  [V]
+`=  !=  >  >=  <  <=  =~  !~` all parse and behave as expected on strings, ints and durations
+(`{ span.http.status_code != 200 }`, `<= 200`, `>= 200 && < 300`, `{ duration > 200ms }`).
 
-### Literals  [doc]
-integers, floats, strings (double-quoted; only `\"` and `\\` escapes), durations
-(`ns us ms s m h`), `nil`, constants `minInt`, `maxInt`; bare-word values such as `error`,
-`ok`, `unset` (status) and kinds like `server` appear in examples (full list unverified).
+### Arithmetic  [V partial]
+`+`, `-`, `*`, `/` verified in filters: `{ span.http.status_code > 100 * 4 }`,
+`= 100 + 400`, `= 1000 / 2`, `{ span.http.status_code - 1 = 499 }` all return the 500 span.
+`%` and `^` parse (`= 1000 % 600`, `= 5 ^ 2`, results were as expected for non-matches) but a
+positive match was not exercised [?].
 
-### Spanset operators  [doc]
-`{A} && {B}` (spans from both, trace must match both) and `{A} || {B}` (union).
-Example: `{ resource.cloud.region = "us-east-1" } && { resource.cloud.region = "us-west-1" }`
+### Logical, literals, misc
+- `&&`, `||` [V]; `!` unary: parses but `{ !(span.a = "x") }` returned no traces, which looks
+  wrong [?] (do not use).
+- Literals: ints, floats (`200.0` parses), strings `"..."` and backtick strings `` `x` `` [V];
+  `true`, `false` (`{ true }` matches all, `{ false }` none) [V]; `nil` only as
+  `span.a != nil` [V], `{ span.a = nil }` is a syntax error in 2.9.0 [V] **DIFFERS** from docs'
+  nil mention; `minInt`/`maxInt` are rejected as unexpected identifiers [V] **DIFFERS**.
+- Rejected [V]: single-quoted strings, `and`/`AND`/`&` as logical operators, upper-case scope
+  (`SPAN.a`), `#` comments (`{ ... # c }` is a syntax error). `{ span.a = "x" } // c` was
+  accepted (reason unknown) [?]; the lexer must not rely on it.
+- Duration literals `ns us ms s m h d` and decimals (`0.2s`) all parse [V]; `{ duration > 1d }` ok.
 
-### Structural operators  [doc]
-| Group | Operators |
-|---|---|
-| standard (return right-hand matches) | `>>` descendant, `<<` ancestor, `>` child, `<` parent, `~` sibling |
-| union (return matches of both sides) | `&>>` `&<<` `&>` `&<` `&~` |
-| negated, documented as experimental (may give false positives) | `!>>` `!<<` `!>` `!<` `!~` |
+### Spanset operators  [V]
+`{A} && {B}` (spans of both sets when the trace matches both), `{A} || {B}`, chains of three,
+and parenthesised `({A}) && ({B})`; `{A} && {B}` with a non-matching side returns nothing.
+No-space forms parse: `{span.a="x"}>>{span.a="y"}`.
 
-Examples: `{ resource.service.name="frontend" } >> { status = error }`,
-`{ } !< { resource.service.name = "foo" }` (`unverified`).
-Lexer note: maximal munch for these multi-character tokens (`!>>` before `!>` before `!`).
+### Structural operators  [V] (all 15 parse and execute on 2.9.0)
+| Group | Operators | Observed |
+|---|---|---|
+| standard | `>>` `>` `<<` `<` `~` | result is the right-hand match: `{frontend} >> {a="y"}` returns the `y` span; `{a="y"} < {frontend}` returns the frontend span; `{a="y"} ~ {a="xy"}` returns the sibling `xy` span |
+| union | `&>>` `&>` `&<` `&~` (and `&<<`) | returns spans of both sides, e.g. `{frontend} &>> {a="y"}` returns root and `y` |
+| negated (docs: experimental) | `!>>` `!>` `!<` `!<<` `!~` | parse and run; may produce false positives per docs |
+Lexer: maximal munch over `!>>`, `!<<`, `&>>`, `&<<`, `>>`, `<<`, `!>`, `!<`, `!~`, `&>`, `&<`, `&~`.
 
-### Pipeline, aggregates, grouping, selection  [doc]
-- `|` chains stages: `{ ... } | count() > 2`.
-- Aggregates: `count()`, `avg(x)`, `max(x)`, `min(x)`, `sum(x)` followed by a comparison.
-  Examples: `{ } | sum(span.bytesProcessed) > 1000000000`.
-- `by(attr)`: `{ status = error } | by(resource.service.name) | count() > 1`.
-- `select(a, b)`: `{ status = error } | select(span.http.status_code, span.http.url)`.
-- `coalesce()` exists in the language but was not described on the pages read (**unverified**).
-- Metrics functions after a pipe: `rate`, `count_over_time`, `sum_over_time`, `max_over_time`,
-  `min_over_time`, `avg_over_time`, `quantile_over_time`, `histogram_over_time`, `compare`;
-  also `topk`, `bottomk`; optional `by (...)`; optional hints `with (exemplars=true)`,
-  `with (spanonly_fetch=false)`. Examples (`unverified`):
+### Pipeline, aggregates, grouping  [V]
+- `{ } | count() > 1`, `count() = 3`, `avg(duration) > 100ms`, `max(...)`, `min(...)`,
+  `sum(duration) > 1s`, `avg(span.http.status_code) > 300` work.
+- Top-level scalar filter without braces: `count() > 1` parses and runs.
+- `by(resource.service.name) | count() > 1`, `select(a, b)`, `select(...) | count() > 1`,
+  `coalesce()`, `by(...) | coalesce() | count() > 1` parse and run.
+- `{A} | {B}` is accepted (second filter applies to the first's result); `{ } | count() > 1 | { span.a = "y" }` returns the `y` span.
+- Rejected [V]: `count() > 1 && avg(...) > 1ms` / `||` between aggregates, `count() + 1 > 2`,
+  `max(...) - min(...) > ...`, `count() > 1 + 1` ("not yet supported"), `| (count() > 1)`.
+- Metrics functions (`rate`, `count_over_time`, `quantile_over_time`, `histogram_over_time`,
+  `compare`, `with (exemplars=true)`) were accepted by `/api/search` but that endpoint does not
+  evaluate them [?]; `topk` and `(A | rate()) / (B | rate())` are rejected there. They need the
+  metrics endpoint and the local-blocks processor, which were **not** exercised. Doc examples
+  remain unverified:
   - `100 * ({status=error} | rate()) / ({} | rate())`
   - `{ span:name = "GET /:endpoint" } | quantile_over_time(duration, .99) by (span.http.target) with (exemplars=true)`
-  - `{ resource.service.name = "frontend" } | rate() by (status) with (spanonly_fetch=false)`
 
-## 4. Intrinsics  [doc] [unverified]
+## 4. Intrinsics  [V]
 
-Current docs use `<scope>:<name>`:
+Accepted and behaving correctly: `span:name`, `span:status` (`error`, `ok`; `unset` returns
+nothing on the fixture), `span:kind` (`client`, `server`), `span:duration`, `span:statusMessage`,
+`trace:duration`, `trace:rootName`, `trace:rootService`, `instrumentation:name`,
+`instrumentation:version`, `event:name`, `event:timeSinceStart`, `link:spanID` (the last three
+parse; no event/link data in the fixture).
+Unscoped legacy forms also work: `name`, `status`, `kind`, `duration`, `statusMessage`,
+`traceDuration`, `rootName`, `rootServiceName`.
+Problems / inconclusive:
+- `childCount` (unscoped) -> 400 "intrinsic (childCount) not yet supported"; `span:childCount` is a
+  syntax error in 2.9.0 **DIFFERS** from docs.
+- `trace:id = "1"` matched trace 1 but the full 32-digit form `"000...001"` did not (ids appear
+  leading-zero-trimmed) [V]; `span:id` and `span:parentID` never matched with either spelling [?].
+- `instrumentation.name` (dot) is parsed as an attribute and matches nothing (colon form is the
+  intrinsic) [V]. Bare `duration` is span duration; `trace:duration` / `traceDuration` is trace-wide [V].
+- Lexer: the scope separator after `span`, `trace`, `event`, `link`, `instrumentation` is `:`
+  for intrinsics and `.` for attributes.
 
-| Scope | Intrinsics |
-|---|---|
-| span | `span:status`, `span:statusMessage`, `span:duration`, `span:name`, `span:kind`, `span:id`, `span:parentID`, `span:childCount` |
-| trace | `trace:duration`, `trace:rootName`, `trace:rootService`, `trace:id` |
-| event | `event:name`, `event:timeSinceStart` |
-| link | `link:spanID`, `link:traceID` |
-| instrumentation | `instrumentation:name`, `instrumentation:version` |
+## 5. Scoped attribute syntax  [V]
 
-Unscoped forms (`status`, `duration`, `name`, `kind`, ...) still appear in doc examples
-(`{ status = error }`); bare `duration` is an alias of `span:duration`, not `trace:duration`.
-The exact unscoped list (e.g. `rootName`, `rootServiceName`, `traceDuration`) is **unverified**;
-the lexer must accept both forms. Examples: `{ span:name = "foo" }`, `{ trace:id = "1234" }`.
+- `span.x`, `resource.x`, and unscoped `.x`. `.x` matches either span or resource attribute
+  (`{ .team = "t1" }` matched the resource attribute, `{ .http.status_code = 500 }` the span one).
+- `span.team` does not match a resource attribute, `resource.a` does not match a span attribute.
+- Names may contain dots: `span.http.status_code`.
+- `parent.span.x` / `parent.resource.x` -> 400 "parent not yet supported" in 2.9.0.
+- Attribute names and values are case sensitive (`span.A`, `"X"` no match); scope keywords are lower case only.
 
-## 5. Scoped attribute syntax  [doc] [unverified]
+## 6. Quoting attribute names with special characters  [V]
 
-- `span.<name>`, `resource.<name>`, `link.<name>`, `event.<name>`, `instrumentation.<name>`
-  (period after the scope). `trace` has no custom attributes.
-- Unscoped `.<name>` (leading dot) is expected to search span and resource scope
-  (**unverified**, from general knowledge of the docs, not seen on the pages read).
-- The name itself may contain dots: `span.http.status_code` is scope `span`, name `http.status_code`.
-- `parent.` scoping: not in the pages read (**unverified**).
+- A space needs quotes: `{ span."weird name" = "w" }` works; `{ span.weird name = "w" }` -> 400.
+- In 2.9.0, `-` and `/` are accepted unquoted (`span.dash-name`, `span.slash/name`) and also
+  quoted (`span."dash-name"`, `span."slash/name"`).
+- Quoted dotted names equal unquoted: `span."http.status_code"`, `resource."service.name"`,
+  `."http.status_code"` all match.
+- Escapes inside quoted names/values: `\"` and `\\` accepted; `\n` -> 400 "invalid escape sequence".
+  Empty name `span.""` parses (no match).
+- Injector rule (confirmed safe): always render a policy attribute name quoted
+  (`span."name"`) with only `\` and `"` escaped, unless it matches `[A-Za-z_][A-Za-z0-9_.]*`.
+  Reject names containing control characters or newlines.
 
-## 6. Quoting attribute names with special characters  [doc] [unverified]
+## 7. Search response fields carrying root span data  [V]
 
-Names containing spaces or dots that must be a single segment are wrapped in double quotes after
-the scope dot: `{ span."attribute name with space" = "value" }`. Only `\"` and `\\` escapes are
-supported inside the quotes.
-Experiments: which characters force quoting (`-`, `/`, `:`, `@`), `resource."service.name"` vs
-`resource.service.name`, empty name, unicode.
-Injector rule (PLAN §7.4 "names rendered as given"): quote with `"..."` escaping only `\` and
-`"` whenever the name is not made of letters, digits, `_` and `.` (starting with a letter or `_`).
+`GET /api/search?q=...` response (2.9.0). Example (condensed), query `{ span.a = "y" }`, which
+matches only a child span:
 
-## 7. Search response fields carrying root span data  [doc] [unverified]
+```json
+{"traces":[{
+  "traceID":"1",                       // leading zeros stripped
+  "rootServiceName":"frontend",        // ROOT DATA, present although the root span did not match
+  "rootTraceName":"GET /",             // ROOT DATA
+  "startTimeUnixNano":"1791975876446223872",
+  "durationMs":1000,
+  "spanSet":{"spans":[...],"matched":1},     // singular, still emitted in 2.9.0
+  "spanSets":[{"spans":[{"spanID":"0000000000000002","startTimeUnixNano":"...","durationNanos":"300000000",
+               "attributes":[{"key":"a","value":{"stringValue":"y"}}]}],"matched":1}],
+  "serviceStats":{"backend":{"spanCount":2,"errorCount":1},"frontend":{"spanCount":1}}
+}],
+"metrics":{"inspectedBytes":"18415","completedJobs":1,"totalJobs":1}}
+```
+Findings:
+- `rootServiceName` and `rootTraceName` come from the root span regardless of what matched.
+  Without a root span (trace 4): `rootServiceName` is the literal `"<root span not yet received>"`
+  and `rootTraceName` is omitted.
+- `durationMs` is the **whole-trace** extent, not the root span duration (trace 3: root 100 ms,
+  `durationMs` 550). `startTimeUnixNano` is the earliest span start of the trace (it equals the
+  root's start in the fixtures; for rootless trace 4 it is the earliest span). Both are
+  independent of which spans matched. PLAN §7.4 wording "root span duration fields" is
+  therefore inaccurate: it is trace-level duration.
+- **New leak:** `serviceStats` lists every service in the trace with `spanCount` and
+  `errorCount` (also services whose spans were not matched). Must be redacted or recomputed.
+- Matched spans (`spanSet(s).spans[]`) only contain spans satisfying the query, with `spanID`,
+  `startTimeUnixNano`, `durationNanos` and the selected attributes (`select()` adds more, e.g.
+  `service.name`; no span `name` field in 2.9.0 `/api/search` output).
+- Both `spanSet` (singular) and `spanSets` carry the same data: redact/rewrite both.
+- Redaction field list for T4.4 when the root span is not known to match the policy:
+  `rootServiceName`, `rootTraceName`, `durationMs`, `startTimeUnixNano`, `serviceStats`
+  (keep `traceID`, `spanSet`/`spanSets`, `metrics`). Decide in T4.4 whether to drop or blank
+  them; blanking `rootServiceName` to an empty string vs omitting is untested against Grafana.
 
-`GET /api/search` params: `q` (TraceQL), legacy `tags` (logfmt, case-insensitive substring),
-`minDuration`, `maxDuration`, `limit` (default 20), `start`/`end` (unix seconds), `spss`
-(default 3).
+## Not exercised (follow-ups)
 
-Each element of `traces[]` carries trace-level root data:
-- `traceID`
-- `rootServiceName` (root span's service)
-- `rootTraceName` (root span's name)
-- `startTimeUnixNano` (string)
-- `durationMs`
-- `spanSets[]` (older versions: singular `spanSet`) each with `matched` and `spans[]`; each span
-  has `spanID`, `startTimeUnixNano`, `durationNanos`, `attributes[]` (`key`, `value.stringValue`...).
-- top-level `metrics` (`totalBlocks`, `inspectedTraces`, `inspectedBytes`, ...): cost counters,
-  not span data.
-
-Redaction candidates for T4.4 (root span not known to match the policy): `rootServiceName`,
-`rootTraceName`, `durationMs`, `startTimeUnixNano`. `spanSets[].spans[]` are matched spans only,
-so they already satisfy the injected filter. Whether `durationMs`/`startTimeUnixNano` are
-root-derived (vs. whole-trace) needs a black-box check. Also check the v2 and tag-value
-endpoints and any `rootSpan*` fields in the pinned version.
-
-## Open items (verify before relying)
-
-1. Precedence of `&&`/`||`, parentheses acceptance (section 2).
-2. `=~` anchoring with alternation.
-3. Arithmetic operator set, unary `!`, unscoped intrinsic list, `parent.` scope, `coalesce()`.
-4. Quoting rules for special characters.
-5. Root-derived search response fields (section 7).
-6. Every example in this file.
+Tempo metrics endpoints and functions; tag/tag-value endpoints (`/api/v2/search/tags`,
+`/api/v2/search/tag/<t>/values`) and their root-data exposure; `/api/v2/traces/<id>`; legacy
+`tags=` param; the `//` acceptance; `!` operator semantics; id intrinsics; `%`/`^` positive matches.
+Re-run `hack/research/languages/` scripts when the pinned Tempo version changes.
 
 ## Doc URLs used (provenance)
 
@@ -156,5 +198,4 @@ endpoints and any `rootSpan*` fields in the pinned version.
 - https://grafana.com/docs/tempo/latest/api_docs/
 - https://grafana.com/docs/tempo/latest/metrics-from-traces/metrics-queries/
 
-Pages were retrieved through a summarising fetch tool, so wording is paraphrased; re-read the
-pages directly when writing parser tests.
+Docs were retrieved through a summarising fetch tool, so doc wording is paraphrased.

@@ -1,0 +1,4 @@
+{ span.a = "c3" }
+{ span.a = "o4" }
+{ span.a = "r3" }
+{ resource.service.name = "childsvc" } | select(span.a)
