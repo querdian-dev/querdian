@@ -10,7 +10,7 @@ import (
 	"github.com/querdian-dev/querdian/internal/config"
 )
 
-func testConfig(t *testing.T) *config.Config {
+func testConfig(t testing.TB) *config.Config {
 	t.Helper()
 	c, err := config.Load("../config/testdata/example.yaml")
 	if err != nil {

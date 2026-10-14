@@ -162,18 +162,18 @@ picking up any task — section references (§) point there.
         by the normalised DNF **iff** it is matched by the input DNF (semantic equivalence).
   - [x] Cap enforced with `ErrTooComplex`.
 
-### [ ] T1.5 — Resolver and tenant handling
+### [x] T1.5 — Resolver and tenant handling
 - **Depends on:** T1.4
 - **Files:** `internal/policy/resolve.go`, `internal/policy/snapshot.go`, tests
 - **Description:** `Snapshot` (immutable) with `Resolve(user string, groups []string, backend string) (Effective, error)`
   per PLAN §6.2 and §6.4, including `__tenant_id__` binding and
   `cross_tenant_union_unsupported` rejection; `DeniedLabels` union.
 - **Acceptance:**
-  - [ ] Tests: no grant, single rule, multiple rules same tenant, multiple tenants identical
+  - [x] Tests: no grant, single rule, multiple rules same tenant, multiple tenants identical
         terms, multiple tenants with federation, multiple tenants without federation (reject),
         unrestricted + restricted mix, denied labels union.
-  - [ ] Benchmark: resolve with 1,000 policies and 20 groups < 50µs/op.
-  - [ ] `__tenant_id__` is bound only for federation (multi-tenant) headers; test with single-tenant header. Selectors always keep at least one non-`__tenant_id__` matcher (see PLAN §6.4).
+  - [x] Benchmark: resolve with 1,000 policies and 20 groups < 50µs/op.
+  - [x] `__tenant_id__` is bound only for federation (multi-tenant) headers; test with single-tenant header. Selectors always keep at least one non-`__tenant_id__` matcher (see PLAN §6.4).
 
 ### [ ] T1.6 — Controller and snapshot lifecycle
 - **Depends on:** T1.5

@@ -51,17 +51,14 @@ func compileMatcher(t config.BackendType, m v1.Matcher) (Matcher, *compileError)
 	if !validName(t, m.Name) {
 		return Matcher{}, fail(ReasonInvalidMatcher, "invalid label name %q for %s backend", m.Name, t)
 	}
-	cm := Matcher{Name: m.Name, Op: m.Op, Value: m.Value}
 	switch m.Op {
-	case v1.MatchEqual, v1.MatchNotEqual:
-	case v1.MatchRegexMatch, v1.MatchRegexNoMatch:
-		re, err := regexp.Compile("^(?:" + m.Value + ")$")
-		if err != nil {
-			return Matcher{}, fail(ReasonInvalidMatcher, "matcher %q: regex does not compile: %v", m.Name, err)
-		}
-		cm.re = re
+	case v1.MatchEqual, v1.MatchNotEqual, v1.MatchRegexMatch, v1.MatchRegexNoMatch:
 	default:
 		return Matcher{}, fail(ReasonInvalidMatcher, "matcher %q: unknown operator %q", m.Name, m.Op)
+	}
+	cm, err := newMatcher(m.Name, m.Op, m.Value)
+	if err != nil {
+		return Matcher{}, fail(ReasonInvalidMatcher, "matcher %q: regex does not compile: %v", m.Name, err)
 	}
 	return cm, nil
 }
@@ -224,7 +221,7 @@ func (r *CompiledRule) canonical() string {
 	}
 	parts := make([]string, len(r.Matchers))
 	for i, m := range r.Matchers {
-		parts[i] = fmt.Sprintf("%q %s %q", m.Name, m.Op, m.Value)
+		parts[i] = m.k
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, " & ")

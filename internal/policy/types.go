@@ -3,6 +3,7 @@ package policy
 
 import (
 	"regexp"
+	"sync"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 )
@@ -29,7 +30,9 @@ type Matcher struct {
 	Op    v1.MatchOp
 	Value string
 	// re is set for RegexMatch and RegexNoMatch, anchored as ^(?:Value)$.
-	re *regexp.Regexp
+	re *lazyRegexp
+	// k is a canonical identity string, computed once at construction.
+	k string
 }
 
 // Matches reports whether a label value (empty when the label is absent) satisfies the matcher.
@@ -40,11 +43,24 @@ func (m Matcher) Matches(value string) bool {
 	case v1.MatchNotEqual:
 		return value != m.Value
 	case v1.MatchRegexMatch:
-		return m.re.MatchString(value)
+		return m.re.get().MatchString(value)
 	case v1.MatchRegexNoMatch:
-		return !m.re.MatchString(value)
+		return !m.re.get().MatchString(value)
 	}
 	return false
+}
+
+// lazyRegexp compiles its (already validated) source on first use. Merged matchers are built on every
+// request, and most are never evaluated in-process.
+type lazyRegexp struct {
+	src  string
+	once sync.Once
+	re   *regexp.Regexp
+}
+
+func (l *lazyRegexp) get() *regexp.Regexp {
+	l.once.Do(func() { l.re = regexp.MustCompile(l.src) })
+	return l.re
 }
 
 // CompiledRule is one rule of one policy, for exactly one backend.
