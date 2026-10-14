@@ -103,6 +103,14 @@ func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, 
 		warnings [][]string
 		isEmpty  = true
 	)
+	anyMatrix := false
+	for _, resp := range resps {
+		if top, err := decodeObject(resp.Body); err == nil {
+			if bs, err := sumShapeOf(top); err == nil && bs == sumMatrix {
+				anyMatrix = true
+			}
+		}
+	}
 	for i, resp := range resps {
 		top, derr := decodeObject(resp.Body)
 		if derr != nil {
@@ -114,6 +122,11 @@ func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, 
 		bs, derr := sumShapeOf(top)
 		if derr != nil {
 			return nil, 0, 0, fmt.Errorf("branch %d: %w", i, derr)
+		}
+		// Black-box finding (Loki 3.5.0, T3.8): index/volume_range answers a branch that matches no series
+		// with resultType "vector" and an empty result instead of an empty matrix.
+		if anyMatrix && bs == sumVector && emptyResult(top) {
+			bs = sumMatrix
 		}
 		if bs == sumUnknown {
 			continue // {}
@@ -501,4 +514,12 @@ func patternResult(acc map[string]*patSeries) []map[string]any {
 		out = append(out, map[string]any{"pattern": p.pattern, "samples": samples})
 	}
 	return out
+}
+
+// emptyResult reports whether data.result of a vector/matrix response is an empty list.
+func emptyResult(top map[string]json.RawMessage) bool {
+	var data struct {
+		Result []json.RawMessage `json:"result"`
+	}
+	return json.Unmarshal(top["data"], &data) == nil && len(data.Result) == 0
 }
