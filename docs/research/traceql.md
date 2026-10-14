@@ -200,6 +200,19 @@ Recorded against Tempo 2.9.0 (`internal/fanout/testdata/tempo/record.sh`):
   only for unrestricted policies (`traceql.RootCovered`), since the DNF constrains matched spans only and
   the spans of one trace may carry different resource attributes.
 
+## 9. Trace by ID and missing attributes (T4.5)  [V]
+
+Tempo 2.9.0, fixtures in `internal/enforce/traceql/testdata/` (`record.sh`):
+- `GET /api/traces/<id>`: JSON `{"batches":[{resource, scopeSpans:[{scope, spans}]}]}`; protobuf (`Accept:
+  application/protobuf`) is `tempopb.Trace`. Unknown id: 404, empty body.
+- `GET /api/v2/traces/<id>`: JSON `{"trace":{"resourceSpans":[...]},"metrics":{...}}`; protobuf is
+  `TraceByIDResponse` (1 trace, 2 metrics, 3 status, 4 message). Unknown id: **200** with `{"trace":{},"metrics":{}}`.
+- Missing attribute under a comparison (search): a span lacking the attribute is returned by none of `=`, `!=`,
+  `=~`, `!~` (`{ span."weird name" != "zzz" }` returns only the span that has the attribute; `= ""` and `=~ ""`
+  return nothing; `=~ ".*"` returns only spans that have it). An integer attribute never satisfies a string
+  comparison, also not `!=` / `!~`. The unscoped `.team` finds a resource attribute for every span of that resource.
+- The trace-by-ID filter uses exactly this rule (a matcher needs a present string attribute).
+
 ## Not exercised (follow-ups)
 
 Tempo metrics endpoints and functions; tag/tag-value endpoints (`/api/v2/search/tags`,

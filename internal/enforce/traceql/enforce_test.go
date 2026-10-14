@@ -144,7 +144,7 @@ func TestErrors(t *testing.T) {
 		{"parse", "/api/search", q("q", `{ span.a = `), one, enforce.ErrParse},
 		{"two q", "/api/search", q("q", `{ }`, "q", `{ }`), one, enforce.ErrUnsupported},
 		{"unlisted param", "/api/search", q("q", `{ }`, "storeMatch[]", "x"), one, enforce.ErrUnsupported},
-		{"trace by id", "/api/traces/abc", q(), one, enforce.ErrUnsupported},
+		{"trace by id denied by default", "/api/traces/abc", q(), one, enforce.ErrDeniedLabel},
 		{"denied route", "/api/overrides", q(), one, enforce.ErrUnsupported},
 		{"tenant id matcher", "/api/search", q("q", `{ }`), eff(nil, term(m("resource.ns", v1.MatchEqual, "a"), m(policy.TenantIDLabel, v1.MatchEqual, "t"))), enforce.ErrUnsupported},
 		{"tenant bound", "/api/search", q("q", `{ }`), eff(nil, policy.Term{Tenant: "t1", Matchers: one.Terms[0].Matchers}), enforce.ErrUnsupported},
