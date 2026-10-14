@@ -175,7 +175,7 @@ picking up any task — section references (§) point there.
   - [x] Benchmark: resolve with 1,000 policies and 20 groups < 50µs/op.
   - [x] `__tenant_id__` is bound only for federation (multi-tenant) headers; test with single-tenant header. Selectors always keep at least one non-`__tenant_id__` matcher (see PLAN §6.4).
 
-### [ ] T1.6 — Controller and snapshot lifecycle
+### [x] T1.6 — Controller and snapshot lifecycle
 - **Depends on:** T1.5
 - **Files:** `internal/controller/*`, tests (envtest)
 - **Description:** controller-runtime manager; informers for both CRD kinds and Namespaces;
@@ -183,11 +183,11 @@ picking up any task — section references (§) point there.
   `Ready()` true after cache sync + first snapshot. Status writer as a leader-elected runnable
   that patches `status.conditions` + `observedGeneration` only on change.
 - **Acceptance:**
-  - [ ] envtest: create/update/delete policy → snapshot generation increments, resolve reflects it
+  - [x] envtest: create/update/delete policy → snapshot generation increments, resolve reflects it
         within 1s.
-  - [ ] envtest: namespace tenant label added → `TenantNotAssigned` flips to `Compiled`.
-  - [ ] Two managers against one envtest: only the leader writes status.
-  - [ ] Tracing span `snapshot.rebuild` emitted (use tracetest).
+  - [x] envtest: namespace tenant label added → `TenantNotAssigned` flips to `Compiled`.
+  - [x] Two managers against one envtest: only the leader writes status.
+  - [x] Tracing span `snapshot.rebuild` emitted (use tracetest).
 
 ### [ ] T1.7 — OIDC authentication ∥
 - **Depends on:** T1.2
