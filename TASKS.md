@@ -139,7 +139,7 @@ picking up any task — section references (§) point there.
   - [x] Table tests for every validation rule in PLAN §5.1.
   - [x] Example config from PLAN §5.1 loads successfully (`testdata/`).
 
-### [ ] T1.3 — Policy compilation
+### [x] T1.3 — Policy compilation
 - **Depends on:** T1.1, T1.2
 - **Files:** `internal/policy/compile.go`, `internal/policy/types.go`, tests
 - **Description:** Pure functions (no Kubernetes client) that turn CRD objects + namespace
@@ -147,9 +147,9 @@ picking up any task — section references (§) point there.
   Label name validation per backend type (Prometheus/Loki label names; Tempo attribute names).
   Regexes compiled anchored.
 - **Acceptance:**
-  - [ ] Every status reason in PLAN §4.4 covered by a test.
-  - [ ] AccessPolicy implicit namespace matcher uses the backend's `namespaceLabel`.
-  - [ ] Users and groups indexed in separate maps; a user named like a group gets no grant from it.
+  - [x] Every status reason in PLAN §4.4 covered by a test.
+  - [x] AccessPolicy implicit namespace matcher uses the backend's `namespaceLabel`.
+  - [x] Users and groups indexed in separate maps; a user named like a group gets no grant from it.
 
 ### [ ] T1.4 — DNF normalisation
 - **Depends on:** T1.3
