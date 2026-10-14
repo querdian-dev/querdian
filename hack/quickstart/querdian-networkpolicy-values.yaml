@@ -1,0 +1,48 @@
+# Optional hardening (QUICKSTART_NETWORKPOLICY=1 ./up.sh, or helm upgrade with this file added).
+# Needs a CNI that enforces NetworkPolicy (kindnet in current kind does).
+#
+# 1. networkPolicy.enabled: the Querdian pods accept the proxy port only from Grafana, the
+#    management port only from Prometheus, and may only talk to DNS, the API server, Keycloak,
+#    the three backends and the collector.
+# 2. backendProtection: companion policies in the `observability` namespace so that ONLY
+#    Querdian (and the collector, which writes to Loki and Tempo) reach Prometheus, Loki and
+#    Tempo. Grafana can no longer bypass the proxy. This is the "backends must not be reachable
+#    by clients directly" requirement of the security model.
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+        podSelector: {matchLabels: {app: grafana}}
+    managementFrom:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+        podSelector: {matchLabels: {app: prometheus}}
+  egress:
+    oidc:
+      to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: keycloak}}
+      ports: [8080] # the pod port behind the Keycloak Service; must match the issuer's service
+    backends:
+      to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+      ports: [9090, 3100, 3200]
+    tracing:
+      enabled: true
+      to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+      ports: [4318]
+  backendProtection:
+    enabled: true
+    # ONE target for all three backends: the chart names the generated policy
+    # "<release>-allow-querdian-only" per namespace, so several targets in the same namespace
+    # would overwrite each other (chart issue found while writing the quickstart).
+    # Consequence: the collector (which writes to Loki and Tempo) may also reach Prometheus ports
+    # of the selected pods; Prometheus itself only needs egress, which is not restricted here.
+    targets:
+      - namespace: observability
+        podSelector:
+          matchExpressions:
+            - {key: app, operator: In, values: [prometheus, loki, tempo]}
+        ports: [9090, 3100, 3200, 4318]
+        allowFrom:
+          - podSelector: {matchLabels: {app: otel-collector}}

@@ -469,15 +469,21 @@ picking up any task — section references (§) point there.
   - [ ] Tag push → GitHub release with binaries, signed image (cosign keyless), SBOM, SLSA
         provenance; chart published to OCI registry.
 
-### [ ] T5.3 — Quickstart on kind ∥
+### [~] T5.3 — Quickstart on kind ∥
 - **Depends on:** T5.1, T2.4, T3.8, T4.6
 - **Files:** `hack/quickstart/*`, `docs/quickstart.md`
 - **Description:** One script: kind cluster, Keycloak (realm, users, groups), Prometheus, Loki,
   Tempo, OTel Collector, Grafana with data sources pointing at the proxy (OAuth pass-through),
   sample workloads in two namespaces, example policies.
 - **Acceptance:**
-  - [ ] From zero to working isolation demo in ≤ 15 minutes on a laptop.
-  - [ ] Two demo users demonstrably see different data in Grafana.
+  - [x] From zero to working isolation demo in ≤ 15 minutes on a laptop (measured 3 min 37 s warm
+        build cache, see `docs/quickstart.md`; cold first run not timed separately).
+  - [x] Two demo users demonstrably see different data in Grafana: `hack/quickstart/verify.sh`
+        (71 assertions) drives the Keycloak login headlessly and queries through the Grafana data
+        sources with OAuth pass-through. The interactive Explore UI in a real browser was NOT
+        automated (manual walkthrough in the doc).
+  - Note: the chart's `backendProtection` names its policy per namespace, so several targets in one
+    namespace collide; the quickstart works around it with one `matchExpressions` target.
 
 ### [~] T5.4 — Documentation ∥
 - **Depends on:** T2.4, T3.8, T4.6

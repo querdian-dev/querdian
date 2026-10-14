@@ -1,0 +1,94 @@
+# Grafana with generic OAuth against Keycloak and data sources that point at the Querdian
+# proxy, NOT at Prometheus/Loki/Tempo. `oauthPassThru: true` makes Grafana forward the logged-in
+# user's access token (Authorization: Bearer ...) with every query, so Querdian sees the user.
+# The local `admin` user has no OAuth token: its queries get 401 from Querdian (by design).
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-datasources, namespace: observability}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus (via Querdian)
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://querdian.querdian:8080/prom
+        isDefault: true
+        jsonData:
+          oauthPassThru: true
+          httpMethod: POST
+      - name: Loki (via Querdian)
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://querdian.querdian:8080/loki
+        jsonData:
+          oauthPassThru: true
+      - name: Tempo (via Querdian)
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://querdian.querdian:8080/tempo
+        jsonData:
+          oauthPassThru: true
+          # gRPC streaming is not supported through Querdian.
+          streamingEnabled: {search: false, metrics: false}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: observability}
+spec:
+  type: NodePort
+  selector: {app: grafana}
+  ports: [{name: http, port: 3000, targetPort: 3000, nodePort: 30030}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      securityContext: {fsGroup: 472}
+      containers:
+        - name: grafana
+          image: docker.io/grafana/grafana:12.2.0
+          env:
+            - {name: GF_SECURITY_ADMIN_USER, value: admin}
+            - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
+            - {name: GF_SERVER_ROOT_URL, value: "http://localhost:3000"}
+            - {name: GF_ANALYTICS_REPORTING_ENABLED, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false"}
+            - {name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true"}
+            - {name: GF_USERS_DEFAULT_THEME, value: dark}
+            # Keycloak login. auth_url is opened by the browser (laptop), token_url/api_url by
+            # Grafana itself (in-cluster); both use the same issuer host, see keycloak.yaml.
+            - {name: GF_AUTH_GENERIC_OAUTH_ENABLED, value: "true"}
+            - {name: GF_AUTH_GENERIC_OAUTH_NAME, value: Keycloak}
+            - {name: GF_AUTH_GENERIC_OAUTH_CLIENT_ID, value: grafana}
+            - {name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET, value: grafana-demo-secret}
+            - {name: GF_AUTH_GENERIC_OAUTH_SCOPES, value: "openid profile email"}
+            - {name: GF_AUTH_GENERIC_OAUTH_USE_PKCE, value: "true"}
+            - {name: GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP, value: "true"}
+            - {name: GF_AUTH_GENERIC_OAUTH_AUTH_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/auth"}
+            - {name: GF_AUTH_GENERIC_OAUTH_TOKEN_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/token"}
+            - {name: GF_AUTH_GENERIC_OAUTH_API_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/userinfo"}
+            - {name: GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH, value: preferred_username}
+            - {name: GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH, value: name}
+            - {name: GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH, value: "contains(groups[*], 'platform-admins') && 'Admin' || 'Editor'"}
+            - {name: GF_AUTH_GENERIC_OAUTH_SKIP_ORG_ROLE_UPDATE_SYNC, value: "false"}
+            - {name: GF_AUTH_SIGNOUT_REDIRECT_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/logout?client_id=grafana&post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A3000%2F"}
+          ports: [{containerPort: 3000}]
+          readinessProbe: {httpGet: {path: /api/health, port: 3000}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 50m, memory: 150Mi}
+            limits: {memory: 500Mi}
+          volumeMounts:
+            - {name: datasources, mountPath: /etc/grafana/provisioning/datasources}
+      volumes:
+        - name: datasources
+          configMap: {name: grafana-datasources}

@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: prometheus, namespace: observability}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: quickstart-prometheus}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: quickstart-prometheus}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: quickstart-prometheus}
+subjects: [{kind: ServiceAccount, name: prometheus, namespace: observability}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus, namespace: observability}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+    scrape_configs:
+      - job_name: annotated-pods
+        # NAMESPACE-LABEL INTEGRITY (docs/policy-guide.md): the `namespace` label that an
+        # AccessPolicy filters on is set HERE, by the collection pipeline, from the namespace
+        # the pod really runs in (service discovery metadata). It is never taken from the
+        # workload:
+        #  * honor_labels: false (the default, spelled out on purpose): if a workload exposes a
+        #    series with its own namespace="..." label, Prometheus renames it to
+        #    exported_namespace and keeps the discovered value. The order-service sample
+        #    exposes such a spoofed series; verify.sh checks that payment-service users
+        #    never see it.
+        #  * the relabel rule below writes the `namespace` target label from discovery.
+        honor_labels: false
+        fallback_scrape_protocol: PrometheusText0.0.4
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+);(.+)
+            replacement: $1:$2
+          # The namespace label comes from the pod's real namespace.
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: job
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: observability}
+spec:
+  selector: {app: prometheus}
+  ports: [{name: http, port: 9090, targetPort: 9090}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata:
+      labels: {app: prometheus}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9090", prometheus.io/path: /metrics}
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: docker.io/prom/prometheus:v3.5.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=2h
+          ports: [{containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /-/ready, port: 9090}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 400Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus}
+        - name: data
+          emptyDir: {}

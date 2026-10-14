@@ -1,0 +1,39 @@
+# Example policies (apply after the Querdian chart, which installs the CRDs).
+#
+# Group names are the values of the `groups` claim that Keycloak puts into the access token:
+#   alice -> order-team, bob -> payment-team, carol -> platform-admins.
+#
+# An AccessPolicy is implicitly ANDed with <namespaceLabel>="<its own namespace>" per backend
+# (namespace=..., k8s_namespace_name=..., resource.k8s.namespace.name=...). The Loki/Tempo tenant
+# comes from the namespace label policy.querdian.dev/tenant (set to "demo" in 00-base.yaml).
+apiVersion: policy.querdian.dev/v1alpha1
+kind: AccessPolicy
+metadata: {name: order-team, namespace: order-service}
+spec:
+  subjects: {groups: [order-team]}
+  rules:
+    # Denied-label example: order-team can query metrics, but customer_id may not be used to
+    # filter, group or join (query -> 403 denied_label) and is hidden from /api/v1/labels.
+    - backends: [metrics]
+      labels: {deny: [customer_id]}
+    - backends: [logs, traces]
+---
+apiVersion: policy.querdian.dev/v1alpha1
+kind: AccessPolicy
+metadata: {name: payment-team, namespace: payment-service}
+spec:
+  subjects: {groups: [payment-team]}
+  rules:
+    - backends: [metrics, logs, traces]
+---
+# Platform admins see everything in tenant "demo": all namespaces, including the observability
+# stack and Querdian's own logs and traces. Only a ClusterAccessPolicy can be unrestricted.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: ClusterAccessPolicy
+metadata: {name: platform-admins}
+spec:
+  subjects: {groups: [platform-admins]}
+  rules:
+    - backends: [metrics, logs, traces]
+      tenants: [demo]
+      unrestricted: true

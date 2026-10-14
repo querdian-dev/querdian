@@ -1,0 +1,137 @@
+# OpenTelemetry Collector as a DaemonSet (one node in kind): tails container logs (filelog) and
+# receives OTLP traces from the sample workloads and from Querdian itself.
+#
+# NAMESPACE-LABEL INTEGRITY (docs/policy-guide.md): the namespace of every log line and span is
+# set HERE, from the file path / the pod that really sent the data, never taken from the payload:
+#  * logs: the filelog `container` parser derives k8s.namespace.name from the log file path
+#    (/var/log/pods/<namespace>_<pod>_<uid>/...), and k8sattributes confirms it from the API.
+#  * traces: the `resource/strip-k8s` processor first DELETES any k8s.* resource attribute the
+#    workload supplied (the order-service sample sends a spoofed k8s.namespace.name), then
+#    k8sattributes sets it from the pod IP of the connection.
+# Loki turns k8s.namespace.name into the label k8s_namespace_name; Tempo keeps it as the resource
+# attribute resource.k8s.namespace.name.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: otel-collector, namespace: observability}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: quickstart-otel-collector}
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: quickstart-otel-collector}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: quickstart-otel-collector}
+subjects: [{kind: ServiceAccount, name: otel-collector, namespace: observability}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: otel-collector, namespace: observability}
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http: {endpoint: "0.0.0.0:4318"}
+      filelog:
+        # Sample workloads and Querdian only (keeps the footprint small).
+        include:
+          - /var/log/pods/order-service_*/*/*.log
+          - /var/log/pods/payment-service_*/*/*.log
+          - /var/log/pods/querdian_*/*/*.log
+        start_at: beginning
+        include_file_path: true
+        operators:
+          - type: container
+            id: container-parser
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 160
+      # Never trust namespace/pod identity supplied by the sender.
+      resource/strip-k8s:
+        attributes:
+          - {key: k8s.namespace.name, action: delete}
+          - {key: k8s.pod.name, action: delete}
+          - {key: k8s.pod.uid, action: delete}
+          - {key: k8s.node.name, action: delete}
+          - {key: k8s.container.name, action: delete}
+      k8sattributes/connection:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: connection}]
+      k8sattributes/uid:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: resource_attribute, name: k8s.pod.uid}]
+      batch:
+        timeout: 2s
+    exporters:
+      # Loki OTLP endpoint; the tenant is fixed here, by the pipeline.
+      otlphttp/loki:
+        endpoint: http://loki.observability:3100/otlp
+        headers: {X-Scope-OrgID: demo}
+        tls: {insecure: true}
+      otlphttp/tempo:
+        endpoint: http://tempo.observability:4318
+        headers: {X-Scope-OrgID: demo}
+        tls: {insecure: true}
+    service:
+      telemetry:
+        metrics: {level: none}
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8sattributes/uid, batch]
+          exporters: [otlphttp/loki]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/strip-k8s, k8sattributes/connection, batch]
+          exporters: [otlphttp/tempo]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {app: otel-collector}
+  ports: [{name: otlp-http, port: 4318, targetPort: 4318}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {matchLabels: {app: otel-collector}}
+  template:
+    metadata: {labels: {app: otel-collector}}
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        - name: collector
+          image: docker.io/otel/opentelemetry-collector-contrib:0.137.0
+          args: [--config=/etc/otelcol/config.yaml]
+          ports: [{containerPort: 4318}]
+          securityContext: {runAsUser: 0}  # reads root-owned container log files
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 250Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otelcol}
+            - {name: varlogpods, mountPath: /var/log/pods, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: otel-collector}
+        - name: varlogpods
+          hostPath: {path: /var/log/pods}
