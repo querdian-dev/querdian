@@ -440,11 +440,19 @@ picking up any task — section references (§) point there.
 - **Description:** PLAN §14 chart contents, tracing values → `OTEL_*` env + Downward API
   resource attributes, `values.schema.json`, `helm lint` + `ct` (chart-testing) in CI.
 - **Acceptance:**
-  - [ ] `helm install` on kind succeeds; pods ready; leader election lease present.
-        (Chart written; `helm lint`/`template` + `go test ./charts/...` green. Not yet verified on
-        kind: no kind and no image available when implemented. `ct` CI wiring is part of T0.2/CI.)
-  - [ ] NetworkPolicy example restricts backend access to proxy pods.
-        (Rendered via `networkPolicy.backendProtection`; behaviour not yet verified on a cluster.)
+  - [x] `helm install` on kind succeeds; pods ready; leader election lease present.
+        (Verified with `hack/kind/verify-chart.sh` on kind v0.33 / Kubernetes 1.37, podman provider,
+        one control-plane node: 2/2 replicas Ready against a stub in-cluster OIDC issuer, Lease
+        `querdian-leader-election` held, sample AccessPolicy status written by the leader
+        (`Compiled` / `TenantNotAssigned`, so RBAC works), no error/warn logs; `helm upgrade` with a
+        changed config rolls the Deployment via `checksum/config`; `helm uninstall` leaves nothing
+        but the CRDs. `ct` CI wiring is part of T0.2/CI.)
+  - [x] NetworkPolicy example restricts backend access to proxy pods.
+        (Verified on kindnet, which enforces policies: with `backendProtection` a client pod can no
+        longer reach the dummy backend, a pod with the proxy's labels in the release namespace can;
+        with `networkPolicy.enabled` and empty `ingress.from` nobody reaches the proxy or management
+        port, `ingress.from` admits only the listed namespace, and querdian stays Ready under its own
+        egress policy. Not covered: real proxy traffic to real backends, as the backends are dummies.)
 
 ### [ ] T5.2 — Image and release pipeline ∥
 - **Depends on:** T1.11
@@ -466,8 +474,11 @@ picking up any task — section references (§) point there.
   - [ ] From zero to working isolation demo in ≤ 15 minutes on a laptop.
   - [ ] Two demo users demonstrably see different data in Grafana.
 
-### [ ] T5.4 — Documentation ∥
+### [~] T5.4 — Documentation ∥
 - **Depends on:** T2.4, T3.8, T4.6
+- **Status:** written against the code at `integrate-m3-m4` (T2.4, T3.8, T4.6 still open). Revisit after
+  they land (differential/E2E findings) and when the chart, image and dashboards exist; the
+  quickstart and dashboards docs belong to T5.3 / T5.5.
 - **Files:** `docs/**`
 - **Description:** Policy guide (CRDs, union semantics, tenants, denied labels), operations
   (config, scaling, upgrades), security model + `docs/security/threat-model.md` (PLAN §12),
@@ -475,8 +486,9 @@ picking up any task — section references (§) point there.
   upstream errors), known limitations (absent edge cases, approximate stats under overlap,
   unsupported syntax → 400).
 - **Acceptance:**
-  - [ ] Every reason code and status reason documented.
-  - [ ] Namespace-label integrity requirement prominent in policy guide and security model.
+  - [x] Every reason code and status reason documented (cross-checked against `handler.go`,
+        `internal/policy/types.go` and `internal/auth/errors.go`).
+  - [x] Namespace-label integrity requirement prominent in policy guide and security model.
 
 ### [x] T5.5 — Grafana dashboard ∥
 - **Depends on:** T1.10

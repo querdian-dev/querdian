@@ -115,7 +115,6 @@ func run(args []string) error {
 		Config:    cfg,
 		Snapshots: ctl,
 		Auth:      authn,
-		// Prometheus enforces single-term policies only until T2.2; several terms are rejected (fail closed).
 		Enforcers: map[config.BackendType]enforce.Enforcer{
 			config.BackendPrometheus: enforcepromql.New(),
 			config.BackendLoki:       enforcelogql.New(),

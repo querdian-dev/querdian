@@ -192,9 +192,20 @@ func planSeries(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 		}
 		strategy = "match_expand"
 	}
-	return enforce.Plan{
+	plan := enforce.Plan{
 		Requests: []enforce.Upstream{{Query: c, Term: -1}},
 		Merge:    enforce.MergeNone,
 		Strategy: strategy,
-	}, nil
+	}
+	if len(eff.DeniedLabels) > 0 {
+		denied := slices.Clone(eff.DeniedLabels)
+		plan.ResponseFilterMaxBytes = seriesFilterMaxBytes
+		plan.ResponseFilter = func(body []byte) ([]byte, error) {
+			return enforce.FilterSeriesResponse(body, denied, seriesFilterMaxBytes)
+		}
+	}
+	return plan, nil
 }
+
+// seriesFilterMaxBytes bounds buffering of a series response that is filtered for denied labels.
+const seriesFilterMaxBytes = 16 << 20
