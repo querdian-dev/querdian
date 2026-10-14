@@ -167,3 +167,9 @@ func NamespacedPolicy(namespace, name string, subj v1.Subjects, rules ...v1.Rule
 	p.Name, p.Namespace = name, namespace
 	return p
 }
+
+// WithTenants returns r granting the given tenants (backends with a tenant header require them).
+func WithTenants(r v1.ClusterRule, tenants ...string) v1.ClusterRule {
+	r.Tenants = tenants
+	return r
+}

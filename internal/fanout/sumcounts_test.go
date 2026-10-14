@@ -213,3 +213,23 @@ func TestSumSpanAttribute(t *testing.T) {
 		t.Errorf("attributes = %v", rec.Ended()[0].Attributes())
 	}
 }
+
+// Loki 3.5.0 answers an index/volume_range branch without matching series as an empty "vector".
+func TestSumVolumeRangeEmptyVectorBranch(t *testing.T) {
+	matrix := volBody("matrix", `[{"metric":{"app":"a"},"values":[[60,"1"]]}]`, "")
+	empty := volBody("vector", `[]`, "")
+	for name, bodies := range map[string][]string{"empty first": {empty, matrix}, "empty last": {matrix, empty}} {
+		_, out, err := sumMerge(t, "/loki/api/v1/index/volume_range", nil, false, bodies...)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		d := out["data"].(map[string]any)
+		if d["resultType"] != "matrix" || len(d["result"].([]any)) != 1 {
+			t.Errorf("%s: out = %v", name, out)
+		}
+	}
+	_, out, err := sumMerge(t, "/loki/api/v1/index/volume_range", nil, false, empty, empty)
+	if err != nil || out["data"].(map[string]any)["resultType"] != "vector" {
+		t.Errorf("all empty: %v %v", out, err)
+	}
+}

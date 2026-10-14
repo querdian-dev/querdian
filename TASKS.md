@@ -367,14 +367,14 @@ picking up any task — section references (§) point there.
         close with reason, client close → upstreams closed.
   - [x] No goroutine leaks (`goleak`).
 
-### [ ] T3.8 — Loki differential, E2E and equivalence
+### [x] T3.8 — Loki differential, E2E and equivalence
 - **Depends on:** T3.4, T3.5, T3.6, T3.7, T2.4 (framework)
 - **Files:** `test/e2e/loki/*`
 - **Acceptance:**
-  - [ ] Differential fuzz: generated LogQL sent to Loki directly and via proxy; any query Loki
+  - [x] Differential fuzz: generated LogQL sent to Loki directly and via proxy; any query Loki
         accepts is either enforced or rejected by the proxy — never passed through unenforced.
-  - [ ] Every proxy rewrite is accepted by Loki.
-  - [ ] Isolation and equivalence suites analogous to T2.4 (log + metric queries, tail).
+  - [x] Every proxy rewrite is accepted by Loki.
+  - [x] Isolation and equivalence suites analogous to T2.4 (log + metric queries, tail).
 
 ---
 

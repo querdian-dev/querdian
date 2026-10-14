@@ -11,7 +11,9 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"regexp"
 	"slices"
+	"strings"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/enforce"
@@ -83,6 +85,9 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 		if err != nil {
 			return enforce.Plan{}, err
 		}
+		if q.Kind == lq.KindMetric {
+			ms = negateTenantBinding(ms, eff.Tenants)
+		}
 		terms[i] = ms
 	}
 
@@ -109,6 +114,35 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 		plan.Requests = append(plan.Requests, enforce.Upstream{Query: withQuery(params, param, out), Term: i})
 	}
 	return plan, nil
+}
+
+// negateTenantBinding rewrites a positive __tenant_id__ matcher (the tenant binding of a term under tenant
+// federation) of a metric query into the equivalent negative matcher over the other tenants of the
+// request: __tenant_id__="t1" becomes __tenant_id__!~"t2|t3".
+//
+// Black-box finding (Loki 3.5.0, tenant federation, T3.8): a positive __tenant_id__ matcher ("=" or "=~")
+// inside a metric query makes Loki return an empty result, while log queries and the negative forms are
+// evaluated correctly (the negative form selects exactly the remaining tenants). Without this rewrite a
+// tenant-bound policy would silently yield empty metric results.
+func negateTenantBinding(ms []lq.InjectMatcher, tenants []string) []lq.InjectMatcher {
+	out := make([]lq.InjectMatcher, len(ms))
+	copy(out, ms)
+	for i, m := range out {
+		if m.Name != lq.TenantIDLabel || m.Op != "=" {
+			continue
+		}
+		var others []string
+		for _, t := range tenants {
+			if t != m.Value {
+				others = append(others, regexp.QuoteMeta(t))
+			}
+		}
+		if len(others) == 0 || !slices.Contains(tenants, m.Value) {
+			continue
+		}
+		out[i] = lq.InjectMatcher{Name: m.Name, Op: "!~", Value: strings.Join(others, "|")}
+	}
+	return out
 }
 
 func single(params url.Values, param, query, strategy string, term int) enforce.Plan {
