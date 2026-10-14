@@ -115,15 +115,15 @@ picking up any task — section references (§) point there.
 
 ## M1 — Core
 
-### [ ] T1.1 — CRD types and manifests
+### [x] T1.1 — CRD types and manifests
 - **Depends on:** T0.1
 - **Files:** `api/v1alpha1/*.go`, `config/crd/*.yaml`, `hack/boilerplate.go.txt`,
   `api/v1alpha1/*_test.go`
 - **Description:** Implement PLAN §4.3 exactly. `controller-gen` for deepcopy + CRDs.
   `groupversion_info.go` with scheme registration.
 - **Acceptance:**
-  - [ ] `make generate manifests` produces committed output with no diff.
-  - [ ] envtest suite: valid examples from PLAN §4.5 are accepted; CEL rejects (a) empty
+  - [x] `make generate manifests` produces committed output with no diff.
+  - [x] envtest suite: valid examples from PLAN §4.5 are accepted; CEL rejects (a) empty
         subjects, (b) `unrestricted: true` with matchers, (c) `unrestricted: false` without
         matchers, (d) invalid `op`.
 
