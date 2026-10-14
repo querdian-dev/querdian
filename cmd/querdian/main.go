@@ -23,6 +23,7 @@ import (
 	"github.com/querdian-dev/querdian/internal/controller"
 	"github.com/querdian-dev/querdian/internal/enforce"
 	enforcelogql "github.com/querdian-dev/querdian/internal/enforce/logql"
+	enforcepromql "github.com/querdian-dev/querdian/internal/enforce/promql"
 	enforcetraceql "github.com/querdian-dev/querdian/internal/enforce/traceql"
 	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/policy"
@@ -114,10 +115,11 @@ func run(args []string) error {
 		Config:    cfg,
 		Snapshots: ctl,
 		Auth:      authn,
-		// Prometheus is added with T2.1/T2.2; until then restricted PromQL grants fail closed (503).
+		// Prometheus enforces single-term policies only until T2.2; several terms are rejected (fail closed).
 		Enforcers: map[config.BackendType]enforce.Enforcer{
-			config.BackendLoki:  enforcelogql.New(),
-			config.BackendTempo: enforcetraceql.New(),
+			config.BackendPrometheus: enforcepromql.New(),
+			config.BackendLoki:       enforcelogql.New(),
+			config.BackendTempo:      enforcetraceql.New(),
 		},
 		Metrics:  metrics,
 		Gatherer: reg,
