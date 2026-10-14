@@ -43,4 +43,37 @@
 //   - A lone '&' is an error; '|' and '||' are distinct tokens.
 //   - Operators use maximal munch, so "!~" is one token whether it means "not regex" or
 //     "negated sibling"; the parser disambiguates by position.
+//
+// # Parser strictness (fail closed)
+//
+// Parse accepts the grammar below and rejects everything else with a *ParseError (or the lexer's
+// *Error). Where the public docs are silent or the research found a divergence, the parser is
+// stricter than Tempo:
+//
+//   - A query is a pipeline of stages joined by '|'. Stages: spanset expressions, scalar filters
+//     (count()/avg/max/min/sum(expr) compared with a number or duration), by(attr), select(attrs),
+//     coalesce(), one metrics function (rate, count_over_time, sum/min/max/avg/histogram/
+//     quantile_over_time, compare) optionally followed by topk/bottomk, and a trailing
+//     with (k=v, ...) hint. Metrics functions need a preceding stage; only topk/bottomk may follow.
+//   - Inside { } the expression is validated (balanced, typed operands). && and || have equal
+//     precedence and associate left to right (verified research); arithmetic uses the usual
+//     precedence. A filter must be boolean: a bare attribute or literal (other than true/false) is
+//     rejected. A comparison needs an attribute or intrinsic. Regex operators need an attribute on
+//     the left and a string literal on the right. nil is accepted only as `attr != nil`
+//     (`= nil` is a syntax error in Tempo 2.9.0 although the docs show it). Enum values (error,
+//     ok, unset, client, server, ...) are accepted only against span status/kind with = or !=.
+//     minInt/maxInt, unary '!' and any other identifier are rejected.
+//   - Spanset operators (&&, ||, structural >> << > < ~ and the union and negated forms) chain left
+//     to right, but mixing different operators on one level without parentheses is rejected
+//     because the docs give no precedence. Parentheses may only wrap spanset expressions, not
+//     pipelines or scalar filters. Arithmetic between metrics queries
+//     (`100 * ({...} | rate()) / ({} | rate())`) is rejected.
+//   - by() arguments, select() arguments and metrics attribute arguments are single attribute or
+//     intrinsic tokens (no expressions); the by() stage takes exactly one attribute.
+//   - with-clause values are literals (true, false, numbers, durations, strings), never attributes.
+//   - Parenthesis nesting is limited to 100 levels.
+//
+// Parse records every spanset filter with exact byte offsets (Query.Filters), including filters
+// nested in structural operators, parentheses, pipelines and compare(...). Query.Attributes lists
+// every attribute and intrinsic token for denied-attribute checks.
 package traceql
