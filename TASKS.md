@@ -451,6 +451,8 @@ picking up any task — section references (§) point there.
 - **Files:** `Dockerfile`, `.goreleaser.yaml`, `.github/workflows/release.yml`
 - **Acceptance:**
   - [ ] Multi-arch distroless image, non-root, read-only root fs compatible.
+        (Verified locally on arm64: runs with `--read-only --user 65532`, no shell, 51.9 MB.
+        Not ticked: the amd64/arm64 manifest list is only produced by the release workflow.)
   - [ ] Tag push → GitHub release with binaries, signed image (cosign keyless), SBOM, SLSA
         provenance; chart published to OCI registry.
 

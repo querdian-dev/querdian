@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+bin
+dist
+docs
+charts
+hack
+**/*_test.go
+*.md
+!go.mod
+.golangci.yml
+.editorconfig
