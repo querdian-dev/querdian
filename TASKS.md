@@ -127,15 +127,15 @@ picking up any task — section references (§) point there.
         subjects, (b) `unrestricted: true` with matchers, (c) `unrestricted: false` without
         matchers, (d) invalid `op`.
 
-### [ ] T1.2 — Static config and flags ∥
+### [x] T1.2 — Static config and flags ∥
 - **Depends on:** T0.1
 - **Files:** `internal/config/*`
 - **Description:** Load and validate the config file (PLAN §5.1) with strict YAML decoding
   (unknown fields = error). Flags per PLAN §5.2. Types: `Config`, `AuthConfig`, `Backend`,
   `Limits`, `BackendType` enum.
 - **Acceptance:**
-  - [ ] Table tests for every validation rule in PLAN §5.1.
-  - [ ] Example config from PLAN §5.1 loads successfully (`testdata/`).
+  - [x] Table tests for every validation rule in PLAN §5.1.
+  - [x] Example config from PLAN §5.1 loads successfully (`testdata/`).
 
 ### [ ] T1.3 — Policy compilation
 - **Depends on:** T1.1, T1.2
