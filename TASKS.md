@@ -348,12 +348,14 @@ picking up any task — section references (§) point there.
   - [x] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
   - [x] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
 
-### [ ] T3.6 — Loki stats, volume, patterns
+### [x] T3.6 — Loki stats, volume, patterns
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/sumcounts.go`, tests
 - **Acceptance:**
-  - [ ] Summation per response type; `Effective.Disjoint=false` sets span attribute
+  - [x] Summation per response type; `Effective.Disjoint=false` sets span attribute
         `merge.approximate=true` and a response warning field if the API supports warnings.
+        (None of the four APIs has a warnings field; the marker is the response header
+        `X-Querdian-Approximate: true`, see `fanout.ApproximateHeader`.)
 
 ### [ ] T3.7 — Loki tail WebSocket fan-out
 - **Depends on:** T3.3, T1.9

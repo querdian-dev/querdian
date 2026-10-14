@@ -9,4 +9,5 @@ import (
 var (
 	_ proxy.Merger = fanout.MergeLokiStreams
 	_ proxy.Merger = fanout.NewStringSetMerger(nil)
+	_ proxy.Merger = fanout.NewSumCountsMerger(nil, nil)
 )

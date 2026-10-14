@@ -43,6 +43,8 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	switch ep.Template {
 	case tmplLabels, tmplLabelValues, tmplDetectedLabels, tmplDetectedFields, tmplDetectedValues:
 		return planStringSet(ep, params, eff)
+	case tmplIndexStats, tmplIndexVolume, tmplIndexVolumeRange, tmplPatterns:
+		return planSum(params, eff)
 	case tmplSeries:
 		return planSeries(params, eff)
 	}
