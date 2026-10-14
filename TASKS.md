@@ -473,11 +473,11 @@ picking up any task — section references (§) point there.
   - [ ] Every reason code and status reason documented.
   - [ ] Namespace-label integrity requirement prominent in policy guide and security model.
 
-### [ ] T5.5 — Grafana dashboard ∥
+### [x] T5.5 — Grafana dashboard ∥
 - **Depends on:** T1.10
 - **Files:** `charts/querdian/dashboards/*.json`, `docs/dashboards.md`
 - **Acceptance:**
-  - [ ] Panels: request rate by decision/reason, latency (with exemplar links), upstream errors,
+  - [x] Panels: request rate by decision/reason, latency (with exemplar links), upstream errors,
         fan-out terms distribution, snapshot health, policy readiness.
 
 ### [ ] T5.6 — CNCF/OpenSSF readiness ∥
