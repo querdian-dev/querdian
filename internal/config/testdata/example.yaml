@@ -1,0 +1,35 @@
+auth:
+  issuer: https://keycloak.example.com/realms/observability
+  audiences: [querdian]
+  caFile: ""
+  claims:
+    username: preferred_username
+    groups: groups
+backends:
+  - name: metrics
+    type: prometheus
+    url: http://thanos-query.monitoring:10902
+    pathPrefix: /prometheus
+    namespaceLabel: namespace
+    tenantHeader: ""
+    tenantFederation: none
+  - name: logs
+    type: loki
+    url: http://loki-gateway.monitoring
+    pathPrefix: /loki
+    namespaceLabel: k8s_namespace_name
+    tenantHeader: X-Scope-OrgID
+    tenantFederation: tenantIdLabel
+  - name: traces
+    type: tempo
+    url: http://tempo-query-frontend.monitoring:3200
+    pathPrefix: /tempo
+    namespaceLabel: resource.k8s.namespace.name
+    tenantHeader: X-Scope-OrgID
+    tenantFederation: none
+    traceByID: filter
+limits:
+  maxPolicyTerms: 16
+  maxFanout: 16
+  maxMergeBytes: 67108864
+  upstreamTimeout: 5m
