@@ -92,6 +92,33 @@ func Inject(q *Query, ms []InjectMatcher) (string, error) {
 	return rewrite(q, [][]InjectMatcher{ms})
 }
 
+// PolicySelector renders the stream selector consisting only of ms, for
+// endpoints whose query parameter is optional (labels, series, ...): when the
+// client sends no selector, the policy term itself is the selector. The
+// result is re-parsed and must keep a non-__tenant_id__ anchor matcher;
+// otherwise [ErrNoAnchor] is returned (this includes an empty ms).
+func PolicySelector(ms []InjectMatcher) (string, error) {
+	sel := &Selector{Matchers: make([]Matcher, 0, len(ms))}
+	for _, m := range ms {
+		if err := m.validate(); err != nil {
+			return "", err
+		}
+		sel.Matchers = append(sel.Matchers, Matcher{Name: m.Name, Op: m.Op, Value: m.Value, Raw: quote(m.Value)})
+	}
+	if !hasAnchor(sel) {
+		return "", ErrNoAnchor
+	}
+	out := sel.String()
+	q, err := Parse(out)
+	if err != nil {
+		return "", fmt.Errorf("logql: policy selector does not parse: %w", err)
+	}
+	if len(q.Selectors) != 1 || !carries(q.Selectors[0], ms) {
+		return "", errors.New("logql: policy selector does not carry the policy term")
+	}
+	return out, nil
+}
+
 // OrLift rewrites a metric query for the union of several policy terms. Every
 // range aggregation f(sel[r]) is replaced by
 // "f(sel+t1[r]) or f(sel+t2[r]) or ...", so every stream selector carries

@@ -341,12 +341,12 @@ picking up any task — section references (§) point there.
         empty branches, identical label sets across branches.
   - [x] Property test: merge(top-L(A), top-L(B)) == top-L(A ∪ B) on random data.
 
-### [ ] T3.5 — Loki label, detected_* and series endpoints
+### [x] T3.5 — Loki label, detected_* and series endpoints
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/stringset.go`, `internal/enforce/logql/metadata.go`, tests
 - **Acceptance:**
-  - [ ] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
-  - [ ] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
+  - [x] Union, sort, dedupe, denied labels removed; `series` uses `match[]` expansion.
+  - [x] When the client omits `query` on labels/label-values/detected_*, the policy filter is still applied (omission is never a pass-through).
 
 ### [ ] T3.6 — Loki stats, volume, patterns
 - **Depends on:** T3.3, T1.9

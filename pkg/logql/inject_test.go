@@ -327,3 +327,28 @@ func TestDeniedLabel(t *testing.T) {
 		t.Error("keyword-spelled label not found")
 	}
 }
+
+func TestPolicySelector(t *testing.T) {
+	got, err := PolicySelector([]InjectMatcher{eq("ns", "a"), {Name: "svc", Op: "=~", Value: `x|y"z`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{ns="a", svc=~"x|y\"z"}`; got != want {
+		t.Errorf("got %s want %s", got, want)
+	}
+	for name, ms := range map[string][]InjectMatcher{
+		"empty":        nil,
+		"only tenant":  {eq(TenantIDLabel, "t1")},
+		"empty-match":  {{Name: "a", Op: "=~", Value: ".*"}},
+		"bad op":       {{Name: "a", Op: "~", Value: "x"}},
+		"bad name":     {eq("a b", "x")},
+		"negative ant": {{Name: "a", Op: "!=", Value: "x"}},
+	} {
+		if _, err := PolicySelector(ms); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	if _, err := PolicySelector([]InjectMatcher{eq(TenantIDLabel, "t1"), eq("a", "b")}); err != nil {
+		t.Errorf("tenant plus anchor: %v", err)
+	}
+}

@@ -202,3 +202,33 @@ revision 4b16bc4f), single binary, `auth_enabled: true`, two streams pushed
 - JSON body (`application/json`) is not parsed: 400 (parse error, query seen as empty).
   The proxy should rewrite to a form body and set the content type itself.
 - Decision: `query` and `query_range` allow GET and POST.
+
+## Response shapes for the merges (T3.4-T3.6)
+
+Captured from `grafana/loki:3.5.0` with the config of `hack/research/loki-endpoints/loki.yaml`
+(`auth_enabled: true`, one tenant, streams `{app="a",env="prod"}` and `{app="b",team="x"}`),
+HTTP only. These are what `internal/fanout` merges.
+
+- `query_range`, log query: `{"status":"success","data":{"resultType":"streams","result":[{"stream":{...},"values":[["<ns>","<line>"]]}],"stats":{summary,querier,ingester,cache,index}}}`.
+  `direction=backward` (default) lists streams and entries newest first, `forward` oldest first.
+  Streams are separate per label set (Loki adds `detected_level` and `service_name`). No match:
+  `"result":[]` (stats still present). With header `X-Loki-Response-Encoding-Flags: categorize-labels`
+  the data object gains `"encodingFlags":["categorize-labels"]` and each entry gets a third element
+  `{"structuredMetadata":{...}}` (and `detected_level` leaves the stream labels).
+  `stats.summary` holds counters plus rates (`bytesProcessedPerSecond`, ...) and `execTime`.
+- `labels`: `{"status":"success","data":["app","env"]}`; **no match: `{"status":"success"}` without `data`**.
+  `label/<n>/values` has the same shape.
+- `series`: `{"status":"success","data":[{"app":"a",...}]}`; no match: `"data":[]`. Without `match[]` all series are returned.
+- `detected_labels`: `{"detectedLabels":[{"label","cardinality"}]}`; no match: `{}` (see Q1).
+- `detected_fields`: `{"fields":[{"label","type","cardinality","parsers":["logfmt"]|null}],"limit":1000}`;
+  no match: `{}`. **`query` is required: without it Loki answers 400** (`parse error : syntax error: unexpected $end`).
+- `detected_field/<n>/values`: `{"limit":1000,"values":["hello"]}`; no match: `{}`.
+- `index/stats`: flat `{"streams":N,"chunks":N,"bytes":N,"entries":N}` (zeros when nothing matches).
+- `index/volume`: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a"},"value":[<sec>,"<bytes>"]}],"stats":{...}}}`.
+  Without `targetLabels` the metric is the full series label set (so denied labels would be visible);
+  with `aggregateBy=labels&targetLabels=app` it is `{"app":"a"}` per value.
+  `index/volume_range` returned `resultType` `vector` for a step larger than the data span in this
+  experiment; the documented `matrix` shape (`values:[[ts,"n"],...]`) was not observed.
+- `patterns`: answers 404 unless the pattern ingester is enabled (`pattern_ingester.enabled: true`). With it
+  enabled and little data, `{"status":"success","data":[]}` was observed; the non-empty shape
+  `data:[{"pattern":"...","samples":[[<sec>,<count>],...]}]` is from the public docs and **unverified**.

@@ -8,4 +8,5 @@ import (
 // The merge functions must stay assignable to proxy.Merger (internal/fanout itself cannot import proxy).
 var (
 	_ proxy.Merger = fanout.MergeLokiStreams
+	_ proxy.Merger = fanout.NewStringSetMerger(nil)
 )
