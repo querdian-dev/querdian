@@ -235,3 +235,13 @@ networkPolicy:
     #     matchLabels: {app.kubernetes.io/name: loki}
     #   ports: [3100, 80]
     #   allowFrom: []     # extra NetworkPolicyPeers allowed in addition to querdian
+
+# Grafana dashboard shipped as a ConfigMap for the Grafana sidecar (dashboards/querdian.json).
+dashboards:
+  enabled: false
+  # Namespace for the ConfigMap; defaults to the release namespace.
+  namespace: ""
+  # Label the Grafana dashboards sidecar selects on.
+  labels:
+    grafana_dashboard: "1"
+  annotations: {}

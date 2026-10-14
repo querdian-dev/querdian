@@ -135,3 +135,9 @@ groups:
 
 Check the actual `result` label values of `querdian_snapshot_rebuilds_total` in your build before
 using the `result!="ok"` rule.
+
+## Shipping the dashboard with the Helm chart
+
+Set `dashboards.enabled=true` to render the dashboard as a ConfigMap labelled `grafana_dashboard: "1"`, which
+the Grafana dashboards sidecar picks up. Use `dashboards.labels` to match your sidecar's label selector and
+`dashboards.namespace` to place the ConfigMap in Grafana's namespace.

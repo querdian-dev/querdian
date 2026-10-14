@@ -1,0 +1,19 @@
+{{- if .Values.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "querdian.fullname" . }}-dashboard
+  namespace: {{ default .Release.Namespace .Values.dashboards.namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+    {{- with .Values.dashboards.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.dashboards.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  querdian.json: |-
+    {{- .Files.Get "dashboards/querdian.json" | nindent 4 }}
+{{- end }}
