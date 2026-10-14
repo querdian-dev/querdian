@@ -303,12 +303,12 @@ picking up any task — section references (§) point there.
 
 > Clean room applies with full force here. Only public LogQL docs and `docs/research/logql.md`.
 
-### [ ] T3.1 — `pkg/logql` lexer
+### [x] T3.1 — `pkg/logql` lexer
 - **Depends on:** T0.5
 - **Files:** `pkg/logql/lexer.go`, tests, `pkg/logql/doc.go` (doc URLs)
 - **Acceptance:**
-  - [ ] Token types per PLAN §7.3; unknown input → error with position.
-  - [ ] Fuzz: no panics; `concat(tokens) == input` modulo whitespace/comments.
+  - [x] Token types per PLAN §7.3; unknown input → error with position.
+  - [x] Fuzz: no panics; `concat(tokens) == input` modulo whitespace/comments.
 
 ### [ ] T3.2 — `pkg/logql` parser
 - **Depends on:** T3.1
