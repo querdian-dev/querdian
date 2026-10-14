@@ -378,7 +378,7 @@ picking up any task — section references (§) point there.
 
 > Clean room applies. Only public TraceQL docs and `docs/research/traceql.md`.
 
-### [ ] T4.1 — `pkg/traceql` lexer
+### [x] T4.1 — `pkg/traceql` lexer
 - **Depends on:** T0.5
 - **Files:** `pkg/traceql/lexer.go`, `pkg/traceql/doc.go`, tests
 - **Acceptance:** as T3.1 for TraceQL tokens (PLAN §7.4).
