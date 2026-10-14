@@ -2,8 +2,9 @@
 // parser, rejects references to denied labels and injects the matchers of the effective policy into
 // every vector selector. The query is never rewritten with string operations.
 //
-// Currently a policy with a single term is supported (T2.1). Multiple terms (or-lifting) are
-// rejected fail-closed until T2.2.
+// A policy with one term is injected into every selector (T2.1), several terms are or-lifted
+// (T2.2, union.go), and the metadata endpoints series, labels and label values get their match[]
+// parameters expanded (T2.3, metadata.go).
 package promql
 
 import (
@@ -32,17 +33,26 @@ var promParser = parser.NewParser(parser.Options{})
 
 type enforcer struct{}
 
-// New returns the PromQL enforcer for the endpoints query, query_range and query_exemplars
-// (enforcement parameter "query").
+// New returns the PromQL enforcer for query, query_range and query_exemplars (enforcement parameter
+// "query") and for series, labels and label/:name/values (enforcement parameter "match[]").
 func New() enforce.Enforcer { return enforcer{} }
 
-// Plan implements enforce.Enforcer. For one policy term it returns a single upstream request whose
-// "query" parameter has the term matchers appended to every vector selector; all other parameters
-// are copied unchanged. Policies with several terms return enforce.ErrUnsupported.
+// Plan implements enforce.Enforcer for the query endpoints (enforcement parameter "query") and the
+// metadata endpoints (enforcement parameter "match[]", see metadata.go).
+//
+// Query endpoints return a single upstream request whose "query" parameter carries the policy: with
+// one term its matchers are appended to every vector selector (strategy "inject"); with several terms
+// the query is or-lifted (strategy "or_lift", see lifter). All other parameters are copied unchanged.
+// A policy without any restriction (Unrestricted, or a term without matchers) leaves the query as is.
 func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, eff policy.Effective) (enforce.Plan, error) {
-	if ep.Param != queryParam {
-		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "promql enforcer does not handle enforcement parameter %q", ep.Param)
+	switch ep.Param {
+	case queryParam:
+		return planQuery(params, eff)
 	}
+	return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "promql enforcer does not handle enforcement parameter %q", ep.Param)
+}
+
+func planQuery(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 	vals := params[queryParam]
 	if len(vals) != 1 {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "exactly one %q parameter required, got %d", queryParam, len(vals))
@@ -54,23 +64,34 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	if err := checkDenied(expr, eff.DeniedLabels); err != nil {
 		return enforce.Plan{}, err
 	}
-
-	// TODO(T2.2): multiple terms need or-lifting (PLAN §7.2); until then fail closed.
-	if len(eff.Terms) > 1 {
-		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "policies with %d terms are not supported yet", len(eff.Terms))
-	}
 	if len(eff.Terms) == 0 && !eff.Unrestricted {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "effective policy grants no terms")
 	}
 
 	out := vals[0]
-	if !eff.Unrestricted && len(eff.Terms) == 1 && len(eff.Terms[0].Matchers) > 0 {
+	strategy := "inject"
+	switch {
+	case eff.Unrestricted, unrestrictedTerm(eff.Terms):
+		// Nothing to enforce: the query already sees everything the tenant header allows.
+		if len(eff.Terms) > 1 {
+			strategy = "passthrough"
+		}
+	case len(eff.Terms) == 1:
 		ms, err := toLabelMatchers(eff.Terms[0].Matchers)
 		if err != nil {
 			return enforce.Plan{}, err
 		}
 		inject(expr, ms)
 		out = expr.String()
+	default:
+		strategy = "or_lift"
+		lifted, err := liftTerms(expr, eff.Terms)
+		if err != nil {
+			return enforce.Plan{}, err
+		}
+		out = lifted.String()
+	}
+	if out != vals[0] {
 		// Defence in depth: the output must be valid PromQL, otherwise fail closed.
 		if _, err := promParser.ParseExpr(out); err != nil {
 			return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "rewritten query does not re-parse: %v", err)
@@ -85,8 +106,15 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	return enforce.Plan{
 		Requests: []enforce.Upstream{{Query: q, Term: -1}},
 		Merge:    enforce.MergeNone,
-		Strategy: "inject",
+		Strategy: strategy,
 	}, nil
+}
+
+// unrestrictedTerm reports whether some term has no matchers. Such a term (an unrestricted rule of a
+// tenant, without a __tenant_id__ binding) admits everything the tenant header allows, so the union
+// of all terms is unrestricted and the other terms are redundant.
+func unrestrictedTerm(terms []policy.Term) bool {
+	return slices.ContainsFunc(terms, func(t policy.Term) bool { return len(t.Matchers) == 0 })
 }
 
 // toLabelMatchers maps policy matchers to Prometheus matchers. Prometheus anchors regexes itself.

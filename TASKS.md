@@ -266,14 +266,14 @@ picking up any task — section references (§) point there.
   - [x] Output re-parses; every `VectorSelector` contains all term matchers.
   - [x] Denied label in matcher / `by` / `on` / `label_replace` → `ErrDeniedLabel`.
 
-### [ ] T2.2 — PromQL or-lifting for multiple terms
+### [x] T2.2 — PromQL or-lifting for multiple terms
 - **Depends on:** T2.1
-- **Files:** `internal/enforce/promql/union.go`, tests
+- **Files:** `internal/enforce/promql/union.go`, tests, `docs/promql-enforcement.md`
 - **Description:** PLAN §7.2 multi-term rules. Strategy `or_lift`.
 - **Acceptance:**
-  - [ ] Table cases: instant selector, every range-vector function, nested aggregations,
+  - [x] Table cases: instant selector, every range-vector function, nested aggregations,
         binary ops with `on`/`ignoring`, subqueries, `absent`/`absent_over_time` (documented edge).
-  - [ ] Property fuzz: random query × random 1–4 terms → output re-parses, every selector carries
+  - [x] Property fuzz: random query × random 1–4 terms → output re-parses, every selector carries
         exactly one term's matchers, number of selector copies = original × terms.
 
 ### [ ] T2.3 — Prometheus metadata endpoints
