@@ -33,17 +33,16 @@ networkPolicy:
       ports: [4318]
   backendProtection:
     enabled: true
+    # ONE target for all three backends: the chart names the generated policy
+    # "<release>-allow-querdian-only" per namespace, so several targets in the same namespace
+    # would overwrite each other (chart issue found while writing the quickstart).
+    # Consequence: the collector (which writes to Loki and Tempo) may also reach Prometheus ports
+    # of the selected pods; Prometheus itself only needs egress, which is not restricted here.
     targets:
       - namespace: observability
-        podSelector: {matchLabels: {app: prometheus}}
-        ports: [9090]
-      - namespace: observability
-        podSelector: {matchLabels: {app: loki}}
-        ports: [3100]
-        allowFrom:
-          - podSelector: {matchLabels: {app: otel-collector}}
-      - namespace: observability
-        podSelector: {matchLabels: {app: tempo}}
-        ports: [3200, 4318]
+        podSelector:
+          matchExpressions:
+            - {key: app, operator: In, values: [prometheus, loki, tempo]}
+        ports: [9090, 3100, 3200, 4318]
         allowFrom:
           - podSelector: {matchLabels: {app: otel-collector}}
