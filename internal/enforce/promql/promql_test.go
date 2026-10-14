@@ -324,7 +324,7 @@ func TestNoTermsRejected(t *testing.T) {
 }
 
 func TestWrongEndpointParam(t *testing.T) {
-	_, err := New().Plan(context.Background(), routes.Endpoint{Param: "match[]"}, url.Values{"query": {"up"}}, nsTerm())
+	_, err := New().Plan(context.Background(), routes.Endpoint{Param: "q"}, url.Values{"query": {"up"}}, nsTerm())
 	if !errors.Is(err, enforce.ErrUnsupported) {
 		t.Errorf("got %v", err)
 	}

@@ -276,15 +276,15 @@ picking up any task — section references (§) point there.
   - [x] Property fuzz: random query × random 1–4 terms → output re-parses, every selector carries
         exactly one term's matchers, number of selector copies = original × terms.
 
-### [ ] T2.3 — Prometheus metadata endpoints
+### [x] T2.3 — Prometheus metadata endpoints
 - **Depends on:** T2.1
-- **Files:** `internal/enforce/promql/metadata.go`, tests
+- **Files:** `internal/enforce/promql/metadata.go`, tests, `internal/enforce/enforce.go` (additive `Plan.ResponseFilter`)
 - **Description:** `match[]` expansion for `series`, `labels`, `label/<n>/values`; denied label
   filtering of `labels` responses and 403 on `label/<denied>/values`. Strategy `match_expand`.
 - **Acceptance:**
-  - [ ] Tests for: no user `match[]`, one, several; × 1 and 3 terms.
-  - [ ] `labels` response filtering is streaming-safe (bounded buffering, cap applies).
-  - [ ] When the client omits `match[]`, one policy `match[]` per term is still sent (omission is never a pass-through).
+  - [x] Tests for: no user `match[]`, one, several; × 1 and 3 terms.
+  - [x] `labels` response filtering is streaming-safe (bounded buffering, cap applies).
+  - [x] When the client omits `match[]`, one policy `match[]` per term is still sent (omission is never a pass-through).
 
 ### [ ] T2.4 — Prometheus E2E and semantic equivalence
 - **Depends on:** T2.2, T2.3

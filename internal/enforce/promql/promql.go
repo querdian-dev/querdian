@@ -48,6 +48,8 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	switch ep.Param {
 	case queryParam:
 		return planQuery(params, eff)
+	case matchParam:
+		return planMetadata(ep, params, eff)
 	}
 	return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "promql enforcer does not handle enforcement parameter %q", ep.Param)
 }
