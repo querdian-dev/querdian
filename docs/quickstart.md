@@ -174,7 +174,24 @@ is blocked. Notes:
 Measured on an Apple-silicon laptop, Podman VM with 5 CPUs and 6 GiB, kind v0.33 (node image
 v1.37.0), warm image cache for the Querdian build and cold node image pulls:
 
-@@TIMINGS@@
+| Step | Wall clock |
+|---|---|
+| `kind create cluster` (node image already local) | 30 s |
+| Image build (cached Docker layers, in parallel with the cluster start) and load into kind | included in the next line |
+| `up.sh` in total: all images pulled by the node, Keycloak realm imported and every pod Ready, Querdian installed, policies `Ready`, telemetry flowing | **3 min 37 s** |
+| `verify.sh` (71 assertions incl. the headless Grafana login) | 3 s |
+
+A cold start also has to compile the Go binary in the image build (not measured separately; it runs
+in parallel with the cluster creation and the first pulls) and download the node image, so plan for
+roughly 5-10 minutes on a first run, well inside the 15-minute budget. Slow registries dominate.
+
+Footprint with everything running: the kind node container about 2.3 GiB (container stats), the
+Podman VM 2.2 GiB used and about 3.6 GiB available of 5.9 GiB. Requests of the demo components are
+small (Keycloak 450 MiB, Loki/Tempo/Grafana/Prometheus 100-150 MiB each, Querdian 48 MiB per
+replica, sample workloads 8 MiB).
+
+If `up.sh` hangs on image pulls (seen once on a Podman VM whose kubelet stopped starting pods), run
+`down.sh` and start again.
 
 ## Troubleshooting
 
