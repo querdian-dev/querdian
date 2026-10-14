@@ -126,7 +126,8 @@ k -n payment-service rollout status deploy/payment-service --timeout=300s
 
 # --- 6. Querdian ---------------------------------------------------------------------------------
 step "helm install querdian"
-args=(-f <(render "$QS_DIR/querdian-values.yaml"))
+render "$QS_DIR/querdian-values.yaml" >"$WORK/values.yaml"
+args=(-f "$WORK/values.yaml")
 if [ "$QUICKSTART_NETWORKPOLICY" = 1 ]; then args+=(-f "$QS_DIR/querdian-networkpolicy-values.yaml"); fi
 h upgrade --install querdian "$ROOT/charts/querdian" -n querdian "${args[@]}" --wait --timeout 4m
 
