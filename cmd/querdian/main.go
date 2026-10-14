@@ -21,6 +21,9 @@ import (
 	"github.com/querdian-dev/querdian/internal/auth"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/controller"
+	"github.com/querdian-dev/querdian/internal/enforce"
+	enforcelogql "github.com/querdian-dev/querdian/internal/enforce/logql"
+	enforcetraceql "github.com/querdian-dev/querdian/internal/enforce/traceql"
 	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/server"
@@ -111,10 +114,15 @@ func run(args []string) error {
 		Config:    cfg,
 		Snapshots: ctl,
 		Auth:      authn,
-		Metrics:   metrics,
-		Gatherer:  reg,
-		Privacy:   observability.Privacy{RecordUser: flags.RecordUser, RecordQueries: flags.RecordQueries},
-		Logger:    logger,
+		// Prometheus is added with T2.1/T2.2; until then restricted PromQL grants fail closed (503).
+		Enforcers: map[config.BackendType]enforce.Enforcer{
+			config.BackendLoki:  enforcelogql.New(),
+			config.BackendTempo: enforcetraceql.New(),
+		},
+		Metrics:  metrics,
+		Gatherer: reg,
+		Privacy:  observability.Privacy{RecordUser: flags.RecordUser, RecordQueries: flags.RecordQueries},
+		Logger:   logger,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)
