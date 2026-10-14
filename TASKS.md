@@ -425,10 +425,15 @@ picking up any task — section references (§) point there.
   - [x] `pkg/tempopb` is the only Tempo import (license job green).
   - [x] Client `q` on trace by ID → 400; only `start`/`end` forwarded.
 
-### [ ] T4.6 — Tempo differential, E2E and equivalence
+### [x] T4.6 — Tempo differential, E2E and equivalence
 - **Depends on:** T4.4, T4.5, T2.4 (framework)
 - **Files:** `test/e2e/tempo/*`
 - **Acceptance:** as T3.8 for Tempo (search, tag values, metrics, trace by ID).
+  - [x] Isolation (search incl. redaction, tags, tag values, metrics, trace by ID v1/v2 JSON/protobuf), two tenants, three namespaces, cross-namespace traces with root in another namespace.
+  - [x] Differential: ~1000 generated TraceQL checks (filters, boolean combos, regex, structural, pipelines, select/by, metrics) direct vs proxy; no unenforced pass-through, every rewrite accepted by Tempo.
+  - [x] Equivalence against a reference Tempo seeded with only the granted spans (method in `test/e2e/tempo/tempo_test.go`); structural operators checked by invariants (oracle undefined).
+  - [x] Root-metadata oracle confirmed (rootServiceName/rootName/traceDuration filters, tag values, and `compare()`); fixed by rejecting them unless the root is covered.
+  - Tag values with `q` are approximate in Tempo 2.9.0 (omit values, may return the attribute key); checked by containment only.
 
 ---
 
