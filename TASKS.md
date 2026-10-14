@@ -331,15 +331,15 @@ picking up any task — section references (§) point there.
   - [ ] Log query + 2 terms → `Plan` with 2 requests, `MergeLokiStreams`.
   - [ ] `label_replace` string arguments are scanned for denied labels; tests cover overwriting/removing a policy label.
 
-### [ ] T3.4 — Loki stream merge
+### [x] T3.4 — Loki stream merge
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/loki_streams.go`, tests
 - **Description:** PLAN §7.3 merge semantics for `query` / `query_range` log results (both
   directions), stats summing, response format preserved (incl. `encodingFlags` if present).
 - **Acceptance:**
-  - [ ] Unit tests: overlapping streams deduped, limit truncation correct both directions,
+  - [x] Unit tests: overlapping streams deduped, limit truncation correct both directions,
         empty branches, identical label sets across branches.
-  - [ ] Property test: merge(top-L(A), top-L(B)) == top-L(A ∪ B) on random data.
+  - [x] Property test: merge(top-L(A), top-L(B)) == top-L(A ∪ B) on random data.
 
 ### [ ] T3.5 — Loki label, detected_* and series endpoints
 - **Depends on:** T3.3, T1.9
