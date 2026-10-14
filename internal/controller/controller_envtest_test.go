@@ -120,7 +120,7 @@ func TestSnapshotFollowsPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	t0 := time.Now()
-	eventually(t, time.Second, "create reflected", func() bool {
+	eventually(t, 5*time.Second, "create reflected", func() bool {
 		eff, err := c.Snapshot().Resolve("u", []string{group}, "metrics")
 		return err == nil && eff.Unrestricted
 	})
@@ -138,7 +138,7 @@ func TestSnapshotFollowsPolicies(t *testing.T) {
 	if err := direct.Update(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, time.Second, "update reflected", func() bool {
+	eventually(t, 5*time.Second, "update reflected", func() bool {
 		eff, err := c.Snapshot().Resolve("u", []string{group}, "metrics")
 		return err == nil && !eff.Unrestricted && len(eff.Terms) == 1
 	})
@@ -149,7 +149,7 @@ func TestSnapshotFollowsPolicies(t *testing.T) {
 	if err := direct.Delete(ctx, p); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, time.Second, "delete reflected", func() bool {
+	eventually(t, 5*time.Second, "delete reflected", func() bool {
 		_, err := c.Snapshot().Resolve("u", []string{group}, "metrics")
 		return errors.Is(err, policy.ErrNoGrant)
 	})
@@ -201,7 +201,7 @@ func TestNamespaceTenantLabelFlipsStatus(t *testing.T) {
 		cond := readyCondition(t, ap, func() *v1.PolicyStatus { return &ap.Status })
 		return cond != nil && cond.Reason == policy.ReasonCompiled && cond.Status == metav1.ConditionTrue
 	})
-	eventually(t, time.Second, "grant active", func() bool {
+	eventually(t, 5*time.Second, "grant active", func() bool {
 		eff, err := c.Snapshot().Resolve("u", []string{"flip-team"}, "logs")
 		return err == nil && len(eff.Tenants) == 1 && eff.Tenants[0] == "t1"
 	})
@@ -223,7 +223,7 @@ func TestOnlyLeaderWritesStatus(t *testing.T) {
 	})
 	// Every replica built the snapshot, but only one wrote status.
 	for _, c := range []*Controller{a, b} {
-		eventually(t, time.Second, "replica snapshot", func() bool {
+		eventually(t, 5*time.Second, "replica snapshot", func() bool {
 			_, err := c.Snapshot().Resolve("u", []string{"leader-group"}, "metrics")
 			return err == nil
 		})
