@@ -71,8 +71,9 @@ one selector per (user `match[]` x term), which is exactly `(user selectors) AND
   do not (for example only `env!="dev"`), `__name__=~".+"` is added; this can only narrow.
 * More than 256 expanded selectors are rejected (`ErrTooComplex`).
 * Denied labels: a denied label in a user `match[]` selector is rejected (403), as is
-  `label/<denied>/values` (403). `series` responses contain complete label sets and are not filtered,
-  as are query results: hiding denied labels in returned label sets is not specified by PLAN §7.2.
+  `label/<denied>/values` (403). `series` responses are filtered like `labels` (`promql.FilterSeriesResponse`
+  removes the denied names from every label set and collapses sets that became identical). Query results are
+  deliberately NOT filtered: a series returned by a query keeps all its labels, including denied ones.
 * `labels` responses: the plan carries `Plan.ResponseFilter` (`promql.FilterLabelsResponse`) which removes
   denied names from `data`. The proxy buffers the (2xx) body up to `Plan.ResponseFilterMaxBytes`
   (`promql.MaxLabelsResponseBytes`, 16 MiB), applies the filter and fails closed (502) when the filter
