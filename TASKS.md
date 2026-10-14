@@ -87,15 +87,15 @@ picking up any task — section references (§) point there.
   - [ ] Differences to PLAN §8 listed in a "Deltas" section; PLAN updated in the same PR if the
         delta is a pure fact (path rename); otherwise open a `question(t0.3)` issue.
 
-### [ ] T0.4 — Research: tenant federation and `__tenant_id__` ∥
+### [x] T0.4 — Research: tenant federation and `__tenant_id__` ∥
 - **Depends on:** T0.0
 - **Files:** `docs/research/tenant-federation.md`, `hack/research/tenant-federation/` (scripts)
 - **Description:** Black-box experiments with containers (Loki, Tempo, Mimir; Thanos for
   reference). For each: does a `t1|t2` tenant header work for queries, and can queries filter
   with `__tenant_id__` (label matcher / TraceQL attribute)? Record versions tested.
 - **Acceptance:**
-  - [ ] Reproducible script + results table (backend × version × supported?).
-  - [ ] Recommended default `tenantFederation` per backend type added to PLAN §5.1 comments.
+  - [x] Reproducible script + results table (backend × version × supported?).
+  - [x] Recommended default `tenantFederation` per backend type added to PLAN §5.1 comments.
 
 ### [ ] T0.5 — Research: TraceQL and LogQL language details ∥
 - **Depends on:** T0.0

@@ -1,0 +1,16 @@
+# Scrapes itself and remote-writes the same data to Mimir under two tenants.
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: self
+    static_configs:
+      - targets: ["localhost:9090"]
+remote_write:
+  - url: http://host.containers.internal:19009/api/v1/push
+    headers: {X-Scope-OrgID: t1}
+    write_relabel_configs:
+      - {target_label: origin, replacement: from-t1}
+  - url: http://host.containers.internal:19009/api/v1/push
+    headers: {X-Scope-OrgID: t2}
+    write_relabel_configs:
+      - {target_label: origin, replacement: from-t2}

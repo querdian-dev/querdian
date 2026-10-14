@@ -1,0 +1,19 @@
+stream_over_http_enabled: true
+multitenancy_enabled: true
+server: {http_listen_port: 3200}
+query_frontend:
+  multi_tenant_queries_enabled: true
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http: {endpoint: "0.0.0.0:4318"}
+ingester:
+  max_block_duration: 5m
+  lifecycler:
+    ring: {replication_factor: 1}
+storage:
+  trace:
+    backend: local
+    wal: {path: /var/tempo/wal}
+    local: {path: /var/tempo/blocks}

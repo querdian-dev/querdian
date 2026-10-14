@@ -351,21 +351,21 @@ backends:
     pathPrefix: /prometheus         # proxy route prefix, unique
     namespaceLabel: namespace       # used by AccessPolicy implicit matcher
     tenantHeader: ""                # empty = single-tenant backend
-    tenantFederation: none          # none | tenantIdLabel (see §6.4)
+    tenantFederation: none          # none | tenantIdLabel (see §6.4). T0.4: Thanos/Prometheus none; Mimir 2.16.0 tenantIdLabel
   - name: logs
     type: loki
     url: http://loki-gateway.monitoring
     pathPrefix: /loki
     namespaceLabel: k8s_namespace_name
     tenantHeader: X-Scope-OrgID
-    tenantFederation: tenantIdLabel
+    tenantFederation: tenantIdLabel # T0.4: Loki 3.5.0 supports __tenant_id__ matcher -> default tenantIdLabel
   - name: traces
     type: tempo
     url: http://tempo-query-frontend.monitoring:3200
     pathPrefix: /tempo
     namespaceLabel: resource.k8s.namespace.name
     tenantHeader: X-Scope-OrgID
-    tenantFederation: none
+    tenantFederation: none          # T0.4: Tempo 2.8.1 has no __tenant_id__ attribute -> default none
     traceByID: filter               # deny | filter
 limits:
   maxPolicyTerms: 16                # DNF size cap per request
