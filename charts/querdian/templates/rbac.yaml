@@ -1,0 +1,64 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "querdian.fullname" . }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies, accesspolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies/status, accesspolicies/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "querdian.fullname" . }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "querdian.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "querdian.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "querdian.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "querdian.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "querdian.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "querdian.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

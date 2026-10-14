@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "querdian.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "querdian.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include "querdian.config" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "querdian.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "querdian.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: querdian
+          image: {{ include "querdian.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/etc/querdian/config.yaml
+            - --listen=:{{ .Values.proxy.port }}
+            - --management-listen=:{{ .Values.management.port }}
+            - --leader-elect={{ .Values.leaderElection.enabled }}
+            - --log-level={{ .Values.logLevel }}
+            - --log-format={{ .Values.logFormat }}
+            - --tracing.record-user={{ .Values.tracing.recordUser }}
+            - --tracing.record-queries={{ .Values.tracing.recordQueries }}
+            {{- range .Values.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            # Downward API values must precede OTEL_RESOURCE_ATTRIBUTES, which references them.
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ include "querdian.resourceAttributes" . | quote }}
+            {{- with .Values.tracing.serviceName }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tracing.exporter }}
+            - name: OTEL_TRACES_EXPORTER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tracing.otlp.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tracing.otlp.protocol }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tracing.sampler }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tracing.samplerArg }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.proxy.port }}
+              protocol: TCP
+            - name: management
+              containerPort: {{ .Values.management.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/querdian
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if or .Values.oidcCA.existingSecret .Values.oidcCA.existingConfigMap }}
+            - name: oidc-ca
+              mountPath: /etc/querdian-oidc-ca
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "querdian.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.oidcCA.existingSecret }}
+        - name: oidc-ca
+          secret:
+            secretName: {{ .Values.oidcCA.existingSecret }}
+            items:
+              - key: {{ .Values.oidcCA.key }}
+                path: {{ .Values.oidcCA.key }}
+        {{- else if .Values.oidcCA.existingConfigMap }}
+        - name: oidc-ca
+          configMap:
+            name: {{ .Values.oidcCA.existingConfigMap }}
+            items:
+              - key: {{ .Values.oidcCA.key }}
+                path: {{ .Values.oidcCA.key }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if eq .Values.podAntiAffinityPreset "hard" }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "querdian.selectorLabels" . | nindent 18 }}
+      {{- else if eq .Values.podAntiAffinityPreset "soft" }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "querdian.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

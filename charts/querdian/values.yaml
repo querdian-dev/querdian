@@ -1,0 +1,237 @@
+# Default values for the querdian chart. See README.md for a description of every value.
+
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+
+image:
+  repository: ghcr.io/querdian-dev/querdian
+  # Defaults to the chart appVersion.
+  tag: ""
+  # If set, takes precedence over tag (e.g. sha256:...).
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Two replicas: every replica serves traffic from its own policy snapshot; one is the
+# leader and writes policy status.
+replicaCount: 2
+
+proxy:
+  # Container port of the proxy listener (--listen=:<port>).
+  port: 8080
+management:
+  # Container port of /metrics, /healthz and /readyz (--management-listen=:<port>).
+  port: 9090
+  service:
+    # Create a separate ClusterIP Service for the management port.
+    # Implied by serviceMonitor.enabled.
+    enabled: false
+    port: 9090
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+# Process flags (PLAN section 5.2).
+leaderElection:
+  enabled: true
+logLevel: info # debug | info | warn | error
+logFormat: json # json | text
+
+# Tracing is configured with the standard OTEL_* environment variables.
+# With no endpoint and no exporter set, tracing is disabled.
+tracing:
+  # Adds enduser.id to spans (privacy-sensitive).
+  recordUser: false
+  # Adds original and rewritten queries to spans (privacy-sensitive).
+  recordQueries: false
+  serviceName: querdian # OTEL_SERVICE_NAME
+  exporter: "" # OTEL_TRACES_EXPORTER (e.g. otlp, none)
+  otlp:
+    endpoint: "" # OTEL_EXPORTER_OTLP_ENDPOINT
+    protocol: "" # OTEL_EXPORTER_OTLP_PROTOCOL (grpc | http/protobuf)
+  sampler: parentbased_traceidratio # OTEL_TRACES_SAMPLER
+  samplerArg: "0.1" # OTEL_TRACES_SAMPLER_ARG
+  # Extra OTEL_RESOURCE_ATTRIBUTES as key: value. k8s.pod.name, k8s.namespace.name and
+  # k8s.node.name are always added from the Downward API.
+  resourceAttributes: {}
+
+# Static configuration file (PLAN section 5.1), rendered verbatim into the ConfigMap.
+# The values below are EXAMPLES: replace issuer, audiences and backends for your environment.
+config:
+  auth:
+    issuer: https://keycloak.example.com/realms/observability
+    audiences: [querdian]
+    claims:
+      username: preferred_username
+      groups: groups
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://thanos-query.monitoring:10902
+      pathPrefix: /prometheus
+      namespaceLabel: namespace
+      tenantFederation: none
+    - name: logs
+      type: loki
+      url: http://loki-gateway.monitoring
+      pathPrefix: /loki
+      namespaceLabel: k8s_namespace_name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: tenantIdLabel
+    - name: traces
+      type: tempo
+      url: http://tempo-query-frontend.monitoring:3200
+      pathPrefix: /tempo
+      namespaceLabel: resource.k8s.namespace.name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: none
+      traceByID: filter
+  limits:
+    maxPolicyTerms: 16
+    maxFanout: 16
+    maxMergeBytes: 67108864
+    upstreamTimeout: 5m
+
+# Extra CA bundle (PEM) trusted for the OIDC issuer. Set exactly one of the two; the chart mounts
+# it and sets config.auth.caFile automatically.
+oidcCA:
+  existingSecret: ""
+  existingConfigMap: ""
+  key: ca.crt
+
+extraArgs: []
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 45
+priorityClassName: ""
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+
+# Pod anti-affinity preset used when `affinity` is empty: soft | hard | "" (none).
+podAntiAffinityPreset: soft
+# Full affinity override (replaces the preset).
+affinity: {}
+topologySpreadConstraints: []
+nodeSelector: {}
+tolerations: []
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # If set, used instead of minAvailable.
+  maxUnavailable: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+serviceMonitor:
+  enabled: false
+  namespace: "" # defaults to the release namespace
+  labels: {} # e.g. release: kube-prometheus-stack
+  interval: 30s
+  scrapeTimeout: 10s
+  relabelings: []
+  metricRelabelings: []
+
+networkPolicy:
+  # NetworkPolicy for the querdian pods themselves (requires a CNI that enforces policies).
+  enabled: false
+  ingress:
+    # Peers (NetworkPolicyPeer list) allowed to reach the proxy port, e.g. Grafana.
+    # Empty means: from nowhere (default deny), so set this when enabling the policy.
+    from: []
+    # Peers allowed to reach the management port (e.g. Prometheus). Empty = nobody.
+    managementFrom: []
+  egress:
+    dns:
+      enabled: true
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    kubeApi:
+      enabled: true
+      # Restrict to the API server address(es) when known, e.g. [{ipBlock: {cidr: 10.0.0.1/32}}].
+      # Empty allows the ports below to any destination.
+      to: []
+      ports: [443, 6443]
+    # Peers and ports of the configured backends (config.backends[].url).
+    backends:
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports: [10902, 80, 3200]
+    # OIDC issuer. Empty `to` allows the ports to any destination.
+    oidc:
+      enabled: true
+      to: []
+      ports: [443]
+    # Optional OTLP collector.
+    tracing:
+      enabled: false
+      to: []
+      ports: [4317, 4318]
+    # Raw additional egress rules.
+    extra: []
+
+  # Companion policies placed in the BACKEND namespaces so that only querdian pods can reach the
+  # backends (PLAN section 12: "Backends must not be reachable by clients directly").
+  # Beware: a pod selected by an ingress policy only accepts the listed sources, so add every
+  # legitimate client (collectors writing to Loki/Tempo, Prometheus scrapers, ...) to allowFrom.
+  backendProtection:
+    enabled: false
+    targets: []
+    # - namespace: monitoring
+    #   podSelector:
+    #     matchLabels: {app.kubernetes.io/name: loki}
+    #   ports: [3100, 80]
+    #   allowFrom: []     # extra NetworkPolicyPeers allowed in addition to querdian

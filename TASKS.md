@@ -434,14 +434,17 @@ picking up any task — section references (§) point there.
 
 ## M5 — Release 0.1.0
 
-### [ ] T5.1 — Helm chart
+### [~] T5.1 — Helm chart
 - **Depends on:** T1.11
 - **Files:** `charts/querdian/**`
 - **Description:** PLAN §14 chart contents, tracing values → `OTEL_*` env + Downward API
   resource attributes, `values.schema.json`, `helm lint` + `ct` (chart-testing) in CI.
 - **Acceptance:**
   - [ ] `helm install` on kind succeeds; pods ready; leader election lease present.
+        (Chart written; `helm lint`/`template` + `go test ./charts/...` green. Not yet verified on
+        kind: no kind and no image available when implemented. `ct` CI wiring is part of T0.2/CI.)
   - [ ] NetworkPolicy example restricts backend access to proxy pods.
+        (Rendered via `networkPolicy.backendProtection`; behaviour not yet verified on a cluster.)
 
 ### [ ] T5.2 — Image and release pipeline ∥
 - **Depends on:** T1.11

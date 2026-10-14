@@ -1,0 +1,17 @@
+apiVersion: v2
+name: querdian
+description: Multi-tenant, label-based access proxy for Prometheus/Thanos, Loki and Tempo
+type: application
+version: 0.0.0-dev
+# The release pipeline replaces version and appVersion (helm package --version X --app-version X).
+appVersion: "0.0.0-dev"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/querdian-dev/querdian
+sources:
+  - https://github.com/querdian-dev/querdian
+keywords: [prometheus, loki, tempo, multi-tenancy, proxy, access-control]
+maintainers:
+  - name: geilername
+    email: maximilian.marschall@3xm.at
+annotations:
+  category: Observability
