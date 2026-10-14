@@ -32,6 +32,8 @@ type Controller struct {
 	debounce time.Duration
 	tracer   trace.Tracer
 
+	onRebuild func(snap *policy.Snapshot, err error)
+
 	reader  client.Reader
 	writer  *statusWriter
 	current atomic.Pointer[policy.Snapshot]
@@ -49,6 +51,12 @@ func WithDebounce(d time.Duration) Option { return func(c *Controller) { c.debou
 // WithTracerProvider sets the tracer provider used for the snapshot.rebuild span (default: the global one).
 func WithTracerProvider(tp trace.TracerProvider) Option {
 	return func(c *Controller) { c.tracer = tp.Tracer(tracerName) }
+}
+
+// WithRebuildHook registers a callback invoked after every rebuild attempt: with the new snapshot on success,
+// with a nil snapshot and the error on failure. It runs on the rebuild goroutine and must not block.
+func WithRebuildHook(f func(snap *policy.Snapshot, err error)) Option {
+	return func(c *Controller) { c.onRebuild = f }
 }
 
 const tracerName = "github.com/querdian-dev/querdian/internal/controller"
@@ -177,6 +185,18 @@ func equalStringMap(a, b map[string]string) bool {
 
 // rebuild lists everything from the cache, compiles it and atomically swaps the snapshot.
 func (c *Controller) rebuild(ctx context.Context, trigger string) error {
+	err := c.doRebuild(ctx, trigger)
+	if c.onRebuild != nil {
+		if err != nil {
+			c.onRebuild(nil, err)
+		} else {
+			c.onRebuild(c.current.Load(), nil)
+		}
+	}
+	return err
+}
+
+func (c *Controller) doRebuild(ctx context.Context, trigger string) error {
 	ctx, span := c.tracer.Start(ctx, "snapshot.rebuild", trace.WithNewRoot())
 	defer span.End()
 	start := time.Now()

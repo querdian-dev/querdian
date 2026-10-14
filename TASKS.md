@@ -240,7 +240,7 @@ picking up any task — section references (§) point there.
   - [x] With default flags, no span carries `enduser.id` or query attributes.
   - [x] Exemplar with trace ID present on request histogram (testutil).
 
-### [ ] T1.11 — Server wiring and health
+### [x] T1.11 — Server wiring and health
 - **Depends on:** T1.6, T1.7, T1.9, T1.10
 - **Files:** `internal/server/*`, `cmd/querdian/main.go`
 - **Description:** Two HTTP servers (proxy, management). Handler chain: otelhttp → readiness
@@ -248,9 +248,9 @@ picking up any task — section references (§) point there.
   enforce (skipped for `safe`) → proxy. Follow the lifecycle in PLAN §3 exactly. Graceful shutdown. `/healthz` (process), `/readyz` (snapshot ready + issuer
   discovery done).
 - **Acceptance:**
-  - [ ] Integration test (envtest + httptest upstream + test issuer): unrestricted policy →
+  - [x] Integration test (envtest + httptest upstream + test issuer): unrestricted policy →
         request proxied with tenant header; no policy → 403; before snapshot ready → 503.
-  - [ ] Server span carries `querdian.decision`, `.decision.reason`, `.policies`.
+  - [x] Server span carries `querdian.decision`, `.decision.reason`, `.policies`.
 
 ---
 
