@@ -207,7 +207,7 @@ picking up any task — section references (§) point there.
   `docs/endpoints.md` (PLAN §8) with route templates (`label/:name/values`); lookup function
   returning `Endpoint{Kind, Param, Template, Methods, Websocket}`. Unknown → deny.
 - **Acceptance:**
-  - [ ] Table test for every endpoint row in `docs/endpoints.md`, plus path traversal /
+  - [x] Table test for every endpoint row in `docs/endpoints.md`, plus path traversal /
         double-slash / encoded-slash / trailing-slash cases (all must not escape to a different
         route).
   - [ ] Route templates carry a parameter allow-list (PLAN §9); `storeMatch[]` and unlisted params are dropped/rejected; Loki `detected_labels` and Loki POST on `query`/`query_range` are decided by a black-box test (record result in `docs/endpoints.md`).
