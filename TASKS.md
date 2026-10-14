@@ -383,13 +383,13 @@ picking up any task — section references (§) point there.
 - **Files:** `pkg/traceql/lexer.go`, `pkg/traceql/doc.go`, tests
 - **Acceptance:** as T3.1 for TraceQL tokens (PLAN §7.4).
 
-### [ ] T4.2 — `pkg/traceql` parser
+### [x] T4.2 — `pkg/traceql` parser
 - **Depends on:** T4.1
 - **Files:** `pkg/traceql/parser.go`, `pkg/traceql/ast.go`, tests
 - **Acceptance:**
-  - [ ] Own corpus ≥ 120 queries from public doc examples (doc URL per case), incl. structural
+  - [x] Own corpus ≥ 120 queries from public doc examples (doc URL per case), incl. structural
         operators, pipelines, metrics functions, `select()`.
-  - [ ] Every spanset filter located with correct byte range; fuzz round-trip.
+  - [x] Every spanset filter located with correct byte range; fuzz round-trip.
 
 ### [ ] T4.3 — TraceQL injection and denied attributes
 - **Depends on:** T4.2, T1.11
