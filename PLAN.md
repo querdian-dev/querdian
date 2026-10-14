@@ -587,7 +587,10 @@ public API docs in `T0.3`; results go to `docs/endpoints.md` and `internal/route
 | `query`, `query_range`, `query_exemplars` | enforce | `query` |
 | `series`, `labels`, `label/<name>/values` | enforce (match expand) | `match[]` |
 | `status/buildinfo`, `format_query`, `parse_query` | safe | — |
-| `metadata`, `targets`, `rules`, `alerts`, `status/*` (other), `admin/*`, `write`, `otlp/*` | deny | — |
+| `metadata`, `targets`, `targets/*`, `scrape_pools*`, `rules`, `alerts`, `alertmanagers`, `search/*`, `notifications*`, `features`, `status/*` (other), `admin/*`, `write`, `read`, `otlp/*`, `/openapi.yaml` | deny | — |
+
+`label/<name>/values` is `GET` only (Prometheus docs); all other enforce rows accept `GET` and `POST`.
+Details, Thanos-specific parameters and open questions: `docs/endpoints.md`.
 
 ### 8.2 Loki (`type: loki`), under `pathPrefix` + `/loki/api/v1/`
 
@@ -600,7 +603,7 @@ public API docs in `T0.3`; results go to `docs/endpoints.md` and `internal/route
 | `index/stats`, `index/volume`, `index/volume_range`, `patterns` | enforce (fan-out sum) | `query` |
 | `tail` (WebSocket) | enforce (fan-out tail) | `query` |
 | `status/buildinfo`, `format_query` | safe | — |
-| `push`, rules, delete, everything else | deny | — |
+| `push`, `/otlp/*`, rules (`/loki/api/v1/rules*`, `/prometheus/api/v1/*`), `delete`, deprecated `/api/prom/*`, everything else | deny | — |
 
 ### 8.3 Tempo (`type: tempo`), under `pathPrefix` + `/api/`
 
@@ -611,7 +614,7 @@ public API docs in `T0.3`; results go to `docs/endpoints.md` and `internal/route
 | `metrics/query`, `metrics/query_range` | enforce | `q` |
 | `traces/<id>`, `v2/traces/<id>` | traceByID | — |
 | `status/buildinfo`, `echo` | safe | — |
-| everything else | deny | — |
+| `search/tags`, `search/tag/<name>/values` (v1, no `q` support), `v2/traces/diff`, `overrides`, `mcp`, everything else | deny | — |
 
 Grafana compatibility: the backend's `pathPrefix` + upstream API path must be what a Grafana
 data source with URL `https://proxy/<pathPrefix>` calls.
