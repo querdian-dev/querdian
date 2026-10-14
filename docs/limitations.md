@@ -169,6 +169,26 @@ tokenised and structurally validated, not interpreted. Anything it does not reco
 * The `X-Loki-Response-Encoding-Flags: categorize-labels` encoding is preserved by the stream merge;
   branches that disagree on it fail the request.
 
+**Findings from the end-to-end suite (Loki 3.5.0)**
+
+* Under a **tenant-bound policy** (rules that differ per tenant, so terms carry a `__tenant_id__`
+  matcher) the metadata endpoints `labels`, `label/<name>/values`, `series`, `index/stats` and
+  `index/volume` do not work reliably: Loki 3.5.0 ignores a negative `__tenant_id__` matcher there and
+  treats a positive one as matching nothing. Results are empty or wrong, never wider than the policy.
+  Metric queries are unaffected (they bind with a negative matcher). A proper fix needs one request per
+  tenant.
+* **Multi-tenant grants** (header `t1|t2`) do not work for `tail` (Loki: "multiple org IDs present"),
+  for `series` (empty result) or for `detected_labels`.
+* **Duplicate collapse.** When a pipeline gives different streams identical labels and lines (`keep`,
+  `drop`, `line_format`), the fan-out merge for several-term log queries and the `or` of an or-lifted
+  metric query collapse them: fewer entries or lower counts than the union of the per-term results. The
+  result never contains data outside the policy.
+* **Rejected although Loki accepts them:** a range aggregation with `by`/`without` when the policy has
+  several terms (for example `quantile_over_time(... | unwrap x [5m]) by (app)`, also `max_over_time`,
+  `min_over_time`, `stddev_over_time`, `last_over_time`); parenthesised log queries
+  (`( {app="web"} |= "x" )`); `bool` on arithmetic operators; selectors with no positive matcher anywhere.
+* `absent_over_time` under several terms returns one series per term.
+
 ## TraceQL and Tempo
 
 `pkg/traceql` is a clean-room front end. It only has to locate spanset filters and attributes, so it
@@ -232,11 +252,11 @@ an attribute from the policy checks.
   `traces` and `metrics` at the top level; fields added by future Tempo versions are dropped. The
   root span is deliberately not treated as covered by a matching policy, because spans of one trace
   can carry different resource attributes. The body is buffered (up to `maxMergeBytes`).
-* **Trace-level intrinsics are an oracle.** Queries may still use `rootName`, `rootServiceName`,
-  `traceDuration` (and their `trace:` forms) in filters. A user can therefore test hypotheses about
-  the root span or trace duration of traces in which at least one span matches their policy, even
-  though those values are redacted from results (the query result only ever contains policy-matching
-  spans). The enforcer does not forbid these intrinsics ([security/threat-model.md](security/threat-model.md)).
+* **Trace-level intrinsics are rejected unless the root is covered.** `rootName`, `rootServiceName`,
+  `traceDuration` (and their `trace:` forms), `compare()` and the tag-value lookup of the root names
+  return `400` for users whose policy does not cover the root span (not unrestricted, no term without
+  matchers), because they would let the user probe redacted root data
+  ([security/threat-model.md](security/threat-model.md)).
 * **Trace by ID** (`traceByID: filter`): `q` and every parameter except `start`/`end` is `400`; only
   JSON and protobuf (`application/protobuf`) responses are filtered and gzip is decoded; anything
   else is `502`. Spans outside the policy are dropped, then empty scope and resource groups; if nothing

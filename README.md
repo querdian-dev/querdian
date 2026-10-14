@@ -7,7 +7,8 @@ everything fails closed: unknown endpoints, unknown users and unparseable querie
 
 **Status: pre-alpha.** Nothing here is ready for production use. There is no release, container
 image or Helm chart yet; the proxy, the policy CRDs and the PromQL, LogQL and TraceQL enforcers are
-implemented, end-to-end and differential test suites are still open.
+implemented and covered by unit, fuzz, envtest and container-based differential/equivalence suites
+(`make e2e`) against real Prometheus, Loki and Tempo. The kind quickstart and release are still open.
 
 Inspired by [evoila/janus](https://github.com/evoila/janus).
 

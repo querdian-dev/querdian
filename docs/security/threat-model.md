@@ -156,10 +156,14 @@ policy. This is the central risk of any rewriting proxy.
   options (no experimental syntax) reduce the difference. Keep the library close to the version
   of your backends.
 * LogQL and TraceQL: the parsers are clean-room and cannot be proven identical to the backends'.
-  The differential suite that runs rewritten queries against real Loki and Tempo containers and
-  compares results, and the Grafana end-to-end suite, are specified in the plan but are **not in
-  this repository yet**; until they exist the evidence is the unit, corpus and fuzz tests plus the
-  research notes (`docs/research/`). Treat a new Loki or Tempo major version as untested.
+  Mitigation: `make e2e` runs differential and equivalence suites against real Prometheus v3.5.0,
+  Loki 3.5.0 and Tempo 2.9.0 containers (`test/e2e/`). Generated queries, including mutated ones, are
+  sent to the backend directly and through the proxy under many policies; a query the backend accepts
+  must be enforced (result equal to a reference instance holding only the granted data) or rejected by
+  the proxy, and no rewrite may be rejected by the backend. The suites were mutation-checked (breaking
+  injection or redaction makes them fail). They are evidence, not proof, and they cover exactly the
+  versions above: treat a new Loki or Tempo major version as untested until the suites pass against it.
+  There is no Grafana UI end-to-end test; the kind quickstart is a manual demonstration.
 * Unrestricted users are not parsed (their queries go through unmodified); by definition they may
   read everything in their tenants.
 
@@ -214,22 +218,22 @@ whole trace) and `startTimeUnixNano` (earliest start of any span in the trace).
    from remaining spans, and an empty result is a `404` (also for v2). The default is `deny`.
    Anything that cannot be filtered (unknown content type, undecodable body, oversize) is `502`.
 
-## 7. Trace intrinsics oracle (known gap)
+## 7. Trace intrinsics oracle (fixed)
 
 The trace-level intrinsics `rootName`, `rootServiceName`, `traceDuration` and their `trace:` forms
 (`trace:rootName`, `trace:rootService`, `trace:duration`) are queryable in spanset filters
-(`docs/research/traceql.md` section 8). The enforcer ANDs the policy into every filter but does not
-forbid these intrinsics. A user can therefore ask, for traces in which at least one span satisfies
-their policy, *whether* the root span's name or service equals a value or whether the trace duration
-exceeds a threshold. The answer is a boolean per trace (the trace is returned or not); the
-redacted fields themselves are not returned.
+(`docs/research/traceql.md` section 8). Left unchecked they are a boolean oracle: for a trace in which
+at least one span satisfies the policy, a user could test whether the (redacted) root span's name or
+service equals a value or whether the trace duration exceeds a threshold. The T4.6 end-to-end suite
+confirmed this against Tempo 2.9.0, including the same information through tag values for
+`rootServiceName`, through `select`/`by`/metrics grouping, and through `compare()` (whose result carries
+`rootServiceName` as a label dimension).
 
-Impact: low-bandwidth disclosure of root-span names and trace durations for traces the user already
-partially sees, usable to enumerate them by repeated queries. It requires at least one policy-matching
-span in the trace. **This is not mitigated in the current code**; options if it matters to you are a
-policy that admits whole traces (so that the information is not secret), or a future rule that
-rejects trace-level intrinsics for restricted users. Until then it is a documented limitation
-([limitations.md](../limitations.md#traceql-and-tempo)).
+**Mitigation.** The enforcer rejects these intrinsics, `compare()` and the tag-value lookup of the root
+names with `400` for every user whose policy does not cover the root span (`traceql.RootCovered`: the
+policy is unrestricted or has a term without matchers). A policy that admits whole traces is therefore
+the way to give a team trace-level queries. Regression tests: `internal/enforce/traceql/rootintrinsics_test.go`
+and `test/e2e/tempo`.
 
 ## 8. Resource exhaustion
 
@@ -302,9 +306,9 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
 1. Namespace-label integrity and RBAC on policies and namespaces are outside Querdian's control
    (section 1).
 2. Clean-room LogQL and TraceQL parsers may still diverge from the backends in unexplored corners;
-   differential and end-to-end suites do not exist yet (section 4).
+   the differential suites cover only the tested backend versions (section 4).
 3. Denied labels do not redact results (section 5).
-4. Trace-level intrinsics form a boolean oracle on Tempo (section 7).
+4. Policies that cover only part of a trace rely on the root-intrinsic restriction (section 7).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
 7. No built-in rate limiting; memory use of merged responses scales with concurrency (section 8).
