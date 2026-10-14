@@ -24,6 +24,14 @@ func TestTraceLevelIntrinsicsRejectedUnlessRootCovered(t *testing.T) {
 			}
 		}
 	}
+	// compare() exposes the root service of each trace as a label dimension.
+	cq := `{ } | compare({ status = error })`
+	if _, err := plan(t, "/api/metrics/query_range", q("q", cq), one); !errors.Is(err, enforce.ErrUnsupported) {
+		t.Errorf("compare: err = %v", err)
+	}
+	if _, err := plan(t, "/api/metrics/query_range", q("q", cq), policy.Effective{Unrestricted: true}); err != nil {
+		t.Errorf("compare for unrestricted: %v", err)
+	}
 	for _, name := range []string{"rootServiceName", "rootName", "trace:rootService", "trace:rootName", "traceDuration", "trace:duration"} {
 		if _, err := plan(t, "/api/v2/search/tag/"+name+"/values", nil, one); !errors.Is(err, enforce.ErrUnsupported) {
 			t.Errorf("tag values %s: err = %v", name, err)

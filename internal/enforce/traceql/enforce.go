@@ -128,6 +128,13 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 				return enforce.Plan{}, enforce.Errorf(enforce.ErrDeniedLabel, "attribute %s denied by policy", tok.Text)
 			}
 		}
+		// compare() adds the trace-level attributes (rootServiceName, rootName, ...) as label dimensions of
+		// its result, which lists the root service of every trace with a granted span (found by the e2e suite).
+		for _, st := range parsed.Pipeline.Stages {
+			if mf, ok := st.(*traceql.MetricsFunc); ok && mf.Name == "compare" && !RootCovered(eff) {
+				return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "compare() needs a policy that covers the root span")
+			}
+		}
 	} else if required {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "parameter %q is required", ep.Param)
 	}
