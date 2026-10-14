@@ -440,11 +440,19 @@ picking up any task — section references (§) point there.
 - **Description:** PLAN §14 chart contents, tracing values → `OTEL_*` env + Downward API
   resource attributes, `values.schema.json`, `helm lint` + `ct` (chart-testing) in CI.
 - **Acceptance:**
-  - [ ] `helm install` on kind succeeds; pods ready; leader election lease present.
-        (Chart written; `helm lint`/`template` + `go test ./charts/...` green. Not yet verified on
-        kind: no kind and no image available when implemented. `ct` CI wiring is part of T0.2/CI.)
-  - [ ] NetworkPolicy example restricts backend access to proxy pods.
-        (Rendered via `networkPolicy.backendProtection`; behaviour not yet verified on a cluster.)
+  - [x] `helm install` on kind succeeds; pods ready; leader election lease present.
+        (Verified with `hack/kind/verify-chart.sh` on kind v0.33 / Kubernetes 1.37, podman provider,
+        one control-plane node: 2/2 replicas Ready against a stub in-cluster OIDC issuer, Lease
+        `querdian-leader-election` held, sample AccessPolicy status written by the leader
+        (`Compiled` / `TenantNotAssigned`, so RBAC works), no error/warn logs; `helm upgrade` with a
+        changed config rolls the Deployment via `checksum/config`; `helm uninstall` leaves nothing
+        but the CRDs. `ct` CI wiring is part of T0.2/CI.)
+  - [x] NetworkPolicy example restricts backend access to proxy pods.
+        (Verified on kindnet, which enforces policies: with `backendProtection` a client pod can no
+        longer reach the dummy backend, a pod with the proxy's labels in the release namespace can;
+        with `networkPolicy.enabled` and empty `ingress.from` nobody reaches the proxy or management
+        port, `ingress.from` admits only the listed namespace, and querdian stays Ready under its own
+        egress policy. Not covered: real proxy traffic to real backends, as the backends are dummies.)
 
 ### [ ] T5.2 — Image and release pipeline ∥
 - **Depends on:** T1.11
