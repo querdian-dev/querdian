@@ -297,7 +297,11 @@ func hasAnchor(s *Selector) bool {
 //   - the dst and src string arguments of label_replace, which can overwrite
 //     or copy any label (the regex and replacement are not label names);
 //   - every string of a line_format or label_format stage that contains a
-//     denied label name as a substring, because templates read labels by name.
+//     denied label name as a substring, because templates read labels by name;
+//   - every such template that can read ALL labels without naming them (a
+//     lone "." as in {{ . }}, {{ range . }}, {{ index . $k }}, or the
+//     range/with/template/block/define actions and "$" variables), reported as
+//     [TemplateAllLabels]. Plain field access such as {{ .app }} stays allowed.
 //
 // The result is false when q references no denied label. An error is returned
 // only if q.Source cannot be lexed, in which case the caller must reject.
@@ -348,6 +352,30 @@ func DeniedLabel(q *Query, denied []string) (string, bool, error) {
 	return found, found != "", nil
 }
 
+// TemplateAllLabels is reported by [DeniedLabel] instead of a label name when a
+// line_format or label_format template can read every label (for example
+// {{ . }}) while the policy denies at least one label.
+const TemplateAllLabels = "(template reading all labels)"
+
+var (
+	templateAction = regexp.MustCompile(`(?s)\{\{(.*?)\}\}`)
+	templateQuoted = regexp.MustCompile("\"(?:[^\"\\\\]|\\\\.)*\"|`[^`]*`")
+	templateAll    = regexp.MustCompile(`\$|\b(?:range|with|template|block|define)\b|(?:^|[\s(|])\.(?:$|[\s)|])`)
+)
+
+// templateReadsAllLabels reports whether a Go template string has an action
+// that can reach labels without naming them. String literals inside actions
+// are ignored. The check is conservative: false positives only reject queries.
+func templateReadsAllLabels(tmpl string) bool {
+	for _, m := range templateAction.FindAllStringSubmatch(tmpl, -1) {
+		action := templateQuoted.ReplaceAllString(m[1], `""`)
+		if templateAll.MatchString(action) {
+			return true
+		}
+	}
+	return false
+}
+
 // templateDenied returns a denied label named inside a line_format or
 // label_format stage string of pipe, or "".
 func templateDenied(pipe []Token, denied []string) string {
@@ -367,6 +395,9 @@ func templateDenied(pipe []Token, denied []string) string {
 				if strings.Contains(t.Value, d) {
 					return d
 				}
+			}
+			if templateReadsAllLabels(t.Value) {
+				return TemplateAllLabels
 			}
 		}
 	}

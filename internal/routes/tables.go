@@ -129,9 +129,8 @@ var lokiTable = compile(join(
 
 var tempoTable = compile(join(
 	[]route{
-		// TODO(question t0.3 #5): legacy tags is NOT allowed (rejected always); minDuration/maxDuration
-		// are filters only and allowed pending T0.5 verification.
-		enforce("/api/search", "q", getOnly, "start", "end", "limit", "spss", "minDuration", "maxDuration"),
+		// Legacy tags, minDuration and maxDuration are never allowed (PLAN §7.4, question t0.3 #5).
+		enforce("/api/search", "q", getOnly, "start", "end", "limit", "spss"),
 		// TODO(question t0.3 #6): q is optional here; the enforcer must inject a policy-only filter when omitted.
 		enforce("/api/v2/search/tags", "q", getOnly, "start", "end", "scope", "limit"),
 		enforce("/api/v2/search/tag/:name/values", "q", getOnly, "start", "end", "limit"),
