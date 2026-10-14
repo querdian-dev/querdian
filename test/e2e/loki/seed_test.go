@@ -40,6 +40,7 @@ schema_config:
   configs:
     - {from: "2024-01-01", store: tsdb, object_store: filesystem, schema: v13, index: {prefix: index_, period: 24h}}
 ingester:
+  chunk_retain_period: 10m
   lifecycler: {min_ready_duration: 0s}
 limits_config: {allow_structured_metadata: true, reject_old_samples: false, volume_enabled: true}
 querier: {multi_tenant_queries_enabled: true, max_concurrent: 32}
@@ -394,6 +395,11 @@ func seed(t testing.TB, mainURL, refURL string, end time.Time) {
 		}
 		push(t, mainURL, tn, ss)
 	}
+	type want struct {
+		base, tenant string
+		n            int
+	}
+	waits := []want{{mainURL, "t1", 6}, {mainURL, "t2", 6}}
 	for _, set := range termSets {
 		for _, tn := range set.tenants {
 			var ss []streamDef
@@ -403,9 +409,43 @@ func seed(t testing.TB, mainURL, refURL string, end time.Time) {
 				}
 			}
 			push(t, refURL, refTenant(set.name, tn), ss)
+			if len(ss) > 0 {
+				waits = append(waits, want{refURL, refTenant(set.name, tn), len(ss)})
+			}
 		}
 	}
 	flush(t, mainURL)
 	flush(t, refURL)
-	time.Sleep(3 * time.Second)
+	// The flush is asynchronous; a series request without matchers is answered from the store index only,
+	// so wait until every tenant lists all its streams there (data still in the ingester would otherwise be
+	// served differently by instances that flushed earlier or later).
+	deadline := time.Now().Add(90 * time.Second)
+	for _, w := range waits {
+		for {
+			ok := true
+			for _, m := range []string{"", "&match%5B%5D=%7Bapp%3D~%22.%2B%22%7D"} {
+				u := fmt.Sprintf("%s/loki/api/v1/series?start=%d&end=%d%s", w.base, end.Add(-30*time.Minute).UnixNano(), end.Add(30*time.Second).UnixNano(), m)
+				req, _ := http.NewRequest(http.MethodGet, u, nil) //nolint:noctx // test-only
+				req.Header.Set("X-Scope-OrgID", w.tenant)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					ok = false
+					continue
+				}
+				var d struct {
+					Data []any `json:"data"`
+				}
+				_ = json.NewDecoder(resp.Body).Decode(&d)
+				_ = resp.Body.Close()
+				ok = ok && len(d.Data) >= w.n
+			}
+			if ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("tenant %s did not settle (expected %d series)", w.tenant, w.n)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 }

@@ -165,6 +165,13 @@ func (f *fixture) visibleStreams(t testing.TB, set termSet) []streamDef {
 // only delivers new lines), so everything that is pushed uses its clock, not the test host's.
 func (f *fixture) now() time.Time { return time.Now().Add(f.skew) }
 
+// freshNow re-reads Loki's clock (a container VM clock can step, e.g. after the host slept).
+func (f *fixture) freshNow(t testing.TB) time.Time {
+	t.Helper()
+	f.skew = lokiClockSkew(t, f.mainURL)
+	return f.now()
+}
+
 // lokiClockSkew returns Loki's clock minus the local clock, from the Date header of an HTTP response.
 func lokiClockSkew(t testing.TB, base string) time.Duration {
 	t.Helper()

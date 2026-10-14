@@ -124,7 +124,7 @@ func testTail(t *testing.T, f *fixture) {
 		set := setByName(name)
 		t.Run("merge-"+name, func(t *testing.T) {
 			user := f.as(set)
-			start := f.now()
+			start := f.freshNow(t)
 			q := url.Values{"query": {`{app=~".+"}`}, "start": {nanos(start)}, "limit": {"1000"}}
 			mine := dialTail(t, wsURL(f.proxy.URL, "/loki/loki/api/v1/tail", q), bearer(user), set.rename())
 			ref := dialTail(t, wsURL(f.refURL, "/loki/api/v1/tail", q), http.Header{"X-Scope-OrgID": {set.refHeader()}}, set.rename())
@@ -138,7 +138,7 @@ func testTail(t *testing.T, f *fixture) {
 			}
 			warm := false
 			for i := range 40 {
-				e := []entry{{f.now().UnixNano(), fmt.Sprintf("tail-warmup-%s-%d", name, i)}}
+				e := []entry{{f.freshNow(t).UnixNano(), fmt.Sprintf("tail-warmup-%s-%d", name, i)}}
 				push(t, f.mainURL, probe.tenant, []streamDef{{tenant: probe.tenant, labels: probe.labels, entries: e}})
 				push(t, f.refURL, refTenant(set.name, probe.tenant), []streamDef{{tenant: probe.tenant, labels: probe.labels, entries: e}})
 				time.Sleep(500 * time.Millisecond)
@@ -152,7 +152,7 @@ func testTail(t *testing.T, f *fixture) {
 			}
 
 			// New lines in every stream of the main instance and in the granted streams of the reference.
-			stamp := f.now()
+			stamp := f.freshNow(t)
 			for _, tn := range allTenants {
 				var all, granted []streamDef
 				for _, s := range f.all {
@@ -249,7 +249,7 @@ func testTail(t *testing.T, f *fixture) {
 		t.Cleanup(relay.Close)
 		p2 := framework.StartProxy(t, framework.ProxyOptions{Issuer: f.proxy.Issuer, Backends: []config.Backend{lokiBackend(relay.URL)}, Policies: f.pol})
 		a := api{c: p2.As("u-"+setByName("overlap").group, setByName("overlap").group), prefix: "/loki", end: f.end}
-		tl := dialTail(t, wsURL(p2.URL, "/loki/loki/api/v1/tail", url.Values{"query": {`{app=~".+"}`}, "start": {nanos(f.now())}}), bearer(a), nil)
+		tl := dialTail(t, wsURL(p2.URL, "/loki/loki/api/v1/tail", url.Values{"query": {`{app=~".+"}`}, "start": {nanos(f.freshNow(t))}}), bearer(a), nil)
 		time.Sleep(2 * time.Second)
 		mu.Lock()
 		for _, c := range conns {
