@@ -355,15 +355,15 @@ picking up any task — section references (§) point there.
   - [ ] Summation per response type; `Effective.Disjoint=false` sets span attribute
         `merge.approximate=true` and a response warning field if the API supports warnings.
 
-### [ ] T3.7 — Loki tail WebSocket fan-out
+### [x] T3.7 — Loki tail WebSocket fan-out
 - **Depends on:** T3.3, T1.9
 - **Files:** `internal/fanout/tail.go`, `internal/proxy/websocket.go`, tests
 - **Description:** Accept client WebSocket, open one upstream WebSocket per term, merge frames,
   dedupe (bounded LRU), close all on any error/close, propagate `dropped_entries`.
 - **Acceptance:**
-  - [ ] Tests with fake upstream WebSocket servers: merging, dedupe, upstream close → client
+  - [x] Tests with fake upstream WebSocket servers: merging, dedupe, upstream close → client
         close with reason, client close → upstreams closed.
-  - [ ] No goroutine leaks (`goleak`).
+  - [x] No goroutine leaks (`goleak`).
 
 ### [ ] T3.8 — Loki differential, E2E and equivalence
 - **Depends on:** T3.4, T3.5, T3.6, T3.7, T2.4 (framework)
