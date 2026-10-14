@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -80,6 +82,15 @@ type recordingUpstream struct {
 	mu   sync.Mutex
 	reqs []*http.Request
 	body []string
+	// reply, when set, chooses the response; otherwise a fixed success body is returned.
+	reply func(r *http.Request) (status int, contentType, body string)
+}
+
+// setReply installs a custom response function.
+func (u *recordingUpstream) setReply(f func(r *http.Request) (int, string, string)) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.reply = f
 }
 
 func newUpstream(t testing.TB) *recordingUpstream {
@@ -92,6 +103,17 @@ func newUpstream(t testing.TB) *recordingUpstream {
 		u.reqs = append(u.reqs, r)
 		u.body = append(u.body, string(b[:n]))
 		u.mu.Unlock()
+		u.mu.Lock()
+		reply := u.reply
+		u.mu.Unlock()
+		r.Body = io.NopCloser(bytes.NewReader(b[:n])) // let reply functions parse the form
+		if reply != nil {
+			status, ct, body := reply(r)
+			w.Header().Set("Content-Type", ct)
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"success","data":[]}`))
 	}))
@@ -137,6 +159,7 @@ type harness struct {
 	issuer    *testIssuer
 	metricsUp *recordingUpstream
 	logsUp    *recordingUpstream
+	tracesUp  *recordingUpstream
 	cfg       *config.Config
 	snaps     *staticSnapshots
 	metrics   *observability.Metrics
@@ -146,11 +169,12 @@ type harness struct {
 
 func newHarness(t testing.TB) *harness {
 	t.Helper()
-	h := &harness{issuer: newTestIssuer(t), metricsUp: newUpstream(t), logsUp: newUpstream(t), snaps: &staticSnapshots{}}
+	h := &harness{issuer: newTestIssuer(t), metricsUp: newUpstream(t), logsUp: newUpstream(t), tracesUp: newUpstream(t), snaps: &staticSnapshots{}}
 	yaml := "auth: {issuer: \"" + h.issuer.srv.URL + "\", audiences: [querdian]}\n" +
 		"backends:\n" +
 		"  - {name: metrics, type: prometheus, url: \"" + h.metricsUp.URL + "\", pathPrefix: /prom, namespaceLabel: namespace}\n" +
-		"  - {name: logs, type: loki, url: \"" + h.logsUp.URL + "\", pathPrefix: /loki, namespaceLabel: k8s_namespace_name, tenantHeader: X-Scope-OrgID, tenantFederation: tenantIdLabel}\n"
+		"  - {name: logs, type: loki, url: \"" + h.logsUp.URL + "\", pathPrefix: /loki, namespaceLabel: k8s_namespace_name, tenantHeader: X-Scope-OrgID, tenantFederation: tenantIdLabel}\n" +
+		"  - {name: traces, type: tempo, url: \"" + h.tracesUp.URL + "\", pathPrefix: /tempo, namespaceLabel: resource.k8s.namespace.name, tenantHeader: X-Scope-OrgID, traceByID: filter}\n"
 	cfg, err := config.Parse([]byte(yaml))
 	if err != nil {
 		t.Fatal(err)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
+	"github.com/querdian-dev/querdian/internal/fanout"
 	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/proxy"
@@ -73,6 +74,7 @@ type Server struct {
 	tracer  trace.Tracer
 	tp      trace.TracerProvider
 	proxies map[string]*proxy.Proxy // by backend name
+	mergers map[enforce.MergeKind]proxy.Merger
 	logger  *slog.Logger
 }
 
@@ -90,7 +92,12 @@ func New(d Deps) *Server {
 	if base == nil {
 		base = http.DefaultTransport.(*http.Transport).Clone()
 	}
-	s := &Server{d: d, tracer: tp.Tracer(tracerName), tp: tp, logger: logger, proxies: map[string]*proxy.Proxy{}}
+	s := &Server{d: d, tracer: tp.Tracer(tracerName), tp: tp, logger: logger, proxies: map[string]*proxy.Proxy{},
+		mergers: map[enforce.MergeKind]proxy.Merger{
+			enforce.MergeLokiStreams: fanout.MergeLokiStreams,
+			enforce.MergeStringSet:   fanout.NewStringSetMerger(deniedFromRequest),
+			enforce.MergeSumCounts:   fanout.NewSumCountsMerger(deniedFromRequest, approximateFromRequest),
+		}}
 	for i := range d.Config.Backends {
 		b := &d.Config.Backends[i]
 		rt := http.RoundTripper(&meteredTransport{base: base, backend: b.Name, m: d.Metrics})

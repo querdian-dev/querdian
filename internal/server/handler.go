@@ -16,6 +16,8 @@ import (
 	"github.com/querdian-dev/querdian/internal/auth"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
+	"github.com/querdian-dev/querdian/internal/enforce/traceql"
+	"github.com/querdian-dev/querdian/internal/fanout"
 	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/proxy"
@@ -203,7 +205,69 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		s.proxies[b.Name].ServeTail(w, r, target, plan, proxy.TailOptions{})
 		return
 	}
-	s.proxies[b.Name].Execute(w, r, target, plan, s.d.Mergers[plan.Merge])
+
+	if ep.Kind == routes.KindTraceByID {
+		f, err := traceql.NewTraceFilter(eff, traceql.TraceFilterOptions{
+			V2:       ep.Template == "/api/v2/traces/:id",
+			MaxBytes: s.d.Config.Limits.MaxMergeBytes,
+		})
+		if err != nil {
+			st.set(decisionError, "trace_filter_failed")
+			proxy.WriteError(w, r, http.StatusInternalServerError, "internal", "trace filter unavailable")
+			return
+		}
+		if !f.Passthrough() {
+			target.ModifyResponse = f.ModifyResponse
+		}
+	}
+
+	// Mergers read the effective policy and the normalised parameters from the request.
+	r = r.WithContext(context.WithValue(r.Context(), effKey{}, eff))
+	r.Form = params
+	merge := s.merger(b, ep, &plan, eff)
+	s.proxies[b.Name].Execute(w, r, target, plan, merge)
+}
+
+type effKey struct{}
+
+func effFrom(r *http.Request) (policy.Effective, bool) {
+	eff, ok := r.Context().Value(effKey{}).(policy.Effective)
+	return eff, ok
+}
+
+// deniedFromRequest and approximateFromRequest feed the policy-dependent parts of the static mergers.
+func deniedFromRequest(r *http.Request) []string {
+	eff, _ := effFrom(r)
+	return eff.DeniedLabels
+}
+
+func approximateFromRequest(r *http.Request) bool {
+	eff, ok := effFrom(r)
+	return !ok || !eff.Disjoint // without a known policy assume the sum may overlap
+}
+
+// merger picks the response merger for a plan. Policy-dependent mergers are built per request. Tempo tag
+// endpoints are single-request MergeNone plans; they are switched to a buffered merge only when labels are
+// denied, so the tag list can be filtered.
+func (s *Server) merger(b *config.Backend, ep routes.Endpoint, plan *enforce.Plan, eff policy.Effective) proxy.Merger {
+	if b.Type == config.BackendTempo {
+		switch {
+		case plan.Merge == enforce.MergeTempoSearch:
+			return fanout.NewTempoSearchMerger(traceql.RootCovered(eff))
+		case plan.Merge == enforce.MergeNone && len(eff.DeniedLabels) > 0 &&
+			(ep.Template == "/api/v2/search/tags" || ep.Template == "/api/v2/search/tag/:name/values"):
+			plan.Merge = enforce.MergeStringSet
+			valuesFor := ""
+			if ep.Template == "/api/v2/search/tag/:name/values" {
+				valuesFor = ep.PathParam
+			}
+			return fanout.NewTempoTagsMerger(eff.DeniedLabels, valuesFor)
+		}
+	}
+	if m, ok := s.d.Mergers[plan.Merge]; ok {
+		return m
+	}
+	return s.mergers[plan.Merge]
 }
 
 // planTail plans a WebSocket endpoint. These are never passed through, even for unrestricted grants: the
@@ -241,9 +305,8 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request, st *reqState, b *c
 		return passthrough, true
 	}
 	if ep.Kind == routes.KindTraceByID {
-		st.set(decisionError, "enforcer_unavailable")
-		proxy.WriteError(w, r, http.StatusServiceUnavailable, "unavailable", "enforcement is not available for this endpoint")
-		return enforce.Plan{}, false
+		// Trace lookup is enforced on the response (see authorized), not by rewriting a query.
+		return passthrough, true
 	}
 	e := s.d.Enforcers[b.Type]
 	if e == nil {

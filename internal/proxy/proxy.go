@@ -35,6 +35,9 @@ type Target struct {
 	Endpoint     routes.Endpoint
 	UpstreamPath string
 	Effective    policy.Effective
+	// ModifyResponse optionally rewrites the streamed response of a single-request plan (for example the
+	// trace-by-ID filter). An error fails the request closed (502); the original body is never sent.
+	ModifyResponse func(*http.Response) error
 }
 
 // Execute runs the plan. Single-request plans are streamed through a ReverseProxy; plans with several requests
@@ -108,6 +111,11 @@ func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t 
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del(TraceHeader) // ours is authoritative
+			if t.ModifyResponse != nil {
+				if err := t.ModifyResponse(resp); err != nil {
+					return err
+				}
+			}
 			if filter == nil || resp.StatusCode < 200 || resp.StatusCode > 299 {
 				return nil
 			}
