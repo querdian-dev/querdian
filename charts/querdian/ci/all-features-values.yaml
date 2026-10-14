@@ -1,0 +1,53 @@
+# Used by chart-testing (ct) and by `helm template` checks: every optional feature on.
+replicaCount: 3
+podAntiAffinityPreset: hard
+management:
+  service:
+    enabled: true
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+tracing:
+  recordUser: true
+  exporter: otlp
+  otlp:
+    endpoint: http://otel-collector.observability:4318
+    protocol: http/protobuf
+  samplerArg: "0.5"
+  resourceAttributes:
+    deployment.environment: test
+oidcCA:
+  existingSecret: oidc-ca
+  key: ca.crt
+extraArgs: ["--log-level=debug"]
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: grafana
+    managementFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+  egress:
+    tracing:
+      enabled: true
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+  backendProtection:
+    enabled: true
+    targets:
+      - namespace: monitoring
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: loki
+        ports: [3100, 80]
+        allowFrom:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: alloy

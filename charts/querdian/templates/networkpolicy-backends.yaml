@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.backendProtection.enabled }}
+{{- range $i, $t := .Values.networkPolicy.backendProtection.targets }}
+---
+# Only querdian pods (plus allowFrom) may reach the selected backend pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "querdian.fullname" $ }}-allow-querdian-only
+  namespace: {{ required "networkPolicy.backendProtection.targets[].namespace is required" $t.namespace }}
+  labels:
+    {{- include "querdian.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    {{- toYaml (required "networkPolicy.backendProtection.targets[].podSelector is required" $t.podSelector) | nindent 4 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "querdian.selectorLabels" $ | nindent 14 }}
+        {{- with $t.allowFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $t.ports }}
+      ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

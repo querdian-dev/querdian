@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "querdian.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "querdian.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- if include "querdian.managementService" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "querdian.fullname" . }}-management
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: management
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "querdian.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: management
+      port: {{ .Values.management.service.port }}
+      targetPort: management
+      protocol: TCP
+{{- end }}
