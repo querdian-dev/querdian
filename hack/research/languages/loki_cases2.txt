@@ -1,0 +1,83 @@
+{app="foo"} | logfmt | level="info" or level="error" and msg="bad"
+{app="foo"} | logfmt | level="error" and msg="hello" or level="info"
+{app="foo"} | logfmt | level="info" or (level="error" and msg="hello")
+{app="foo"} | logfmt | level="info" or level="error" and msg="hello"
+{app="foo"} |= "A"
+{app="foo"} |= "\x41"
+{app="foo"} |= "\101"
+{app="foo"} |= "\n"
+{app="foo"} |= "x#y"
+{app="bar"} |= "x#y"
+{app="bar"} |= "x#y" # c
+{app="bar"} |= `x#y`
+{app="foo"} |= "hello" # c |= "zzz"
+count_over_time({app=~"foo|bar"}[5m]) unless on(app) count_over_time({app="bar"}[5m])
+count_over_time({app=~"foo|bar"}[5m]) and on(app) count_over_time({app="bar"}[5m])
+sum by (app) (count_over_time({app=~"foo|bar"}[5m])) unless sum by (app) (count_over_time({app="bar"}[5m]))
+sum by (app) (count_over_time({app=~"foo|bar"}[5m])) or sum by (app) (count_over_time({app="bar"}[5m])) * 100
+sum by (app) (count_over_time({app=~"foo|bar"}[5m])) > bool 1
+sum by (app) (count_over_time({app=~"foo|bar"}[5m])) and sum by (app) (count_over_time({app="bar"}[5m])) or vector(9)
+1 or 2
+1 and 2
+vector(1) > bool 0 or vector(5)
+vector(0) or vector(1)
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "(.*):.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "a")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", ".*:.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "X$1", "service", ".*:.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "${1}z", "service", "(a):.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "app", "zz", "service", "a:c")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "q", "nosuch", "")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "q", "nosuch", ".*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "q", "service", "a:c|zzz")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), `foo`, `$1`, `service`, `(.*):.*`)
+label_replace(label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "(.*):.*"), "baz", "$1", "foo", "(.*)")
+sum(label_replace(rate({app="bar"}[1m]), "foo", "q", "app", "bar")) by (foo)
+{app="foo"} | logfmt | msg="hello" | line_format "{{.msg}}" | msg="hello"
+{app="foo"} | logfmt | (msg="hello")
+{app="foo"} | logfmt | msg=~"hel"
+{app="foo"} | logfmt | msg=~"hel.*"
+{app="foo"} | json | logfmt | pattern "<a>" | regexp "(?P<b>.)" | unpack | line_format "x" | label_format a=b | drop a | keep b | decolorize
+{app="foo"} | logfmt | drop level,
+{app="foo"} | logfmt | label_format a=b,
+{app="foo"} | logfmt | label_format a=b, c=d
+{app="foo"} | logfmt | label_format a=b,a=c
+{app="foo"} | unwrap size
+sum_over_time({app="foo"} | logfmt | unwrap size [5m])
+sum_over_time({app="foo"} | logfmt | unwrap bytes(size) [5m])
+sum_over_time({app="foo"} | logfmt | unwrap duration(duration) [5m])
+sum_over_time({app="foo"} | logfmt | unwrap duration_seconds(duration) [5m])
+sum_over_time({app="foo"} | logfmt | unwrap size | level="info" [5m])
+sum_over_time({app="foo"} | logfmt | unwrap size | line_format "x" [5m])
+quantile_over_time(0.9, {app="foo"} | logfmt | unwrap size [5m]) by (app)
+rate({app="foo"}[5m]) by (app)
+absent_over_time({app="nope"}[5m])
+bytes_rate({app="foo"}[5m])
+bytes_over_time({app="foo"}[5m])
+rate_counter({app="foo"} | logfmt | unwrap size [5m])
+first_over_time({app="foo"} | logfmt | unwrap size [5m])
+last_over_time({app="foo"} | logfmt | unwrap size [5m])
+stddev_over_time({app="foo"} | logfmt | unwrap size [5m])
+count_over_time({app="foo"}[5m]) / on() group_left() count_over_time({app="foo"}[5m])
+count_over_time({app="foo"}[5m]) + ignoring(level) count_over_time({app="foo"}[5m])
+sum(count_over_time({app="foo"}[5m]) offset 1m)
+count_over_time({app="foo"}[5m] offset 0s)
+count_over_time({app="foo"}[5m] offset 1d)
+count_over_time({app="foo"}[5m] OFFSET 1m)
+SUM(count_over_time({app="foo"}[5m]))
+{app="foo"} | LOGFMT
+{app="foo"} | logfmt | level="info" AND msg="hello"
+{app="foo"} |= ""
+{app="foo"} |= "a" or |= "b"
+{app="foo"} |= "hello" or "bad"
+{app="foo"} |= "hello" or |= "bad"
+{app="foo"} |~ "hello|bad"
+{app="foo",}
+{app="foo" ,env="a"}
+{}
+{app=~".*"}
+{app=~""}
+{app=""}
+{app!=""}
+{app="foo"}|="hello"
+{app="foo"}|logfmt|level="info"

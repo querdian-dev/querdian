@@ -1,0 +1,23 @@
+{ span.a = "xy" || span.a = "x" && span.http.status_code = 500 }
+{ span.a = "x" && span.http.status_code = 200 || span.a = "y" && span.http.status_code = 500 }
+{ span.a = "y" || span.a = "x" && span.http.status_code = 200 }
+{ span.a = "x" && span.http.status_code = 200 || span.a = "y" }
+{ span.a = "x" && (span.http.status_code = 200 || span.a = "y") }
+{ span.a = "y" || (span.a = "x" && span.http.status_code = 200) }
+{ (span.a = "y" || span.a = "x") && span.http.status_code = 200 }
+{ span.a = "x" || span.a = "y" || span.a = "xy" && span.http.status_code = 500 }
+{ span.a = "xy" && span.http.status_code = 500 || span.a = "x" }
+{ span.a = "x" || span.a = "xy" && span.a = "xy" }
+{ span.a = "z" || span.a = "x" && span.a = "xy" }
+{ span.a = "z" && span.a = "x" || span.a = "xy" }
+{ span.a = "xy" || span.a = "x" && span.a = "z" }
+{ span.a = "xy" || span.a = "z" && span.a = "x" }
+{ span.a = "x" && span.a = "z" || span.a = "xy" }
+{ trace:id = "1" }
+{ trace:id = "00000000000000000000000000000001" }
+{ span:id = "2" }
+{ span:id = "0000000000000002" }
+{ span:parentID = "1" }
+{ span:parentID = "0000000000000001" }
+{ span:parentID = nil }
+{ span.a = "y" } | select(span.a)

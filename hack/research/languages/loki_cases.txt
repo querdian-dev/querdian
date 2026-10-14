@@ -1,0 +1,94 @@
+sum(count_over_time({app="foo"}[5m])) or vector(0)
+rate({app=~"foo|bar"}[1m]) and rate({app="bar"}[1m])
+count_over_time({app=~"foo|bar"}[5m]) unless count_over_time({app="bar"}[5m])
+count_over_time({app=~"foo|bar"}[5m]) unless on(app) count_over_time({app="bar"}[5m])
+count_over_time({app="foo"}[5m]) > bool 1
+sum(count_over_time({app="foo"}[5m])) * 2
+1 + 2 / 3
+2 * 3 % 2
+vector(1) or vector(2) and vector(3)
+vector(1) + vector(2) or vector(5)
+vector(1) unless vector(1) or vector(7)
+vector(1) or vector(2) unless vector(2)
+2 ^ 3 ^ 2
+-2 ^ 2
+count_over_time({app="foo"}[5m] offset 5m)
+count_over_time({app="foo"}[5m]) offset 5m
+sum_over_time({app="foo"} | logfmt | unwrap size [5m] offset 1h)
+count_over_time(({app="foo"} | logfmt)[5m] offset 5m)
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "(.*):.*")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "a")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", "(.*):")
+label_replace(rate({app="bar",service="a:c"} |= "x" [1m]), "foo", "$1", "service", ".*:.*")
+{app="foo"} # comment here
+{app="foo"} |= "ba#d" # c
+{app="foo"} |= 'single'
+{app="foo"} |= `raw\w+`
+{app="foo"} |= "tab\tq\"\\"
+{app="foo"} |= "bad\q"
+{app="foo"} |= "\x41A\101"
+{app="foo"} | logfmt | duration > 1h
+{app="foo"} | logfmt | duration > 1d
+{app="foo"} | logfmt | duration > 1w
+{app="foo"} | logfmt | duration > 1y
+{app="foo"} | logfmt | duration > 2m30s
+{app="foo"} | logfmt | duration > 1.5s
+{app="foo"} | logfmt | duration > 1µs
+{app="foo"} | logfmt | duration > 1us
+{app="foo"} | logfmt | duration > 1ns
+{app="foo"} | logfmt | size > 20KB
+{app="foo"} | logfmt | size > 20 KB
+{app="foo"} | logfmt | size > 20kB
+{app="foo"} | logfmt | size > 20k
+{app="foo"} | logfmt | size > 1G
+{app="foo"} | logfmt | size > 1KiB
+{app="foo"} | logfmt | size > 1.5MiB
+{app="foo"} | logfmt | size > 1kb
+{app="foo"} | logfmt | size > 5 MiB
+{app="foo"} | logfmt | level="info" or level="error" and msg="bad"
+{app="foo"} | logfmt | level="error" and msg="hello" or level="info"
+{app="foo"} | logfmt | (level="info" or level="error") and msg="bad"
+{app="foo"} | logfmt | level="info", msg="hello"
+{app="foo"} | logfmt | level="info" msg="hello"
+{app="foo"} | logfmt | level="info" | msg="hello"
+{app="foo"} |> "<_> msg=<_>"
+{app="foo"} !> "<_> msg=bad<_>"
+{app="foo"} | logfmt | distinct level
+{app="foo"} | logfmt | drop level, msg="hello"
+{app="foo"} | logfmt | keep level
+{app="foo"} | decolorize
+{app="foo"} | pattern "level=<lv> <_>"
+{app="foo"} | regexp "level=(?P<lv>\\w+)"
+{app="foo"} | json
+{app="foo"} | unpack
+{app="foo"} | line_format "{{.app}}"
+{app="foo"} | logfmt | label_format lv=level
+{app="foo"} | logfmt | label_format lv="{{.level}}"
+{app="foo"} | logfmt | line_format "{{.level}}" | label_format a=b
+{app="foo"} | logfmt --strict
+{app="foo"} | logfmt --keep-empty
+{app="foo"} != ip("1.2.3.4")
+{app="foo"} | foo
+{app="foo"} | logfmt | unwrap size
+sum by (app) (count_over_time({app=~"foo|bar"}[5m]))
+sum(count_over_time({app=~"foo|bar"}[5m])) by (app)
+sum by (app) (count_over_time({app=~"foo|bar"}[5m])) by (env)
+topk(1, count_over_time({app=~"foo|bar"}[5m]))
+topk(1, sum by (app) (count_over_time({app=~"foo|bar"}[5m])))
+sort(count_over_time({app=~"foo|bar"}[5m]))
+sort_desc(count_over_time({app=~"foo|bar"}[5m]))
+{app=~"fo"}
+{app=~"fo.*"}
+{app=~"foo|ba"}
+{app="foo"} |~ "ell"
+{app="foo"} |~ "(?i)HELLO"
+count_over_time({app="foo"}[5m]) + count_over_time({app="bar"}[5m])
+count_over_time({app="foo"}[1d])
+count_over_time({app="foo"}[1w])
+count_over_time({app="foo"}[1h30m])
+count_over_time({app="foo"}[5 m])
+{app="foo"} # trailing comment with "quote
+sum(count_over_time({app="foo"}[5m])) # comment
+sum(count_over_time({app="foo"}[5m]))
+# leading comment
+{app="foo"}

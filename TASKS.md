@@ -97,7 +97,7 @@ picking up any task — section references (§) point there.
   - [x] Reproducible script + results table (backend × version × supported?).
   - [x] Recommended default `tenantFederation` per backend type added to PLAN §5.1 comments.
 
-### [ ] T0.5 — Research: TraceQL and LogQL language details ∥
+### [x] T0.5 — Research: TraceQL and LogQL language details ∥
 - **Depends on:** T0.0
 - **Files:** `docs/research/traceql.md`, `docs/research/logql.md`
 - **Description:** From **public docs** plus black-box experiments only (clean room):
@@ -108,8 +108,10 @@ picking up any task — section references (§) point there.
     string/raw-string/comment rules, duration/bytes literal syntax, `offset`, `label_replace`.
   - Include the list of doc URLs used (these become the clean-room provenance record).
 - **Acceptance:**
-  - [ ] Both documents complete with examples verified against a running container.
-  - [ ] Doc URL list included.
+  - [x] Both documents complete with examples verified against a running container
+        (Loki 3.5.0, Tempo 2.9.0; docs-only leftovers such as Tempo metrics functions are
+        explicitly marked unverified / listed as follow-ups).
+  - [x] Doc URL list included.
 
 ---
 
