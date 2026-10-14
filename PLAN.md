@@ -431,8 +431,11 @@ No matched rule → `ErrNoGrant` → 403.
 
 ### 6.3 DNF normalisation (in order)
 
-1. **Unrestricted absorbs.** Any matched unrestricted rule → `Unrestricted=true`, terms dropped.
-   (Tenants still collected from all matched rules.)
+1. **Unrestricted absorbs, per tenant.** An unrestricted rule absorbs the terms of its own tenant only.
+   `Unrestricted=true` (terms dropped) iff every tenant of the matched rules has an unrestricted
+   rule; with a single tenant or a single-tenant backend this is "any unrestricted rule". Absorbing
+   across tenants would over-grant (unrestricted on t1 must not widen a restricted grant on t2).
+   Tenants are collected from all matched rules.
 2. **Dedup** identical terms.
 3. **Subsumption.** Drop term `b` if another term `a` (same tenant) has a matcher set that is a
    subset of `b`'s (`a` is broader).
@@ -714,7 +717,9 @@ data source with URL `https://proxy/<pathPrefix>` calls.
   `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`,
   `OTEL_TRACES_SAMPLER_ARG`, `OTEL_TRACES_EXPORTER`, `OTEL_RESOURCE_ATTRIBUTES`).
   Default sampler `parentbased_traceidratio`.
-- Propagation: inbound `tracecontext` + `baggage`; outbound **only** `tracecontext`.
+- Propagation: inbound `tracecontext` + `baggage`; outbound **only** `tracecontext`. The propagator
+  is fixed in code (`autoprop` / `OTEL_PROPAGATORS` are deliberately not used) because
+  outbound-tracecontext-only is a security rule.
 
 Span tree per request:
 
