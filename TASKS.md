@@ -189,16 +189,16 @@ picking up any task — section references (§) point there.
   - [ ] Two managers against one envtest: only the leader writes status.
   - [ ] Tracing span `snapshot.rebuild` emitted (use tracetest).
 
-### [ ] T1.7 — OIDC authentication ∥
+### [x] T1.7 — OIDC authentication ∥
 - **Depends on:** T1.2
 - **Files:** `internal/auth/*`, tests
 - **Description:** PLAN §10. Middleware producing `Identity{Username string; Groups []string}`
   in context. Dotted claim paths. Typed errors → 401 with reason (`missing_token`,
   `invalid_token`, `expired`, `audience`, `issuer`, `missing_username`).
 - **Acceptance:**
-  - [ ] Tests with a local test issuer (generated keys, httptest discovery + JWKS).
-  - [ ] Custom CA path works (httptest TLS server).
-  - [ ] `querdian_auth_failures_total{reason}` incremented.
+  - [x] Tests with a local test issuer (generated keys, httptest discovery + JWKS).
+  - [x] Custom CA path works (httptest TLS server).
+  - [x] `querdian_auth_failures_total{reason}` incremented.
 
 ### [ ] T1.8 — Enforce interface and route tables
 - **Depends on:** T1.2, T0.3
