@@ -165,9 +165,9 @@ is blocked. Notes:
   Service port.
 * New pods' policies take a few seconds to be programmed; connectivity tests right after a pod start
   can be admitted wrongly.
-* The chart names the backend-protection policy `<release>-allow-querdian-only` per target
-  namespace, so several targets in one namespace overwrite each other; the quickstart therefore uses a
-  single target selecting all three backends with `matchExpressions`.
+* The chart names each backend-protection policy `<release>-allow-querdian-only-<index>`, so several
+  targets may share a namespace. The quickstart uses a single target selecting all three backends with
+  `matchExpressions` for brevity.
 
 ## Timings and footprint
 

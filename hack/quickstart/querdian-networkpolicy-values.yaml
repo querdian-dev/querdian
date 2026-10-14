@@ -33,9 +33,8 @@ networkPolicy:
       ports: [4318]
   backendProtection:
     enabled: true
-    # ONE target for all three backends: the chart names the generated policy
-    # "<release>-allow-querdian-only" per namespace, so several targets in the same namespace
-    # would overwrite each other (chart issue found while writing the quickstart).
+    # ONE target for all three backends (selected with matchExpressions). Separate targets per backend
+    # also work: the chart names each generated policy "<release>-allow-querdian-only-<index>".
     # Consequence: the collector (which writes to Loki and Tempo) may also reach Prometheus ports
     # of the selected pods; Prometheus itself only needs egress, which is not restricted here.
     targets:

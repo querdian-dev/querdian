@@ -122,3 +122,33 @@ func TestSecureDefaults(t *testing.T) {
 	}
 	t.Fatal("no Deployment rendered")
 }
+
+// Several backend-protection targets in the same namespace must render distinct policies; with a shared
+// name the later target would silently overwrite the earlier one.
+func TestBackendProtectionNamesAreUniquePerTarget(t *testing.T) {
+	docs := helmTemplate(t,
+		"--set", "networkPolicy.backendProtection.enabled=true",
+		"--set", "networkPolicy.backendProtection.targets[0].namespace=monitoring",
+		"--set", "networkPolicy.backendProtection.targets[0].podSelector.matchLabels.app=prometheus",
+		"--set", "networkPolicy.backendProtection.targets[1].namespace=monitoring",
+		"--set", "networkPolicy.backendProtection.targets[1].podSelector.matchLabels.app=loki",
+	)
+	seen := map[string]bool{}
+	for _, d := range docs {
+		if d["kind"] != "NetworkPolicy" {
+			continue
+		}
+		md, _ := d["metadata"].(map[string]any)
+		if md["namespace"] != "monitoring" {
+			continue
+		}
+		name, _ := md["name"].(string)
+		if seen[name] {
+			t.Fatalf("duplicate NetworkPolicy name %q in namespace monitoring", name)
+		}
+		seen[name] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("want 2 backend policies in monitoring, got %d (%v)", len(seen), seen)
+	}
+}
