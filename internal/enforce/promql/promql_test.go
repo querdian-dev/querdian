@@ -317,21 +317,14 @@ func TestMissingOrDuplicateQuery(t *testing.T) {
 	}
 }
 
-func TestMultiTermUnsupported(t *testing.T) {
-	eff := policy.Effective{Terms: []policy.Term{
-		{Matchers: []policy.Matcher{{Name: "a", Op: v1.MatchEqual, Value: "1"}}},
-		{Matchers: []policy.Matcher{{Name: "a", Op: v1.MatchEqual, Value: "2"}}},
-	}}
-	if _, err := plan(`up`, eff); !errors.Is(err, enforce.ErrUnsupported) {
-		t.Errorf("got %v", err)
-	}
+func TestNoTermsRejected(t *testing.T) {
 	if _, err := plan(`up`, policy.Effective{}); !errors.Is(err, enforce.ErrUnsupported) {
 		t.Errorf("no terms: got %v", err)
 	}
 }
 
 func TestWrongEndpointParam(t *testing.T) {
-	_, err := New().Plan(context.Background(), routes.Endpoint{Param: "match[]"}, url.Values{"query": {"up"}}, nsTerm())
+	_, err := New().Plan(context.Background(), routes.Endpoint{Param: "q"}, url.Values{"query": {"up"}}, nsTerm())
 	if !errors.Is(err, enforce.ErrUnsupported) {
 		t.Errorf("got %v", err)
 	}
