@@ -1,0 +1,18 @@
+target: all
+multitenancy_enabled: true
+tenant_federation:
+  enabled: true
+server: {http_listen_port: 9009, log_level: warn}
+common:
+  storage:
+    backend: filesystem
+    filesystem: {dir: /data/common}
+blocks_storage:
+  backend: filesystem
+  filesystem: {dir: /data/blocks}
+  bucket_store: {sync_dir: /data/tsdb-sync}
+  tsdb: {dir: /data/tsdb}
+ingester:
+  ring: {replication_factor: 1}
+limits:
+  max_global_series_per_user: 0
