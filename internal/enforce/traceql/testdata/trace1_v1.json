@@ -1,0 +1,142 @@
+{
+    "batches": [
+        {
+            "resource": {
+                "attributes": [
+                    {
+                        "key": "service.name",
+                        "value": {
+                            "stringValue": "frontend"
+                        }
+                    }
+                ]
+            },
+            "scopeSpans": [
+                {
+                    "scope": {
+                        "name": "s1",
+                        "version": "1.0"
+                    },
+                    "spans": [
+                        {
+                            "traceId": "AAAAAAAAAAAAAAAAAAAAAQ==",
+                            "spanId": "AAAAAAAAAAE=",
+                            "name": "GET /",
+                            "kind": "SPAN_KIND_SERVER",
+                            "startTimeUnixNano": "1791981314544119040",
+                            "endTimeUnixNano": "1791981315544119040",
+                            "attributes": [
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "x"
+                                    }
+                                },
+                                {
+                                    "key": "http.status_code",
+                                    "value": {
+                                        "intValue": "200"
+                                    }
+                                }
+                            ],
+                            "status": {
+                                "code": "STATUS_CODE_OK"
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "resource": {
+                "attributes": [
+                    {
+                        "key": "team",
+                        "value": {
+                            "stringValue": "t1"
+                        }
+                    },
+                    {
+                        "key": "service.name",
+                        "value": {
+                            "stringValue": "backend"
+                        }
+                    }
+                ]
+            },
+            "scopeSpans": [
+                {
+                    "scope": {
+                        "name": "s2"
+                    },
+                    "spans": [
+                        {
+                            "traceId": "AAAAAAAAAAAAAAAAAAAAAQ==",
+                            "spanId": "AAAAAAAAAAI=",
+                            "parentSpanId": "AAAAAAAAAAE=",
+                            "name": "db query",
+                            "kind": "SPAN_KIND_CLIENT",
+                            "startTimeUnixNano": "1791981314554119040",
+                            "endTimeUnixNano": "1791981314854119040",
+                            "attributes": [
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "y"
+                                    }
+                                },
+                                {
+                                    "key": "weird name",
+                                    "value": {
+                                        "stringValue": "w"
+                                    }
+                                },
+                                {
+                                    "key": "dash-name",
+                                    "value": {
+                                        "stringValue": "d"
+                                    }
+                                },
+                                {
+                                    "key": "slash/name",
+                                    "value": {
+                                        "stringValue": "s"
+                                    }
+                                },
+                                {
+                                    "key": "http.status_code",
+                                    "value": {
+                                        "intValue": "500"
+                                    }
+                                }
+                            ],
+                            "status": {
+                                "code": "STATUS_CODE_ERROR"
+                            }
+                        },
+                        {
+                            "traceId": "AAAAAAAAAAAAAAAAAAAAAQ==",
+                            "spanId": "AAAAAAAAAAM=",
+                            "parentSpanId": "AAAAAAAAAAE=",
+                            "name": "cache",
+                            "kind": "SPAN_KIND_CLIENT",
+                            "startTimeUnixNano": "1791981314564119040",
+                            "endTimeUnixNano": "1791981314614119040",
+                            "attributes": [
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "xy"
+                                    }
+                                }
+                            ],
+                            "status": {
+                                "code": "STATUS_CODE_OK"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

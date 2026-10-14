@@ -1,0 +1,31 @@
+{
+    "tagValues": [
+        {
+            "type": "string",
+            "value": "frontend"
+        },
+        {
+            "type": "string",
+            "value": "backend"
+        },
+        {
+            "type": "string",
+            "value": "other"
+        },
+        {
+            "type": "string",
+            "value": "rootsvc"
+        },
+        {
+            "type": "string",
+            "value": "childsvc"
+        },
+        {
+            "type": "string",
+            "value": "orphansvc"
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "17126"
+    }
+}

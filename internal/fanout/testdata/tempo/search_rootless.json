@@ -1,0 +1,58 @@
+{
+    "traces": [
+        {
+            "traceID": "4",
+            "rootServiceName": "<root span not yet received>",
+            "startTimeUnixNano": "1791981314549119040",
+            "durationMs": 40,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000008",
+                        "startTimeUnixNano": "1791981314549119040",
+                        "durationNanos": "40000000",
+                        "attributes": [
+                            {
+                                "key": "a",
+                                "value": {
+                                    "stringValue": "o4"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000008",
+                            "startTimeUnixNano": "1791981314549119040",
+                            "durationNanos": "40000000",
+                            "attributes": [
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "o4"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1
+                }
+            ],
+            "serviceStats": {
+                "orphansvc": {
+                    "spanCount": 1
+                }
+            }
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "18756",
+        "completedJobs": 1,
+        "totalJobs": 1
+    }
+}

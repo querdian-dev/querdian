@@ -3,7 +3,8 @@
 //
 // Handled endpoints (by route template): /api/search, /api/v2/search/tags,
 // /api/v2/search/tag/:name/values, /api/metrics/query and /api/metrics/query_range. All use the
-// parameter q. Trace-by-ID (routes.KindTraceByID) is not handled here and yields ErrUnsupported.
+// parameter q. Trace-by-ID (routes.KindTraceByID) is planned by NewWithOptions enforcers only (see
+// tracebyid.go); New denies it.
 //
 // # Decisions
 //
@@ -57,16 +58,19 @@ const (
 // legacyParams are the pre-TraceQL search filters that are always rejected.
 var legacyParams = []string{"tags", "minDuration", "maxDuration"}
 
-type enforcer struct{}
+type enforcer struct{ opt Options }
 
-// New returns the TraceQL enforcer for Tempo backends.
+// New returns the TraceQL enforcer for Tempo backends with trace-by-ID denied (see NewWithOptions).
 func New() enforce.Enforcer { return enforcer{} }
 
 // Plan implements enforce.Enforcer. It returns a single upstream request: search uses
 // enforce.MergeTempoSearch (response redaction, T4.4), every other endpoint enforce.MergeNone.
 // Strategy is "inject", or "passthrough" for unrestricted users (denied attributes are still
 // checked).
-func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, eff policy.Effective) (enforce.Plan, error) {
+func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, eff policy.Effective) (enforce.Plan, error) {
+	if ep.Kind == routes.KindTraceByID {
+		return e.planTraceByID(ep, params, eff)
+	}
 	if ep.Kind != routes.KindEnforce {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "endpoint %q is not a TraceQL enforcement endpoint", ep.Template)
 	}

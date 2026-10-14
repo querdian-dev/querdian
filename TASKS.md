@@ -404,26 +404,26 @@ picking up any task — section references (§) point there.
   - [x] Legacy `tags=` without `q` → 400.
   - [x] Injection parenthesises original filter, DNF and each disjunct (equal-precedence `&&`/`||`); absent `q` on tag endpoints yields a policy-only filter; legacy `tags`/`minDuration`/`maxDuration` → 400.
 
-### [ ] T4.4 — Tempo search metadata redaction
+### [x] T4.4 — Tempo search metadata redaction
 - **Depends on:** T4.3, T1.9
 - **Files:** `internal/fanout/tempo_search.go`, tests
 - **Description:** PLAN §7.4 redaction of root span fields when the root span is not covered.
   Field list from `docs/research/traceql.md`.
 - **Acceptance:**
-  - [ ] Unit tests with recorded response shapes (self-generated against a container, not copied
+  - [x] Unit tests with recorded response shapes (self-generated against a container, not copied
         from Tempo source).
-  - [ ] `rootServiceName`, `rootTraceName` and `serviceStats` redacted; both `spanSet` and `spanSets` rewritten; decision recorded on trace-level `durationMs`/`startTimeUnixNano`.
-  - [ ] `v2/search/tags` and tag-values responses are filtered against `DeniedLabels` (denied attribute names and scopes must not be listed); the T4.3 enforcer only restricts which spans are scanned.
+  - [x] `rootServiceName`, `rootTraceName` and `serviceStats` redacted; both `spanSet` and `spanSets` rewritten; decision recorded on trace-level `durationMs`/`startTimeUnixNano`.
+  - [x] `v2/search/tags` and tag-values responses are filtered against `DeniedLabels` (denied attribute names and scopes must not be listed); the T4.3 enforcer only restricts which spans are scanned.
 
-### [ ] T4.5 — Trace by ID filter
+### [x] T4.5 — Trace by ID filter
 - **Depends on:** T4.3, T1.9
 - **Files:** `internal/enforce/traceql/tracebyid.go`, tests
 - **Description:** `traceByID: deny|filter` for v1 and v2 endpoints, protobuf (`pkg/tempopb`)
   and JSON. Attribute matching against DNF terms (resource + span attributes).
 - **Acceptance:**
-  - [ ] Spans outside policy removed; empty result → 404; formats preserved.
-  - [ ] `pkg/tempopb` is the only Tempo import (license job green).
-  - [ ] Client `q` on trace by ID → 400; only `start`/`end` forwarded.
+  - [x] Spans outside policy removed; empty result → 404; formats preserved.
+  - [x] `pkg/tempopb` is the only Tempo import (license job green).
+  - [x] Client `q` on trace by ID → 400; only `start`/`end` forwarded.
 
 ### [ ] T4.6 — Tempo differential, E2E and equivalence
 - **Depends on:** T4.4, T4.5, T2.4 (framework)

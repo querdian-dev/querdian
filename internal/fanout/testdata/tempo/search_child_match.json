@@ -1,0 +1,63 @@
+{
+    "traces": [
+        {
+            "traceID": "1",
+            "rootServiceName": "frontend",
+            "rootTraceName": "GET /",
+            "startTimeUnixNano": "1791981314544119040",
+            "durationMs": 1000,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000002",
+                        "startTimeUnixNano": "1791981314554119040",
+                        "durationNanos": "300000000",
+                        "attributes": [
+                            {
+                                "key": "a",
+                                "value": {
+                                    "stringValue": "y"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000002",
+                            "startTimeUnixNano": "1791981314554119040",
+                            "durationNanos": "300000000",
+                            "attributes": [
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "y"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1
+                }
+            ],
+            "serviceStats": {
+                "backend": {
+                    "spanCount": 2,
+                    "errorCount": 1
+                },
+                "frontend": {
+                    "spanCount": 1
+                }
+            }
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "18756",
+        "completedJobs": 1,
+        "totalJobs": 1
+    }
+}
