@@ -411,6 +411,7 @@ picking up any task — section references (§) point there.
   - [ ] Unit tests with recorded response shapes (self-generated against a container, not copied
         from Tempo source).
   - [ ] `rootServiceName`, `rootTraceName` and `serviceStats` redacted; both `spanSet` and `spanSets` rewritten; decision recorded on trace-level `durationMs`/`startTimeUnixNano`.
+  - [ ] `v2/search/tags` and tag-values responses are filtered against `DeniedLabels` (denied attribute names and scopes must not be listed); the T4.3 enforcer only restricts which spans are scanned.
 
 ### [ ] T4.5 — Trace by ID filter
 - **Depends on:** T4.3, T1.9

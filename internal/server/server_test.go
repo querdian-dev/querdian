@@ -258,13 +258,20 @@ func TestSpansAndMetrics(t *testing.T) {
 	if id := resp.Header.Get(proxy.TraceHeader); len(id) != 32 {
 		t.Fatalf("X-Trace-Id = %q", id)
 	}
-	names := map[string]bool{}
+	// otelhttp ends the server span after the handler returned, so the client may see the response first.
 	var server sdktrace.ReadOnlySpan
-	for _, s := range rec.Ended() {
-		names[s.Name()] = true
-		if strings.HasPrefix(s.Name(), "HTTP ") {
-			server = s
+	names := map[string]bool{}
+	for deadline := time.Now().Add(5 * time.Second); server == nil && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		names = map[string]bool{}
+		for _, s := range rec.Ended() {
+			names[s.Name()] = true
+			if strings.HasPrefix(s.Name(), "HTTP ") {
+				server = s
+			}
 		}
+	}
+	if server == nil {
+		t.Fatalf("server span never ended; have %v", names)
 	}
 	for _, want := range []string{"authn.verify", "policy.resolve", "upstream", "HTTP GET /api/v1/query"} {
 		if !names[want] {
