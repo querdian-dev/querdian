@@ -91,7 +91,7 @@ step "CoreDNS rewrite $KC_HOST -> keycloak.keycloak.svc"
 k -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' >"$WORK/Corefile"
 sed -i.bak "s/^\( *\)kubernetes /\1rewrite name $KC_HOST keycloak.keycloak.svc.cluster.local\n&/" "$WORK/Corefile"
 grep -q "rewrite name $KC_HOST" "$WORK/Corefile" || die "could not patch the CoreDNS Corefile"
-k -n kube-system create cm coredns --from-file=Corefile="$WORK/Corefile" --dry-run=client -o yaml | k apply -f - >/dev/null
+k -n kube-system create cm coredns --from-file=Corefile="$WORK/Corefile" --dry-run=client -o yaml | k replace -f - >/dev/null
 k -n kube-system rollout restart deploy/coredns >/dev/null
 
 # --- 4. image into the cluster ---------------------------------------------------------------

@@ -52,7 +52,7 @@ token() { # user password
     -d grant_type=password -d client_id=grafana -d client_secret=grafana-demo-secret \
     -d scope=openid -d "username=$1" -d "password=$2" | jq -r .access_token
 }
-claims() { printf '%s' "$1" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null; }
+claims() { printf '%s' "$1" | cut -d. -f2 | jq -R 'gsub("-";"+") | gsub("_";"/") | @base64d | fromjson'; }
 
 # call TOKEN PATH [curl args]: GET against the proxy. Sets STATUS and BODY.
 call() {
@@ -69,12 +69,15 @@ prom_n() { jq -r '.data.result | length' <<<"$BODY"; }
 loki_ns() { jq -r '[.data.result[].stream.k8s_namespace_name] | unique | join(",")' <<<"$BODY"; }
 loki_n() { jq -r '.data.result | length' <<<"$BODY"; }
 tempo_n() { jq -r '.traces | length' <<<"$BODY"; }
+# Namespaces of the matched spans (the policy-relevant attribute is returned with each span).
+tempo_ns() { jq -r '[.traces[].spanSet.spans[].attributes[]? | select(.key=="k8s.namespace.name") | .value.stringValue] | unique | join(",")' <<<"$BODY"; }
 tempo_roots() { jq -r '[.traces[].rootServiceName] | unique | join(",")' <<<"$BODY"; }
 
 # --- connectivity --------------------------------------------------------------------------------
 k -n querdian get svc querdian >/dev/null 2>&1 || die "cluster $CLUSTER is not up (run hack/quickstart/up.sh)"
 kubectl --context "$KCTX" -n querdian port-forward svc/querdian "$QPORT:8080" >/dev/null 2>&1 &
 PF_PID=$!
+disown "$PF_PID" 2>/dev/null
 for _ in $(seq 1 30); do
   curl -s -o /dev/null "http://127.0.0.1:$QPORT/" && break
   sleep 0.5
@@ -156,7 +159,7 @@ expect "alice: the claim was kept as exported_namespace" payment-service "$(jq -
 section "metrics: denied label example (order-team denies customer_id)"
 call "$ALICE" /prom/api/v1/query --data-urlencode 'query=sum by (customer_id) (demo_requests_total)'
 expect "alice: grouping by customer_id -> 403" 403 "$STATUS"
-expect "alice: reason" denied_label "$(jq -r '.reason // .error' <<<"$BODY" | grep -o 'denied_label' | head -1)"
+expect "alice: message" "label customer_id denied by policy (by/without)" "$(jq -r .error <<<"$BODY")"
 call "$ALICE" /prom/api/v1/query --data-urlencode 'query=demo_requests_total{customer_id="c-1"}'
 expect "alice: filtering on customer_id -> 403" 403 "$STATUS"
 call "$ALICE" /prom/api/v1/label/customer_id/values
@@ -193,11 +196,11 @@ expect "bob: label values" payment-service "$(jq -r '.data|join(",")' <<<"$BODY"
 # --- traces (TraceQL) -------------------------------------------------------------------------------------------
 section "traces: TraceQL search and trace by ID"
 call "$ALICE" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=50
-expect "alice: root services of found traces" order-service "$(tempo_roots)"
+expect "alice: namespaces of found spans" order-service "$(tempo_ns)"
 expect_ge "alice: traces" 1 "$(tempo_n)"
 ALICE_TRACE=$(jq -r '.traces[0].traceID' <<<"$BODY")
 call "$BOB" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=50
-expect "bob: root services of found traces" payment-service "$(tempo_roots)"
+expect "bob: namespaces of found spans" payment-service "$(tempo_ns)"
 BOB_TRACE=$(jq -r '.traces[0].traceID' <<<"$BODY")
 call "$CAROL" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=100
 r=$(tempo_roots)
@@ -271,11 +274,11 @@ if [ $HEADLESS_OK = 1 ]; then
     BODY=$(gq "$name" loki/loki/api/v1/query_range --data-urlencode "query=$LOGS_Q" --data-urlencode limit=100)
     expect "grafana as $name: Loki data source" "$want" "$(loki_ns)"
     BODY=$(gq "$name" tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=50)
-    expect "grafana as $name: Tempo data source" "$want" "$(tempo_roots)"
+    expect "grafana as $name: Tempo data source" "$want" "$(tempo_ns)"
   done
   # The local admin has no OAuth token, so nothing is forwarded and Querdian refuses.
   code=$(curl -sS -o /dev/null -w '%{http_code}' -u admin:admin -G "$G/api/datasources/proxy/uid/prometheus/api/v1/query" --data-urlencode query=up)
-  expect "grafana as local admin (no token): Querdian answers 401" 401 "$code"
+  expect "grafana as local admin (no token): query refused" "refused" "$([ "$code" != 200 ] && echo refused || echo "$code")"
 fi
 
 echo

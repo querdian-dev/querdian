@@ -35,7 +35,7 @@ spec:
             - {name: KC_HOSTNAME, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@"}
             - {name: KC_HEALTH_ENABLED, value: "false"}
             # Smallest JVM that runs a dev-mode Keycloak with one realm.
-            - {name: JAVA_OPTS_KC_HEAP, value: "-Xms64m -Xmx300m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC"}
+            - {name: JAVA_OPTS_KC_HEAP, value: "-Xms64m -Xmx300m -XX:MaxMetaspaceSize=192m"}
           ports: [{containerPort: 8080}]
           readinessProbe:
             httpGet: {path: /realms/observability/.well-known/openid-configuration, port: 8080}
