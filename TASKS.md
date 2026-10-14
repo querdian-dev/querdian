@@ -75,7 +75,7 @@ picking up any task — section references (§) point there.
   - [ ] A commit without sign-off fails DCO.
   - [ ] All workflows green on `main`.
 
-### [ ] T0.3 — Research: endpoint inventory ∥
+### [x] T0.3 — Research: endpoint inventory ∥
 - **Depends on:** T0.0
 - **Files:** `docs/endpoints.md`
 - **Description:** Verify PLAN §8 against the **current public API documentation** of Prometheus,
