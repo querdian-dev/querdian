@@ -39,6 +39,7 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "effective policy grants no terms")
 	}
 	isValues := ep.PathParam != "" || strings.HasSuffix(ep.Template, "/values")
+	isSeries := !isValues && (ep.Template == "series" || strings.HasSuffix(ep.Template, "/series"))
 	isLabels := !isValues && (ep.Template == "labels" || strings.HasSuffix(ep.Template, "/labels"))
 	if isValues && slices.Contains(eff.DeniedLabels, ep.PathParam) {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrDeniedLabel, "label %s denied by policy", ep.PathParam)
@@ -112,6 +113,11 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 		plan.ResponseFilter = func(body []byte) ([]byte, error) { return FilterLabelsResponse(body, denied) }
 		plan.ResponseFilterMaxBytes = MaxLabelsResponseBytes
 	}
+	if isSeries && len(eff.DeniedLabels) > 0 {
+		denied := slices.Clone(eff.DeniedLabels)
+		plan.ResponseFilter = func(body []byte) ([]byte, error) { return FilterSeriesResponse(body, denied) }
+		plan.ResponseFilterMaxBytes = MaxLabelsResponseBytes
+	}
 	return plan, nil
 }
 
@@ -160,6 +166,56 @@ func FilterLabelsResponse(body []byte, denied []string) ([]byte, error) {
 		if !slices.Contains(denied, n) {
 			kept = append(kept, n)
 		}
+	}
+	var err error
+	if env["data"], err = marshalNoEscape(kept); err != nil {
+		return nil, err
+	}
+	return marshalNoEscape(env)
+}
+
+// FilterSeriesResponse removes the denied label names from every label set in the "data" array of a
+// Prometheus "series" API response, then drops label sets that became identical. The size limit,
+// error behaviour and treatment of upstream error bodies are the same as for FilterLabelsResponse. The
+// result of ordinary queries is deliberately not filtered (PLAN decision): only metadata is.
+func FilterSeriesResponse(body []byte, denied []string) ([]byte, error) {
+	if len(body) > MaxLabelsResponseBytes {
+		return nil, fmt.Errorf("series response exceeds %d bytes", MaxLabelsResponseBytes)
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("series response is not a JSON object: %w", err)
+	}
+	raw, ok := env["data"]
+	if !ok {
+		if string(env["status"]) == `"success"` {
+			return nil, fmt.Errorf("series response has no data member")
+		}
+		return body, nil
+	}
+	var sets []map[string]string
+	if err := json.Unmarshal(raw, &sets); err != nil {
+		return nil, fmt.Errorf("series response data is not an array of label sets: %w", err)
+	}
+	kept := make([]map[string]string, 0, len(sets))
+	seen := make(map[string]struct{}, len(sets))
+	for _, set := range sets {
+		out := make(map[string]string, len(set))
+		for k, v := range set {
+			if !slices.Contains(denied, k) {
+				out[k] = v
+			}
+		}
+		// encoding/json sorts map keys, so the encoding is a canonical identity for the set.
+		key, err := marshalNoEscape(out)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := seen[string(key)]; dup {
+			continue
+		}
+		seen[string(key)] = struct{}{}
+		kept = append(kept, out)
 	}
 	var err error
 	if env["data"], err = marshalNoEscape(kept); err != nil {

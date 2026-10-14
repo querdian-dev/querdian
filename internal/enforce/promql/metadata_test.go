@@ -216,13 +216,77 @@ func manySelectors(n int) []string {
 	return out
 }
 
+func TestSeriesResponseFilterWiring(t *testing.T) {
+	eff := one()
+	eff.DeniedLabels = []string{"secret"}
+	p, err := metaPlan(t, seriesEP, url.Values{}, eff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ResponseFilter == nil || p.ResponseFilterMaxBytes != MaxLabelsResponseBytes {
+		t.Fatalf("series filter not wired: %v %d", p.ResponseFilter != nil, p.ResponseFilterMaxBytes)
+	}
+	// Without denied labels the series plan stays a plain stream.
+	if q, _ := metaPlan(t, seriesEP, url.Values{}, one()); q.ResponseFilter != nil {
+		t.Error("filter set without denied labels")
+	}
+	// Query results are deliberately not filtered.
+	if q, _ := plan(`up`, eff); q.ResponseFilter != nil {
+		t.Error("query plans must not filter results")
+	}
+}
+
+func TestFilterSeriesResponse(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+		denied         []string
+		wantErr        bool
+	}{
+		{"removes denied labels", `{"status":"success","data":[{"__name__":"up","job":"a","secret":"s1"},{"__name__":"up","job":"b"}]}`,
+			`{"data":[{"__name__":"up","job":"a"},{"__name__":"up","job":"b"}],"status":"success"}`, []string{"secret"}, false},
+		{"duplicates collapse", `{"status":"success","data":[{"job":"a","secret":"1"},{"job":"a","secret":"2"},{"job":"b","secret":"1"}]}`,
+			`{"data":[{"job":"a"},{"job":"b"}],"status":"success"}`, []string{"secret"}, false},
+		{"several denied", `{"status":"success","data":[{"a":"1","b":"2","c":"3"}]}`,
+			`{"data":[{"c":"3"}],"status":"success"}`, []string{"a", "b"}, false},
+		{"all labels denied leaves an empty set", `{"status":"success","data":[{"a":"1"}]}`,
+			`{"data":[{}],"status":"success"}`, []string{"a"}, false},
+		{"empty data", `{"status":"success","data":[]}`, `{"data":[],"status":"success"}`, []string{"a"}, false},
+		{"other members preserved", `{"status":"success","data":[{"a":"1"}],"warnings":["w"]}`,
+			`{"data":[{}],"status":"success","warnings":["w"]}`, []string{"a"}, false},
+		{"html is not escaped", `{"status":"success","data":[{"a":"<b>"}]}`, `{"data":[{"a":"<b>"}],"status":"success"}`, []string{"x"}, false},
+		{"upstream error body untouched", `{"status":"error","errorType":"bad_data","error":"x"}`,
+			`{"status":"error","errorType":"bad_data","error":"x"}`, []string{"a"}, false},
+		{"success without data fails", `{"status":"success"}`, ``, []string{"a"}, true},
+		{"data not label sets", `{"status":"success","data":["a"]}`, ``, []string{"a"}, true},
+		{"not json", `nope`, ``, []string{"a"}, true},
+		{"not an object", `[1]`, ``, []string{"a"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FilterSeriesResponse([]byte(tt.in), tt.denied)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got %s", got)
+				}
+				return
+			}
+			if err != nil || string(got) != tt.want {
+				t.Fatalf("got %s (%v), want %s", got, err, tt.want)
+			}
+		})
+	}
+	if _, err := FilterSeriesResponse(make([]byte, MaxLabelsResponseBytes+1), []string{"a"}); err == nil {
+		t.Error("oversized body must fail")
+	}
+}
+
 func TestLabelsResponseFilterWiring(t *testing.T) {
 	eff := one()
 	eff.DeniedLabels = []string{"secret", "pii"}
 	for _, tt := range []struct {
 		ep   routes.Endpoint
 		want bool
-	}{{labelsEP, true}, {seriesEP, false}, {valuesEP, false}} {
+	}{{labelsEP, true}, {valuesEP, false}} {
 		p, err := metaPlan(t, tt.ep, url.Values{}, eff)
 		if err != nil {
 			t.Fatal(err)
