@@ -310,15 +310,15 @@ picking up any task — section references (§) point there.
   - [x] Token types per PLAN §7.3; unknown input → error with position.
   - [x] Fuzz: no panics; `concat(tokens) == input` modulo whitespace/comments.
 
-### [ ] T3.2 — `pkg/logql` parser
+### [x] T3.2 — `pkg/logql` parser
 - **Depends on:** T3.1
 - **Files:** `pkg/logql/parser.go`, `pkg/logql/ast.go`, tests
 - **Description:** Recursive descent per PLAN §7.3 (metric layer + selectors + opaque, validated
   pipeline). `String()` renders a canonical form.
 - **Acceptance:**
-  - [ ] Own corpus ≥ 150 queries derived from public doc examples (doc URL per case).
-  - [ ] Fuzz round-trip: `Parse(String(Parse(x)))` equals `Parse(x)`.
-  - [ ] Query kind (log/metric) correct for all corpus entries.
+  - [x] Own corpus ≥ 150 queries derived from public doc examples (doc URL per case).
+  - [x] Fuzz round-trip: `Parse(String(Parse(x)))` equals `Parse(x)`.
+  - [x] Query kind (log/metric) correct for all corpus entries.
 
 ### [ ] T3.3 — LogQL injection, denied labels, or-lifting
 - **Depends on:** T3.2, T1.11
