@@ -2,8 +2,10 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 FUZZTIME ?= 30s
 ENVTEST_K8S_VERSION ?= 1.33.0
+IMAGE ?= ghcr.io/querdian-dev/querdian
+GORELEASER_VERSION ?= v2.18.3
 
-.PHONY: build test test-race lint fuzz generate manifests licenses envtest e2e fmt
+.PHONY: build test test-race lint fuzz generate manifests licenses envtest e2e fmt docker-build release-check
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/querdian ./cmd/querdian
@@ -43,3 +45,11 @@ e2e:
 
 fmt:
 	gofmt -s -w .
+
+# Builds the image from source for the host platform (override with PLATFORM=linux/arm64).
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) $(if $(PLATFORM),--platform $(PLATFORM)) -t $(IMAGE):$(VERSION) .
+
+# Validates .goreleaser.yaml (module-proxy run, stays out of go.mod).
+release-check:
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check
