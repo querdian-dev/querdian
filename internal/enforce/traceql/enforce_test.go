@@ -274,7 +274,7 @@ func TestHintsUntouched(t *testing.T) {
 func TestOutputsInjectedEverywhere(t *testing.T) {
 	e := eff(nil, term(m("resource.ns", v1.MatchEqual, `a"b`)), term(m("span.x-y", v1.MatchRegexMatch, `\d+`)))
 	for _, in := range []string{
-		`{ }`, `{ span.a = 1 } >> { } >> { span.b = 2 }`, `{ } | compare({ span.a = "x" }) `, `({ } && { span.z = 1 }) | by(span.a) | count() > 1`,
+		`{ }`, `{ span.a = 1 } >> { } >> { span.b = 2 }`, `({ } && { span.z = 1 }) | by(span.a) | count() > 1`,
 		`{ span.a = 1 } | select(span.b) | { span.c = 2 }`, `{ } | rate() by (span.a) with (sample=0.1)`,
 	} {
 		p, err := plan(t, "/api/search", q("q", in), e)

@@ -81,6 +81,9 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 		merge = enforce.MergeTempoSearch
 	case tmplTags:
 	case tmplTagValues:
+		if traceLevelNames[ep.PathParam] && !RootCovered(eff) {
+			return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "trace-level intrinsic %s needs a policy that covers the root span", ep.PathParam)
+		}
 		scope, name := traceql.SplitAttr(ep.PathParam)
 		if denied(eff.DeniedLabels, scope, name) {
 			return enforce.Plan{}, enforce.Errorf(enforce.ErrDeniedLabel, "attribute %s denied by policy", ep.PathParam)
@@ -118,8 +121,18 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 			return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "%v", err)
 		}
 		for _, tok := range parsed.Attributes() {
+			if tok.Kind == traceql.KindIntrinsic && isTraceLevel(tok.Scope, tok.Value) && !RootCovered(eff) {
+				return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "trace-level intrinsic %s needs a policy that covers the root span", tok.Text)
+			}
 			if denied(eff.DeniedLabels, tok.Scope, tok.Value) {
 				return enforce.Plan{}, enforce.Errorf(enforce.ErrDeniedLabel, "attribute %s denied by policy", tok.Text)
+			}
+		}
+		// compare() adds the trace-level attributes (rootServiceName, rootName, ...) as label dimensions of
+		// its result, which lists the root service of every trace with a granted span (found by the e2e suite).
+		for _, st := range parsed.Pipeline.Stages {
+			if mf, ok := st.(*traceql.MetricsFunc); ok && mf.Name == "compare" && !RootCovered(eff) {
+				return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "compare() needs a policy that covers the root span")
 			}
 		}
 	} else if required {
@@ -151,6 +164,23 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 		Merge:    merge,
 		Strategy: strategy,
 	}, nil
+}
+
+// traceLevelNames are the intrinsics evaluated against the whole trace (root span or trace extent). Used in a
+// filter, grouping, select() or as a tag-value name they reveal data of spans the policy may not grant
+// (the redacted rootServiceName, rootTraceName and trace extent) although only a matching child span is
+// listed: an oracle (docs/research/traceql.md section 8, verified by the e2e suite). They are rejected
+// unless RootCovered.
+var traceLevelNames = map[string]bool{
+	"rootName": true, "rootServiceName": true, "traceDuration": true,
+	"trace:rootName": true, "trace:rootService": true, "trace:duration": true,
+}
+
+func isTraceLevel(scope, name string) bool {
+	if scope == "" {
+		return traceLevelNames[name]
+	}
+	return scope == "trace" && traceLevelNames["trace:"+name]
 }
 
 // denied reports whether the attribute (scope, name) is covered by one of the denied names.

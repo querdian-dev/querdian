@@ -18,6 +18,8 @@ type Client struct {
 	Base string
 	// Token, when set, is sent as a bearer token.
 	Token string
+	// Headers are extra headers set on every request (e.g. X-Scope-OrgID for a direct Tempo or Loki client).
+	Headers map[string]string
 
 	t    testing.TB
 	http *http.Client
@@ -57,6 +59,23 @@ func (c *Client) Get(path string, q url.Values) *Response {
 	return c.do(req)
 }
 
+// GetWith sends GET path?q with additional request headers (e.g. Accept).
+func (c *Client) GetWith(path string, q url.Values, headers map[string]string) *Response {
+	c.t.Helper()
+	u := c.Base + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequest(http.MethodGet, u, nil) //nolint:noctx // test-only
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return c.do(req)
+}
+
 // PostForm sends POST path with an application/x-www-form-urlencoded body.
 func (c *Client) PostForm(path string, form url.Values) *Response {
 	c.t.Helper()
@@ -75,6 +94,9 @@ func (c *Client) do(req *http.Request) *Response {
 	c.t.Helper()
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	for k, v := range c.Headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := c.http.Do(req) //nolint:gosec // test-only client, URL chosen by the test
 	if err != nil {
