@@ -452,49 +452,6 @@ func seriesData(t testing.TB, r *framework.Response, ren map[string]string) []st
 	return out
 }
 
-// generic canonical JSON of a response body for endpoints with small, order-insensitive shapes: the
-// named array members are sorted by their JSON text; stats members are dropped.
-func canonJSON(t testing.TB, r *framework.Response) string {
-	t.Helper()
-	if r.Status != 200 {
-		t.Fatalf("status %d: %.300s", r.Status, r.Body)
-	}
-	var v any
-	if err := json.Unmarshal(r.Body, &v); err != nil {
-		t.Fatalf("decode %.300q: %v", r.Body, err)
-	}
-	return canonValue(v)
-}
-
-func canonValue(v any) string {
-	switch x := v.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			if k == "stats" {
-				continue
-			}
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			parts = append(parts, strconv.Quote(k)+":"+canonValue(x[k]))
-		}
-		return "{" + strings.Join(parts, ",") + "}"
-	case []any:
-		parts := make([]string, len(x))
-		for i, e := range x {
-			parts[i] = canonValue(e)
-		}
-		sort.Strings(parts)
-		return "[" + strings.Join(parts, ",") + "]"
-	default:
-		b, _ := json.Marshal(x)
-		return string(b)
-	}
-}
-
 // valuesOnly replaces the label sets by the rank of the series' value list (sorted), which compares results
 // whose labels legitimately differ.
 func valuesOnly(in result) result {

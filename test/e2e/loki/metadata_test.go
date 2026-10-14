@@ -237,7 +237,7 @@ func testMetadata(t *testing.T, f *fixture) {
 				if q != "" {
 					wo, wp := oracle.detectedFields(q), user.detectedFields(q)
 					if wo.Status != 200 || wp.Status != 200 {
-						if wo.Status != wp.Status && !(wo.Status != 200 && wp.Status != 200) {
+						if wo.Status != wp.Status && (wo.Status == 200 || wp.Status == 200) {
 							t.Errorf("detected_fields(%q): oracle %d, proxy %d %.200s", q, wo.Status, wp.Status, wp.Body)
 						}
 					} else {

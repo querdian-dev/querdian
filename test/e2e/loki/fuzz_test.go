@@ -105,10 +105,10 @@ func (g *gen) stage(parsed *bool) string {
 	}
 }
 
-func (g *gen) pipeline(max int) string {
+func (g *gen) pipeline(most int) string {
 	var parsed bool
 	var parts []string
-	for range g.r.Intn(max + 1) {
+	for range g.r.Intn(most + 1) {
 		parts = append(parts, g.stage(&parsed))
 	}
 	if len(parts) == 0 {
