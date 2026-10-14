@@ -81,3 +81,20 @@ type Compiled struct {
 	ByGroup map[string][]*CompiledRule
 	Results []Result
 }
+
+// Term is one conjunction of the effective policy: matchers ANDed, bound to a tenant.
+// A term without matchers matches everything within its tenant.
+type Term struct {
+	Matchers []Matcher // AND
+	Tenant   string    // "" for single-tenant backends
+}
+
+// Effective is the exact union of all rules granted to a request on one backend (PLAN §6.2).
+type Effective struct {
+	Unrestricted bool
+	Tenants      []string // sorted, deduplicated; for the tenant header
+	Terms        []Term   // DNF: OR of Terms (empty iff Unrestricted)
+	Disjoint     bool     // all term pairs provably disjoint
+	DeniedLabels []string // union of labels.deny over matched rules
+	Policies     []string // names, for tracing and logging
+}

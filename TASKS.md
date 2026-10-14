@@ -151,16 +151,16 @@ picking up any task — section references (§) point there.
   - [x] AccessPolicy implicit namespace matcher uses the backend's `namespaceLabel`.
   - [x] Users and groups indexed in separate maps; a user named like a group gets no grant from it.
 
-### [ ] T1.4 — DNF normalisation
+### [x] T1.4 — DNF normalisation
 - **Depends on:** T1.3
 - **Files:** `internal/policy/dnf.go`, tests
 - **Description:** Implement PLAN §6.3 steps 1–6 as a pure function
   `Normalise([]Term, Limits) (Effective, error)`.
 - **Acceptance:**
-  - [ ] Table tests for each step individually and combined (≥ 30 cases).
-  - [ ] Property test (fuzz): for random terms and random label sets, a label set is matched
+  - [x] Table tests for each step individually and combined (≥ 30 cases).
+  - [x] Property test (fuzz): for random terms and random label sets, a label set is matched
         by the normalised DNF **iff** it is matched by the input DNF (semantic equivalence).
-  - [ ] Cap enforced with `ErrTooComplex`.
+  - [x] Cap enforced with `ErrTooComplex`.
 
 ### [ ] T1.5 — Resolver and tenant handling
 - **Depends on:** T1.4
