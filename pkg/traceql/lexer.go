@@ -14,7 +14,7 @@ type Kind int
 const (
 	// KindIllegal is the zero value and never produced by Lex.
 	KindIllegal Kind = iota
-	// KindString is a double-quoted or backtick string literal; Value holds the decoded text.
+	// KindString is a double-quoted string literal; Value holds the decoded text.
 	KindString
 	// KindNumber is an integer or decimal number such as 200, 0.5 or .99.
 	KindNumber
@@ -250,7 +250,7 @@ func (l *lexer) next() (Token, error) {
 	start := l.pos
 	c := l.in[start]
 	switch {
-	case c == '"' || c == '`':
+	case c == '"':
 		return l.lexString(start)
 	case isDigit(c):
 		return l.lexNumber(start)
@@ -283,7 +283,7 @@ func (l *lexer) next() (Token, error) {
 	return Token{}, l.errf(start, "unexpected character %q", rune(c))
 }
 
-// lexString lexes a "..." string (only \" and \\ escapes) or a raw `...` string.
+// lexString lexes a "..." string (only \" and \\ escapes). Backtick strings are rejected.
 func (l *lexer) lexString(start int) (Token, error) {
 	text, end, err := l.scanQuoted(start)
 	if err != nil {
@@ -297,17 +297,16 @@ func (l *lexer) lexString(start int) (Token, error) {
 
 // scanQuoted decodes the quoted string starting at start and returns its value and end offset.
 func (l *lexer) scanQuoted(start int) (string, int, error) {
-	quote := l.in[start]
 	var sb strings.Builder
 	i := start + 1
 	for i < len(l.in) {
 		c := l.in[i]
 		switch {
-		case c == quote:
+		case c == '"':
 			return sb.String(), i + 1, nil
 		case c < 0x20 || c == 0x7f:
 			return "", 0, l.errf(i, "control character in string")
-		case c == '\\' && quote == '"':
+		case c == '\\':
 			if i+1 >= len(l.in) {
 				return "", 0, l.errf(i, "unterminated escape sequence")
 			}

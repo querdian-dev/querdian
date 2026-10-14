@@ -46,7 +46,6 @@ func TestLexKinds(t *testing.T) {
 		{"arithmetic", `{ 1 + 2 - 3 * 4 / 5 % 6 ^ 7 }`,
 			[]Kind{KindLBrace, KindNumber, KindAdd, KindNumber, KindSub, KindNumber, KindMul, KindNumber, KindDiv, KindNumber, KindMod, KindNumber, KindPow, KindNumber, KindRBrace}},
 		{"not and parens", `{ !(a = 1) }`, nil},
-		{"backtick", "{ span.a = `x\\y` }", []Kind{KindLBrace, KindAttribute, KindEq, KindString, KindRBrace}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,7 +108,6 @@ func TestLexValues(t *testing.T) {
 	}{
 		{`"plain"`, KindString, "", "plain"},
 		{`"a\"b\\c"`, KindString, "", `a"b\c`},
-		{"`raw\\n`", KindString, "", `raw\n`},
 		{`""`, KindString, "", ""},
 		{`span.http.status_code`, KindAttribute, "span", "http.status_code"},
 		{`resource.service.name`, KindAttribute, "resource", "service.name"},
@@ -188,6 +186,7 @@ func TestLexErrors(t *testing.T) {
 		{"other escape", `"a\tb"`, 2},
 		{"raw newline in string", "\"a\nb\"", 2},
 		{"unterminated string", `{ span.a = "x`, 11},
+		{"backtick string", "{ span.a = `x` }", 11},
 		{"unterminated backtick", "`abc", 0},
 		{"unterminated escape", `"abc\`, 4},
 		{"single quoted", `{ span.a = 'x' }`, 11},
@@ -280,7 +279,7 @@ func checkTokens(t testing.TB, in string, toks []Token) {
 func FuzzLex(f *testing.F) {
 	seeds := []string{
 		``, `{ }`, `{ span.a = "x" && .b =~ "y|z" }`, `{a}>>{b} &>> {c} !~ {d}`,
-		`{ span."a b" = "q\"" } | count() > 1`, `{ duration > 1.5s }`, "{ a = `raw` }",
+		`{ span."a b" = "q\"" } | count() > 1`, `{ duration > 1.5s }`, `{ a = "raw" }`,
 		`quantile_over_time(duration, .99)`, `{ span:name = "x" } | by(resource.service.name)`,
 		`{ span.a-b = 1 }`, `{ "\n" }`, `.99.`, `1h30m`, "\xff",
 	}

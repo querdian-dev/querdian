@@ -22,7 +22,8 @@
 //     so #, // and /* are lex errors.
 //   - Double-quoted strings and quoted attribute names accept only the escapes \" and \\. Any
 //     other escape (including \n), raw control characters and invalid UTF-8 are errors.
-//     Backtick strings are raw (no escapes) and may not contain control characters either.
+//     Backtick (raw) strings are rejected: PLAN §7.4 does not list them, and a second string
+//     form with different escaping rules is a needless source of parser divergence.
 //   - Unquoted attribute names consist of letters, digits, '_' and '.' (no empty segments).
 //     Upstream also accepts '-' and '/' unquoted; here an attribute name immediately followed
 //     by '-' or '/' is an error ("quote the name") because it could equally be arithmetic.
