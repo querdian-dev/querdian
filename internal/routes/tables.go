@@ -95,13 +95,14 @@ var prometheusTable = compile(join(
 
 var lokiTable = compile(join(
 	[]route{
-		// TODO(question t0.3 #8): docs show GET only; POST on query/query_range stays denied until
-		// a black-box test proves upstream accepts the form body (decision recorded in endpoints.md).
-		enforce("/loki/api/v1/query", "query", getOnly, "limit", "time", "direction"),
-		enforce("/loki/api/v1/query_range", "query", getOnly, "limit", "start", "end", "since", "step", "interval", "direction"),
+		// POST (form body) on query/query_range is accepted by Loki 3.5.0 (black-box, docs/endpoints.md Q8).
+		enforce("/loki/api/v1/query", "query", getPost, "limit", "time", "direction"),
+		enforce("/loki/api/v1/query_range", "query", getPost, "limit", "start", "end", "since", "step", "interval", "direction"),
 		enforce("/loki/api/v1/labels", "query", getOnly, "start", "end", "since"),
 		enforce("/loki/api/v1/label/:name/values", "query", getOnly, "start", "end", "since"),
 		enforce("/loki/api/v1/series", "match[]", getPost, "start", "end", "since"),
+		// detected_labels: GET and POST, honours query/start/end/since (black-box, docs/endpoints.md Q1).
+		enforce("/loki/api/v1/detected_labels", "query", getPost, "start", "end", "since"),
 		enforce("/loki/api/v1/index/stats", "query", getPost, "start", "end", "since"),
 		enforce("/loki/api/v1/index/volume", "query", getPost, "start", "end", "since", "limit", "step", "targetLabels", "aggregateBy"),
 		enforce("/loki/api/v1/index/volume_range", "query", getPost, "start", "end", "since", "limit", "step", "targetLabels", "aggregateBy"),
@@ -116,10 +117,7 @@ var lokiTable = compile(join(
 		safe("/loki/api/v1/format_query", getPost, "query"),
 		safe("/loki/api/v1/status/buildinfo", getOnly),
 	},
-	// TODO(question t0.3 #1): detected_labels is not in the Loki docs (method and shape unknown);
-	// denied until a black-box test settles it. Switch to enforce on "query" (fan-out string set) then.
 	denyAll(
-		"/loki/api/v1/detected_labels",
 		"/loki/api/v1/push", "/otlp/*",
 		"/loki/api/v1/rules", "/loki/api/v1/rules/*", "/prometheus/*",
 		"/loki/api/v1/delete",
