@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -38,6 +39,9 @@ type Authenticator interface {
 	Ready() bool
 }
 
+// TailPlanner plans a WebSocket tail request (Loki). It receives the already normalised parameters.
+type TailPlanner func(ctx context.Context, params url.Values, eff policy.Effective) (enforce.Plan, error)
+
 // Deps are the collaborators of a Server.
 type Deps struct {
 	Config    *config.Config
@@ -46,6 +50,8 @@ type Deps struct {
 	// Enforcers are the per-backend-type query enforcers. A backend type without one can only serve
 	// unrestricted grants and safe endpoints; everything else fails closed with 503.
 	Enforcers map[config.BackendType]enforce.Enforcer
+	// TailPlanners plan WebSocket (tail) endpoints per backend type; without one such requests fail closed.
+	TailPlanners map[config.BackendType]TailPlanner
 	// Mergers combine fan-out responses per merge kind.
 	Mergers map[enforce.MergeKind]proxy.Merger
 

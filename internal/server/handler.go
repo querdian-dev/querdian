@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -197,12 +198,43 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 	}
 	s.d.Privacy.SetQueries(span, strings.Join(params[ep.Param], " "), strings.Join(plan.Requests[0].Query[ep.Param], " "))
 
-	s.proxies[b.Name].Execute(w, r, proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff}, plan, s.d.Mergers[plan.Merge])
+	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff}
+	if ep.Websocket {
+		s.proxies[b.Name].ServeTail(w, r, target, plan, proxy.TailOptions{})
+		return
+	}
+	s.proxies[b.Name].Execute(w, r, target, plan, s.d.Mergers[plan.Merge])
+}
+
+// planTail plans a WebSocket endpoint. These are never passed through, even for unrestricted grants: the
+// tail planner validates the parameters and applies denied labels.
+func (s *Server) planTail(w http.ResponseWriter, r *http.Request, st *reqState, b *config.Backend, params url.Values, eff policy.Effective) (enforce.Plan, bool) {
+	planner := s.d.TailPlanners[b.Type]
+	if planner == nil {
+		st.set(decisionError, "enforcer_unavailable")
+		proxy.WriteError(w, r, http.StatusServiceUnavailable, "unavailable", "tailing is not available for this backend type")
+		return enforce.Plan{}, false
+	}
+	ctx, span := s.tracer.Start(r.Context(), "enforce.rewrite")
+	defer span.End()
+	plan, err := planner(ctx, params, eff)
+	if err != nil {
+		span.SetStatus(codes.Error, "enforcement failed")
+		reason, decision := enforceReason(err)
+		st.set(decision, reason)
+		proxy.WriteError(w, r, enforce.HTTPStatus(err), enforce.ErrorType(err), enforce.Detail(err))
+		return enforce.Plan{}, false
+	}
+	span.SetAttributes(attribute.String("query.language", language(b.Type)), attribute.String("strategy", plan.Strategy))
+	return plan, true
 }
 
 // plan builds the upstream plan. It reports false after having written the error response.
 func (s *Server) plan(w http.ResponseWriter, r *http.Request, st *reqState, b *config.Backend, ep routes.Endpoint,
 	params map[string][]string, eff policy.Effective) (enforce.Plan, bool) {
+	if ep.Websocket {
+		return s.planTail(w, r, st, b, params, eff)
+	}
 	passthrough := enforce.Plan{Requests: []enforce.Upstream{{Query: params, Term: -1}}, Merge: enforce.MergeNone, Strategy: "passthrough"}
 	// Safe endpoints and unrestricted grants without denied labels need no query rewriting.
 	if ep.Kind == routes.KindSafe || (eff.Unrestricted && len(eff.DeniedLabels) == 0) {

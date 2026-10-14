@@ -194,3 +194,5 @@ func (h *harness) server(extra ...func(*Deps)) *Server {
 	}
 	return New(d)
 }
+
+func v1Subjects(groups ...string) v1.Subjects { return v1.Subjects{Groups: groups, Users: []string{}} }

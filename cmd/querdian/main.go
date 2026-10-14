@@ -121,10 +121,11 @@ func run(args []string) error {
 			config.BackendLoki:       enforcelogql.New(),
 			config.BackendTempo:      enforcetraceql.New(),
 		},
-		Metrics:  metrics,
-		Gatherer: reg,
-		Privacy:  observability.Privacy{RecordUser: flags.RecordUser, RecordQueries: flags.RecordQueries},
-		Logger:   logger,
+		TailPlanners: map[config.BackendType]server.TailPlanner{config.BackendLoki: enforcelogql.PlanTail},
+		Metrics:      metrics,
+		Gatherer:     reg,
+		Privacy:      observability.Privacy{RecordUser: flags.RecordUser, RecordQueries: flags.RecordQueries},
+		Logger:       logger,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)
