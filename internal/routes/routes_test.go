@@ -82,8 +82,11 @@ func TestEveryEndpointRow(t *testing.T) {
 
 	// 2. Loki.
 	for _, p := range []string{"query", "query_range"} {
-		// TODO(question t0.3 #8): POST denied until verified black-box.
-		rows = append(rows, enf(loki, "/loki/api/v1/"+p, "GET", "query", "/loki/api/v1/"+p), denied(loki, "/loki/api/v1/"+p, "POST"))
+		// GET and POST accepted by Loki 3.5.0 (docs/endpoints.md Q8).
+		for _, m := range []string{"GET", "POST"} {
+			rows = append(rows, enf(loki, "/loki/api/v1/"+p, m, "query", "/loki/api/v1/"+p))
+		}
+		rows = append(rows, denied(loki, "/loki/api/v1/"+p, "PUT"))
 	}
 	rows = append(rows,
 		enf(loki, "/loki/api/v1/labels", "GET", "query", "/loki/api/v1/labels"),
@@ -103,12 +106,12 @@ func TestEveryEndpointRow(t *testing.T) {
 			enf(loki, "/loki/api/v1/index/stats", m, "query", "/loki/api/v1/index/stats"),
 			enf(loki, "/loki/api/v1/index/volume", m, "query", "/loki/api/v1/index/volume"),
 			enf(loki, "/loki/api/v1/index/volume_range", m, "query", "/loki/api/v1/index/volume_range"),
+			enf(loki, "/loki/api/v1/detected_labels", m, "query", "/loki/api/v1/detected_labels"),
 			enf(loki, "/loki/api/v1/detected_fields", m, "query", "/loki/api/v1/detected_fields"),
 			rowKind(loki, "/loki/api/v1/format_query", m, KindSafe, "/loki/api/v1/format_query"),
 		)
 	}
 	for _, p := range []string{
-		"/loki/api/v1/detected_labels", // TODO(question t0.3 #1)
 		"/loki/api/v1/push", "/otlp/v1/logs", "/loki/api/v1/rules", "/loki/api/v1/rules/ns/group",
 		"/prometheus/api/v1/rules", "/prometheus/api/v1/alerts", "/loki/api/v1/delete",
 		"/api/prom/push", "/api/prom/tail", "/api/prom/query", "/api/prom/label", "/api/prom/series", "/api/prom/rules",

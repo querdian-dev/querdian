@@ -64,8 +64,8 @@ metric: `vector`/`matrix`.
 
 | Path | Methods | Enforcement param | Multi | Response | PLAN | Grafana calls |
 |---|---|---|---|---|---|---|
-| `query` | GET (docs); POST per PLAN §9 to be verified | `query` | no | `streams`\|`vector` | enforce | yes |
-| `query_range` | GET (docs) | `query` | no | `streams`\|`matrix` | enforce | yes |
+| `query` | GET, POST (form; verified, Q8) | `query` | no | `streams`\|`vector` | enforce | yes |
+| `query_range` | GET, POST (form; verified, Q8) | `query` | no | `streams`\|`matrix` | enforce | yes |
 | `labels` | GET | `query` (optional selector) | no | `[name]` | enforce (fan-out string set) | yes |
 | `label/<name>/values` | GET | `query` (optional selector) | no | `[value]` | enforce (fan-out string set) | yes |
 | `series` | GET, POST | `match[]` (required) | yes | `[labelset]` | enforce (match expand) | yes |
@@ -75,7 +75,7 @@ metric: `vector`/`matrix`.
 | `patterns` | GET | `query` | no | `[{pattern, samples}]` | enforce (fan-out sum) | yes (unconfirmed) |
 | `detected_fields` | GET, POST | `query` | no | `{fields:[{label,type,cardinality,parsers,...}], limit}` | enforce (fan-out string set) | yes (unconfirmed) |
 | `detected_field/<name>/values` | GET, POST | `query` | no | `{values, limit}` | enforce (fan-out string set) | yes (unconfirmed) |
-| `detected_labels` | ? | `query` | ? | ? | enforce (PLAN) | yes (unconfirmed) - NOT in docs, see Deltas |
+| `detected_labels` | GET, POST (verified, Q1) | `query` (optional) | no | `{detectedLabels:[{label,cardinality}]}` | enforce (fan-out; merge by label) | yes (unconfirmed) - NOT in docs, see Q1 |
 | `tail` | GET (WebSocket) | `query` | no | frames `{streams, dropped_entries}` | enforce (fan-out tail) | yes (Explore live) |
 | `format_query` | GET, POST | `query` | no | `data: <string>` | safe | (unconfirmed) |
 | `status/buildinfo` | GET | - | - | version info | safe | (unconfirmed) |
@@ -128,7 +128,7 @@ Not changed in PLAN, raised below: everything marked as a question.
 
 ## Open questions (to raise; no issues opened, repo not reachable)
 
-1. **`question(t0.3)`: Loki `detected_labels`.** PLAN §8.2 lists it, but the Loki HTTP API page
+1. **`question(t0.3)`: Loki `detected_labels`. ANSWERED (T1.8 black-box, Loki 3.5.0, see "Black-box results").** PLAN §8.2 lists it, but the Loki HTTP API page
    documents only `detected_fields` and `detected_field/<name>/values`. Grafana Logs Drilldown
    is known to call it (unconfirmed). Options: keep as enforce with `query`, determine method and
    response shape black-box in T3.x/e2e, or deny until verified. Recommendation: black-box test,
@@ -159,7 +159,7 @@ Not changed in PLAN, raised below: everything marked as a question.
    `application/protobuf` and `application/vnd.grafana.llm` cannot be merged by fan-out. Proposal:
    for merge plans, require JSON (strip/reject other `Accept`); for traceByID filter, support JSON
    and protobuf as in PLAN §7.4, reject `vnd.grafana.llm`.
-8. **Loki `query`/`query_range` methods**: docs show GET only; PLAN §9 accepts POST for query
+8. **ANSWERED (T1.8 black-box, Loki 3.5.0, see "Black-box results"): POST form is accepted.** Original text: **Loki `query`/`query_range` methods**: docs show GET only; PLAN §9 accepts POST for query
    endpoints. Verify black-box that POST form is accepted upstream, else restrict to GET.
 9. **Tempo streaming over gRPC** (`Search*`, `MetricsQueryRange` StreamingQuerier): Grafana can use
    it when enabled; not HTTP and out of scope for the proxy (PLAN). Document that streaming must
@@ -167,3 +167,38 @@ Not changed in PLAN, raised below: everything marked as a question.
 10. **Grafana-called endpoints are largely unconfirmed from public docs** (see Limitation). A
     black-box capture of Grafana requests in the E2E harness should settle the "(unconfirmed)"
     entries before routes are frozen (T1.8).
+
+## Black-box results (T1.8)
+
+Script: `hack/research/loki-endpoints/run.sh` (exact curl commands; captured output in
+`results.txt`). Loki `grafana/loki:3.5.0` (`/loki/api/v1/status/buildinfo`: version 3.5.0,
+revision 4b16bc4f), single binary, `auth_enabled: true`, two streams pushed
+(`{app="a",env="prod"}`, `{app="b",team="x"}`). Observed over HTTP only.
+
+**Q1 `detected_labels` (Loki 3.5.0):**
+- Exists. `GET` and `POST` both return 200 (POST via form body or URL query).
+- Shape: `{"detectedLabels":[{"label":"app","cardinality":1}, ...]}`; array order is not stable
+  between calls (merge/compare as a set). Includes the derived `service_name` label; structured
+  metadata / stream labels only. No matches: `{}` (not an empty array).
+- Honours `query` (a stream selector): `{app="a"}` -> app, env, service_name (cardinality 1);
+  `{app="b"}` -> app, service_name, team; without `query` the union (app/service_name cardinality 2).
+  Invalid selector: 400 with a plain-text parse error. `start`/`end` (ns) and `since` work.
+- Unknown parameters (`foo=bar`) are silently ignored; a duplicated `query` uses the first value.
+- Decision: route is `enforce` on `query`, methods GET+POST, allowed params `start,end,since`.
+  The response carries only label names and cardinalities, merged across tenants by label name
+  (cardinality across tenants is not exactly summable; the merge must treat it as an upper bound
+  or recompute, decide in the merge task).
+
+**Q8 POST on `query` / `query_range` (Loki 3.5.0):**
+- `POST` with `application/x-www-form-urlencoded` is accepted on both and returns the same
+  results as `GET` (`streams` for `query_range`, `vector` for a metric `query`). Log queries on
+  `/query` are 400 for both GET and POST ("log queries are not supported as an instant query").
+- POST with all parameters in the URL query and an empty body also works.
+- **Precedence when both URL and form carry `query`: the form value wins** (URL `app=a` +
+  form `app=b` returned app b; same on `detected_labels`). Repeated `query` values (URL or form):
+  the first one is used. Consequently the proxy must not let a request carry `query` in both
+  places (T1.9 already answers 400) nor repeated `query`, otherwise the enforced and the executed
+  query could differ.
+- JSON body (`application/json`) is not parsed: 400 (parse error, query seen as empty).
+  The proxy should rewrite to a form body and set the content type itself.
+- Decision: `query` and `query_range` allow GET and POST.

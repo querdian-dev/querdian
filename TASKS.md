@@ -200,7 +200,7 @@ picking up any task — section references (§) point there.
   - [x] Custom CA path works (httptest TLS server).
   - [x] `querdian_auth_failures_total{reason}` incremented.
 
-### [ ] T1.8 — Enforce interface and route tables
+### [x] T1.8 — Enforce interface and route tables
 - **Depends on:** T1.2, T0.3
 - **Files:** `internal/enforce/enforce.go`, `internal/routes/*`, tests
 - **Description:** PLAN §7.1 types and errors. Route tables per backend type from
@@ -210,7 +210,7 @@ picking up any task — section references (§) point there.
   - [x] Table test for every endpoint row in `docs/endpoints.md`, plus path traversal /
         double-slash / encoded-slash / trailing-slash cases (all must not escape to a different
         route).
-  - [ ] Route templates carry a parameter allow-list (PLAN §9); `storeMatch[]` and unlisted params are dropped/rejected; Loki `detected_labels` and Loki POST on `query`/`query_range` are decided by a black-box test (record result in `docs/endpoints.md`).
+  - [x] Route templates carry a parameter allow-list (PLAN §9); `storeMatch[]` and unlisted params are dropped/rejected; Loki `detected_labels` and Loki POST on `query`/`query_range` are decided by a black-box test (record result in `docs/endpoints.md`).
 
 ### [x] T1.9 — Proxy core and request normalisation
 - **Depends on:** T1.8

@@ -1,0 +1,93 @@
+===== version
+--- buildinfo
+$ curl localhost:13101/loki/api/v1/status/buildinfo -H X-Scope-OrgID: t1
+{"version":"3.5.0","revision":"4b16bc4f","branch":"k248","buildUser":"root@buildkitsandbox","buildDate":"2025-04-17T19:14:32Z","goVersion":""}[HTTP 200]
+===== Q1 detected_labels
+--- GET no query
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000
+{"detectedLabels":[{"label":"service_name","cardinality":2},{"label":"env","cardinality":1},{"label":"app","cardinality":2},{"label":"team","cardinality":1}]}[HTTP 200]
+--- GET query app=a
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app="a"}
+{"detectedLabels":[{"label":"app","cardinality":1},{"label":"service_name","cardinality":1},{"label":"env","cardinality":1}]}[HTTP 200]
+--- GET query app=b
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app="b"}
+{"detectedLabels":[{"label":"service_name","cardinality":1},{"label":"app","cardinality":1},{"label":"team","cardinality":1}]}[HTTP 200]
+--- GET query no match
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app="zzz"}
+{}[HTTP 200]
+--- GET invalid query
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app=
+parse error at line 1, col 6: syntax error: unexpected $end, expecting STRING[HTTP 400]
+--- GET since, no start/end
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode since=1h --data-urlencode query={app="a"}
+{"detectedLabels":[{"label":"service_name","cardinality":1},{"label":"env","cardinality":1},{"label":"app","cardinality":1}]}[HTTP 200]
+--- POST form query app=a
+$ curl -X POST localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app="a"}
+{"detectedLabels":[{"label":"env","cardinality":1},{"label":"app","cardinality":1},{"label":"service_name","cardinality":1}]}[HTTP 200]
+--- POST URL query app=a, empty body
+$ curl -X POST localhost:13101/loki/api/v1/detected_labels?start=1791975884000000000&end=1791979544000000000&query=%7Bapp%3D%22a%22%7D -H X-Scope-OrgID: t1
+{"detectedLabels":[{"label":"env","cardinality":1},{"label":"app","cardinality":1},{"label":"service_name","cardinality":1}]}[HTTP 200]
+--- POST URL app=a + form app=b
+$ curl -X POST localhost:13101/loki/api/v1/detected_labels?start=1791975884000000000&end=1791979544000000000&query=%7Bapp%3D%22a%22%7D -H X-Scope-OrgID: t1 --data-urlencode query={app="b"}
+{"detectedLabels":[{"label":"team","cardinality":1},{"label":"service_name","cardinality":1},{"label":"app","cardinality":1}]}[HTTP 200]
+--- GET unknown param foo
+$ curl -G localhost:13101/loki/api/v1/detected_labels -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode query={app="a"} --data-urlencode foo=bar
+{"detectedLabels":[{"label":"env","cardinality":1},{"label":"app","cardinality":1},{"label":"service_name","cardinality":1}]}[HTTP 200]
+--- GET duplicate query (a,b)
+$ curl localhost:13101/loki/api/v1/detected_labels?start=1791975884000000000&end=1791979544000000000&query=%7Bapp%3D%22a%22%7D&query=%7Bapp%3D%22b%22%7D -H X-Scope-OrgID: t1
+{"detectedLabels":[{"label":"service_name","cardinality":1},{"label":"env","cardinality":1},{"label":"app","cardinality":1}]}[HTTP 200]
+===== Q8 POST on query_range / query
+--- query_range GET app=a
+$ curl -G localhost:13101/loki/api/v1/query_range -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode limit=10 --data-urlencode query={app="a"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST form app=a
+$ curl -X POST localhost:13101/loki/api/v1/query_range -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode limit=10 --data-urlencode query={app="a"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST form app=b
+$ curl -X POST localhost:13101/loki/api/v1/query_range -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode limit=10 --data-urlencode query={app="b"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"b","detected_level":"unknown","service_name":"b","team":"x"},"values":[["1791979481000000000","line from b"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST URL only, empty body
+$ curl -X POST localhost:13101/loki/api/v1/query_range?start=1791975884000000000&end=1791979544000000000&limit=10&query=%7Bapp%3D%22a%22%7D -H X-Scope-OrgID: t1
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST URL app=a + form app=b
+$ curl -X POST localhost:13101/loki/api/v1/query_range?start=1791975884000000000&end=1791979544000000000&limit=10&query=%7Bapp%3D%22a%22%7D -H X-Scope-OrgID: t1 --data-urlencode query={app="b"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"b","detected_level":"unknown","service_name":"b","team":"x"},"values":[["1791979481000000000","line from b"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST URL app=b + form app=a
+$ curl -X POST localhost:13101/loki/api/v1/query_range?start=1791975884000000000&end=1791979544000000000&limit=10&query=%7Bapp%3D%22b%22%7D -H X-Scope-OrgID: t1 --data-urlencode query={app="a"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST form query twice (a,b)
+$ curl -X POST localhost:13101/loki/api/v1/query_range -H X-Scope-OrgID: t1 --data-urlencode start=1791975884000000000 --data-urlencode end=1791979544000000000 --data-urlencode limit=10 --data-urlencode query={app="a"} --data-urlencode query={app="b"}
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range GET query twice (a,b)
+$ curl localhost:13101/loki/api/v1/query_range?start=1791975884000000000&end=1791979544000000000&limit=10&query=%7Bapp%3D%22a%22%7D&query=%7Bapp%3D%22b%22%7D -H X-Scope-OrgID: t1
+{"status":"success","data":{"resultType":"streams","result":[{"stream":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"values":[["1791979481000000000","line from a"]]}] ...[stats cut] [HTTP 200]
+--- query_range POST JSON body
+$ curl -X POST localhost:13101/loki/api/v1/query_range?start=1791975884000000000&end=1791979544000000000&limit=10 -H X-Scope-OrgID: t1 -H Content-Type: application/json -d {"query":"{app=\"a\"}"}
+parse error : syntax error: unexpected $end[HTTP 400]
+--- query GET app=a
+$ curl -G localhost:13101/loki/api/v1/query -H X-Scope-OrgID: t1 --data-urlencode time=1791979481000000000 --data-urlencode limit=10 --data-urlencode query=count_over_time({app="a"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST form app=a
+$ curl -X POST localhost:13101/loki/api/v1/query -H X-Scope-OrgID: t1 --data-urlencode time=1791979481000000000 --data-urlencode limit=10 --data-urlencode query=count_over_time({app="a"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST form app=b
+$ curl -X POST localhost:13101/loki/api/v1/query -H X-Scope-OrgID: t1 --data-urlencode time=1791979481000000000 --data-urlencode limit=10 --data-urlencode query=count_over_time({app="b"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"b","detected_level":"unknown","service_name":"b","team":"x"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST URL only, empty body
+$ curl -X POST localhost:13101/loki/api/v1/query?time=1791979481000000000&limit=10&query=count_over_time%28%7Bapp%3D%22a%22%7D%5B1h%5D%29 -H X-Scope-OrgID: t1
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST URL app=a + form app=b
+$ curl -X POST localhost:13101/loki/api/v1/query?time=1791979481000000000&limit=10&query=count_over_time%28%7Bapp%3D%22a%22%7D%5B1h%5D%29 -H X-Scope-OrgID: t1 --data-urlencode query=count_over_time({app="b"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"b","detected_level":"unknown","service_name":"b","team":"x"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST URL app=b + form app=a
+$ curl -X POST localhost:13101/loki/api/v1/query?time=1791979481000000000&limit=10&query=count_over_time%28%7Bapp%3D%22b%22%7D%5B1h%5D%29 -H X-Scope-OrgID: t1 --data-urlencode query=count_over_time({app="a"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST form query twice (a,b)
+$ curl -X POST localhost:13101/loki/api/v1/query -H X-Scope-OrgID: t1 --data-urlencode time=1791979481000000000 --data-urlencode limit=10 --data-urlencode query=count_over_time({app="a"}[1h]) --data-urlencode query=count_over_time({app="b"}[1h])
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query GET query twice (a,b)
+$ curl localhost:13101/loki/api/v1/query?time=1791979481000000000&limit=10&query=count_over_time%28%7Bapp%3D%22a%22%7D%5B1h%5D%29&query=count_over_time%28%7Bapp%3D%22b%22%7D%5B1h%5D%29 -H X-Scope-OrgID: t1
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a","detected_level":"unknown","env":"prod","service_name":"a"},"value":[1791979481,"1"]}] ...[stats cut] [HTTP 200]
+--- query POST JSON body
+$ curl -X POST localhost:13101/loki/api/v1/query?time=1791979481000000000&limit=10 -H X-Scope-OrgID: t1 -H Content-Type: application/json -d {"query":"{app=\"a\"}"}
+parse error : syntax error: unexpected $end[HTTP 400]
