@@ -227,7 +227,7 @@ picking up any task — section references (§) point there.
   - [ ] Merge byte cap → 502 `merge_too_large`.
   - [ ] Omitted optional enforcement params still get the policy filter; merge plans force `Accept: application/json`.
 
-### [ ] T1.10 — Observability foundation ∥
+### [x] T1.10 — Observability foundation ∥
 - **Depends on:** T0.1
 - **Files:** `internal/observability/*`, tests
 - **Description:** PLAN §11. Tracer provider via `autoexport` (default exporter `none` when
@@ -235,10 +235,10 @@ picking up any task — section references (§) point there.
   with all metrics from §11.1 (native histograms + exemplars), slog handler adding
   `trace_id`/`span_id`, privacy flag plumbing (helpers that only set attributes when enabled).
 - **Acceptance:**
-  - [ ] tracetest: inbound `traceparent` continued; outbound request has `traceparent`, no
+  - [x] tracetest: inbound `traceparent` continued; outbound request has `traceparent`, no
         `baggage`.
-  - [ ] With default flags, no span carries `enduser.id` or query attributes.
-  - [ ] Exemplar with trace ID present on request histogram (testutil).
+  - [x] With default flags, no span carries `enduser.id` or query attributes.
+  - [x] Exemplar with trace ID present on request histogram (testutil).
 
 ### [ ] T1.11 — Server wiring and health
 - **Depends on:** T1.6, T1.7, T1.9, T1.10
