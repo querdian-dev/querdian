@@ -1,0 +1,80 @@
+{
+  "realm": "observability",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 1800,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 28800,
+  "groups": [
+    {"name": "order-team"},
+    {"name": "payment-team"},
+    {"name": "platform-admins"}
+  ],
+  "users": [
+    {
+      "username": "alice", "enabled": true, "emailVerified": true,
+      "email": "alice@demo.querdian.dev", "firstName": "Alice", "lastName": "Order",
+      "groups": ["/order-team"],
+      "credentials": [{"type": "password", "value": "alice-demo", "temporary": false}]
+    },
+    {
+      "username": "bob", "enabled": true, "emailVerified": true,
+      "email": "bob@demo.querdian.dev", "firstName": "Bob", "lastName": "Payment",
+      "groups": ["/payment-team"],
+      "credentials": [{"type": "password", "value": "bob-demo", "temporary": false}]
+    },
+    {
+      "username": "carol", "enabled": true, "emailVerified": true,
+      "email": "carol@demo.querdian.dev", "firstName": "Carol", "lastName": "Platform",
+      "groups": ["/platform-admins"],
+      "credentials": [{"type": "password", "value": "carol-demo", "temporary": false}]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "grafana",
+      "name": "Grafana (quickstart)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "grafana-demo-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "http://localhost:3000/*"},
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "querdian-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "querdian",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+# Helm values for the quickstart (helm install querdian charts/querdian -n querdian -f this).
+# up.sh replaces @@KEYCLOAK_PORT@@ and @@IMAGE_TAG@@.
+image:
+  repository: ghcr.io/querdian-dev/querdian
+  tag: "@@IMAGE_TAG@@"
+  pullPolicy: Never # the image is built locally and loaded into kind
+
+replicaCount: 2
+resources:
+  requests: {cpu: 50m, memory: 48Mi}
+  limits: {memory: 256Mi}
+
+# Prometheus (quickstart prometheus.yaml) scrapes the annotated management port.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: /metrics
+
+# Querdian's own traces go through the collector, so platform admins can see them in Tempo.
+tracing:
+  exporter: otlp
+  otlp:
+    endpoint: http://otel-collector.observability:4318
+    protocol: http/protobuf
+  sampler: parentbased_always_on
+
+config:
+  auth:
+    # The issuer string must equal the `iss` claim of the tokens byte for byte. It resolves on the
+    # laptop (localtest.me -> 127.0.0.1, kind port mapping) and inside the cluster (CoreDNS
+    # rewrite to the Keycloak Service), see docs/quickstart.md.
+    issuer: http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability
+    audiences: [querdian]
+    claims:
+      username: preferred_username
+      groups: groups
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://prometheus.observability:9090
+      pathPrefix: /prom
+      namespaceLabel: namespace
+      tenantFederation: none
+    - name: logs
+      type: loki
+      url: http://loki.observability:3100
+      pathPrefix: /loki
+      namespaceLabel: k8s_namespace_name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: tenantIdLabel
+    - name: traces
+      type: tempo
+      url: http://tempo.observability:3200
+      pathPrefix: /tempo
+      namespaceLabel: resource.k8s.namespace.name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: none
+      traceByID: filter

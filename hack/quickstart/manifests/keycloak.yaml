@@ -1,0 +1,51 @@
+# Keycloak in dev mode (embedded H2, no TLS): DEMO ONLY.
+#
+# Hostname strategy: the issuer URL must be byte-identical for the browser (laptop), Grafana's
+# server side, and Querdian. KC_HOSTNAME pins it to http://keycloak.localtest.me:@@KEYCLOAK_PORT@@
+# (localtest.me resolves to 127.0.0.1 on the laptop; kind maps host port @@KEYCLOAK_PORT@@ to the
+# NodePort below). Inside the cluster CoreDNS rewrites keycloak.localtest.me to this Service,
+# which listens on the same port number, so the same URL works there as well.
+apiVersion: v1
+kind: Service
+metadata: {name: keycloak, namespace: keycloak}
+spec:
+  type: NodePort
+  selector: {app: keycloak}
+  ports:
+    - {name: http, port: @@KEYCLOAK_PORT@@, targetPort: 8080, nodePort: 30080}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: keycloak, namespace: keycloak}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: keycloak}}
+  template:
+    metadata: {labels: {app: keycloak}}
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.4.0
+          args: [start-dev, --import-realm]
+          env:
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
+            - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, value: admin}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_HOSTNAME, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@"}
+            - {name: KC_HEALTH_ENABLED, value: "false"}
+            # Smallest JVM that runs a dev-mode Keycloak with one realm.
+            - {name: JAVA_OPTS_KC_HEAP, value: "-Xms64m -Xmx300m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC"}
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /realms/observability/.well-known/openid-configuration, port: 8080}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: {cpu: 200m, memory: 450Mi}
+            limits: {memory: 750Mi}
+          volumeMounts:
+            - {name: realm, mountPath: /opt/keycloak/data/import}
+      volumes:
+        - name: realm
+          configMap: {name: keycloak-realm}

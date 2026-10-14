@@ -1,0 +1,59 @@
+# Loki single binary, multi-tenant (auth_enabled). Data is stored under the tenant "demo"; the
+# OTel Collector sets X-Scope-OrgID. Querdian sets the header itself for every query and strips
+# any client-supplied value, so nobody can pick a tenant.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: loki, namespace: observability}
+data:
+  loki.yaml: |
+    auth_enabled: true
+    server: {http_listen_port: 3100, grpc_listen_port: 9096}
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      ring: {kvstore: {store: inmemory}, instance_addr: 127.0.0.1}
+      storage: {filesystem: {chunks_directory: /loki/chunks, rules_directory: /loki/rules}}
+    schema_config:
+      configs:
+        - {from: "2024-01-01", store: tsdb, object_store: filesystem, schema: v13, index: {prefix: index_, period: 24h}}
+    limits_config:
+      allow_structured_metadata: true
+      reject_old_samples: false
+      retention_period: 0s
+    querier: {multi_tenant_queries_enabled: true}
+    analytics: {reporting_enabled: false}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: loki, namespace: observability}
+spec:
+  selector: {app: loki}
+  ports: [{name: http, port: 3100, targetPort: 3100}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: loki, namespace: observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: loki}}
+  template:
+    metadata: {labels: {app: loki}}
+    spec:
+      containers:
+        - name: loki
+          image: docker.io/grafana/loki:3.5.0
+          args: [-config.file=/etc/loki/loki.yaml]
+          ports: [{containerPort: 3100}]
+          readinessProbe: {httpGet: {path: /ready, port: 3100}, periodSeconds: 5, initialDelaySeconds: 10}
+          resources:
+            requests: {cpu: 50m, memory: 150Mi}
+            limits: {memory: 500Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/loki}
+            - {name: data, mountPath: /loki}
+      volumes:
+        - name: config
+          configMap: {name: loki}
+        - name: data
+          emptyDir: {}

@@ -1,0 +1,25 @@
+# Namespaces. The two sample namespaces carry the tenant label that Querdian maps to the Loki/Tempo
+# tenant (policy.querdian.dev/tenant). Whoever can edit namespace labels decides the tenant.
+apiVersion: v1
+kind: Namespace
+metadata: {name: keycloak}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: observability}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: querdian}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: order-service
+  labels: {policy.querdian.dev/tenant: demo}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payment-service
+  labels: {policy.querdian.dev/tenant: demo}

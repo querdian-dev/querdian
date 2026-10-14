@@ -1,0 +1,57 @@
+# Two sample workloads, one per namespace. The script lives in a ConfigMap `workload`
+# (created by up.sh from hack/quickstart/workload.sh in both namespaces).
+# The prometheus.io/* annotations only say WHETHER and WHERE to scrape; the namespace label is
+# set by Prometheus relabeling (see prometheus.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: order-service, namespace: order-service}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: order-service}}
+  template:
+    metadata:
+      labels: {app: order-service}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: /metrics.txt}
+    spec:
+      containers:
+        - name: app
+          image: docker.io/library/busybox:1.37
+          command: [sh, /scripts/workload.sh]
+          env:
+            - {name: SERVICE_NAME, value: order-service}
+            # Hostile on purpose: claims to be payment-service. Must have no effect.
+            - {name: SPOOF_NAMESPACE, value: payment-service}
+          ports: [{containerPort: 8080}]
+          resources:
+            requests: {cpu: 10m, memory: 8Mi}
+            limits: {memory: 64Mi}
+          volumeMounts: [{name: scripts, mountPath: /scripts}]
+      volumes:
+        - name: scripts
+          configMap: {name: workload}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: payment-service, namespace: payment-service}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: payment-service}}
+  template:
+    metadata:
+      labels: {app: payment-service}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: /metrics.txt}
+    spec:
+      containers:
+        - name: app
+          image: docker.io/library/busybox:1.37
+          command: [sh, /scripts/workload.sh]
+          env:
+            - {name: SERVICE_NAME, value: payment-service}
+          ports: [{containerPort: 8080}]
+          resources:
+            requests: {cpu: 10m, memory: 8Mi}
+            limits: {memory: 64Mi}
+          volumeMounts: [{name: scripts, mountPath: /scripts}]
+      volumes:
+        - name: scripts
+          configMap: {name: workload}
