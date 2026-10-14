@@ -184,6 +184,22 @@ Findings:
   (keep `traceID`, `spanSet`/`spanSets`, `metrics`). Decide in T4.4 whether to drop or blank
   them; blanking `rootServiceName` to an empty string vs omitting is untested against Grafana.
 
+## 8. Tag endpoints and decisions of T4.4  [V]
+
+Recorded against Tempo 2.9.0 (`internal/fanout/testdata/tempo/record.sh`):
+- `GET /api/v2/search/tags` returns `{"scopes":[{"name":"intrinsic|span|resource","tags":[...]}],"metrics":{...}}`.
+  The `intrinsic` scope lists, among others, `rootName`, `rootServiceName`, `trace:rootName`,
+  `trace:rootService`, `traceDuration`, `trace:duration`, `span:name` (scope-prefixed with a colon).
+- `GET /api/v2/search/tag/<scoped name>/values` returns `{"tagValues":[{"type":"string","value":"..."}],"metrics":{...}}`.
+- Because the trace-level intrinsics are queryable, a user can filter on root data of a trace even when only a
+  child span matches the policy (an oracle for the redacted fields); the enforcer does not forbid them yet.
+- Search redaction (`fanout.RedactTempoSearch`): `rootServiceName`, `rootTraceName`, `serviceStats` are removed
+  (also the `<root span not yet received>` placeholder); `startTimeUnixNano` and `durationMs` are recomputed from
+  the returned matched spans (earliest start, extent rounded up to ms); everything not on an allow-list
+  (`traceID`, `spanSet`, `spanSets`; top level `traces`, `metrics`) is dropped. The root is treated as covered
+  only for unrestricted policies (`traceql.RootCovered`), since the DNF constrains matched spans only and
+  the spans of one trace may carry different resource attributes.
+
 ## Not exercised (follow-ups)
 
 Tempo metrics endpoints and functions; tag/tag-value endpoints (`/api/v2/search/tags`,

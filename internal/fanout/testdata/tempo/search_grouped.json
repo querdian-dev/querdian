@@ -1,0 +1,344 @@
+{
+    "traces": [
+        {
+            "traceID": "4",
+            "rootServiceName": "<root span not yet received>",
+            "startTimeUnixNano": "1791981314549119040",
+            "durationMs": 40,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000008",
+                        "startTimeUnixNano": "1791981314549119040",
+                        "durationNanos": "40000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "orphansvc"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1,
+                "attributes": [
+                    {
+                        "key": "by(resource.service.name)",
+                        "value": {
+                            "stringValue": "orphansvc"
+                        }
+                    }
+                ]
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000008",
+                            "startTimeUnixNano": "1791981314549119040",
+                            "durationNanos": "40000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "orphansvc"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "orphansvc"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "serviceStats": {
+                "orphansvc": {
+                    "spanCount": 1
+                }
+            }
+        },
+        {
+            "traceID": "3",
+            "rootServiceName": "rootsvc",
+            "rootTraceName": "root3",
+            "startTimeUnixNano": "1791981314544119040",
+            "durationMs": 550,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000005",
+                        "startTimeUnixNano": "1791981314544119040",
+                        "durationNanos": "100000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "rootsvc"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1,
+                "attributes": [
+                    {
+                        "key": "by(resource.service.name)",
+                        "value": {
+                            "stringValue": "rootsvc"
+                        }
+                    }
+                ]
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000005",
+                            "startTimeUnixNano": "1791981314544119040",
+                            "durationNanos": "100000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "rootsvc"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "rootsvc"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000006",
+                            "startTimeUnixNano": "1791981314594119040",
+                            "durationNanos": "500000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "childsvc"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "childsvc"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "serviceStats": {
+                "childsvc": {
+                    "spanCount": 1
+                },
+                "rootsvc": {
+                    "spanCount": 1
+                }
+            }
+        },
+        {
+            "traceID": "2",
+            "rootServiceName": "other",
+            "rootTraceName": "POST /x",
+            "startTimeUnixNano": "1791981314544119040",
+            "durationMs": 20,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000004",
+                        "startTimeUnixNano": "1791981314544119040",
+                        "durationNanos": "20000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "other"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1,
+                "attributes": [
+                    {
+                        "key": "by(resource.service.name)",
+                        "value": {
+                            "stringValue": "other"
+                        }
+                    }
+                ]
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000004",
+                            "startTimeUnixNano": "1791981314544119040",
+                            "durationNanos": "20000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "other"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "other"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "serviceStats": {
+                "other": {
+                    "spanCount": 1
+                }
+            }
+        },
+        {
+            "traceID": "1",
+            "rootServiceName": "frontend",
+            "rootTraceName": "GET /",
+            "startTimeUnixNano": "1791981314544119040",
+            "durationMs": 1000,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000001",
+                        "startTimeUnixNano": "1791981314544119040",
+                        "durationNanos": "1000000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "frontend"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 1,
+                "attributes": [
+                    {
+                        "key": "by(resource.service.name)",
+                        "value": {
+                            "stringValue": "frontend"
+                        }
+                    }
+                ]
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000001",
+                            "startTimeUnixNano": "1791981314544119040",
+                            "durationNanos": "1000000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "frontend"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 1,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "frontend"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000002",
+                            "startTimeUnixNano": "1791981314554119040",
+                            "durationNanos": "300000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "backend"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "spanID": "0000000000000003",
+                            "startTimeUnixNano": "1791981314564119040",
+                            "durationNanos": "50000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "backend"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 2,
+                    "attributes": [
+                        {
+                            "key": "by(resource.service.name)",
+                            "value": {
+                                "stringValue": "backend"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "serviceStats": {
+                "backend": {
+                    "spanCount": 2,
+                    "errorCount": 1
+                },
+                "frontend": {
+                    "spanCount": 1
+                }
+            }
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "18732",
+        "completedJobs": 1,
+        "totalJobs": 1
+    }
+}

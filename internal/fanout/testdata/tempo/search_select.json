@@ -1,0 +1,125 @@
+{
+    "traces": [
+        {
+            "traceID": "1",
+            "rootServiceName": "frontend",
+            "rootTraceName": "GET /",
+            "startTimeUnixNano": "1791981314544119040",
+            "durationMs": 1000,
+            "spanSet": {
+                "spans": [
+                    {
+                        "spanID": "0000000000000002",
+                        "startTimeUnixNano": "1791981314554119040",
+                        "durationNanos": "300000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "backend"
+                                }
+                            },
+                            {
+                                "key": "http.status_code",
+                                "value": {
+                                    "intValue": "500"
+                                }
+                            },
+                            {
+                                "key": "a",
+                                "value": {
+                                    "stringValue": "y"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "spanID": "0000000000000003",
+                        "startTimeUnixNano": "1791981314564119040",
+                        "durationNanos": "50000000",
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {
+                                    "stringValue": "backend"
+                                }
+                            },
+                            {
+                                "key": "a",
+                                "value": {
+                                    "stringValue": "xy"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "matched": 2
+            },
+            "spanSets": [
+                {
+                    "spans": [
+                        {
+                            "spanID": "0000000000000002",
+                            "startTimeUnixNano": "1791981314554119040",
+                            "durationNanos": "300000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "backend"
+                                    }
+                                },
+                                {
+                                    "key": "http.status_code",
+                                    "value": {
+                                        "intValue": "500"
+                                    }
+                                },
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "y"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "spanID": "0000000000000003",
+                            "startTimeUnixNano": "1791981314564119040",
+                            "durationNanos": "50000000",
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {
+                                        "stringValue": "backend"
+                                    }
+                                },
+                                {
+                                    "key": "a",
+                                    "value": {
+                                        "stringValue": "xy"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "matched": 2
+                }
+            ],
+            "serviceStats": {
+                "backend": {
+                    "spanCount": 2,
+                    "errorCount": 1
+                },
+                "frontend": {
+                    "spanCount": 1
+                }
+            }
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "19146",
+        "completedJobs": 1,
+        "totalJobs": 1
+    }
+}

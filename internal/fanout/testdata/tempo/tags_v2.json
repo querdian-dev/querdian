@@ -1,0 +1,49 @@
+{
+    "scopes": [
+        {
+            "name": "intrinsic",
+            "tags": [
+                "duration",
+                "event:name",
+                "event:timeSinceStart",
+                "instrumentation:name",
+                "instrumentation:version",
+                "kind",
+                "name",
+                "rootName",
+                "rootServiceName",
+                "span:duration",
+                "span:kind",
+                "span:name",
+                "span:status",
+                "span:statusMessage",
+                "status",
+                "statusMessage",
+                "trace:duration",
+                "trace:rootName",
+                "trace:rootService",
+                "traceDuration"
+            ]
+        },
+        {
+            "name": "resource",
+            "tags": [
+                "service.name",
+                "team"
+            ]
+        },
+        {
+            "name": "span",
+            "tags": [
+                "a",
+                "dash-name",
+                "http.status_code",
+                "slash/name",
+                "weird name"
+            ]
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "18115"
+    }
+}

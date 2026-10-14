@@ -1,0 +1,35 @@
+{
+    "tagValues": [
+        {
+            "type": "string",
+            "value": "r3"
+        },
+        {
+            "type": "string",
+            "value": "c3"
+        },
+        {
+            "type": "string",
+            "value": "o4"
+        },
+        {
+            "type": "string",
+            "value": "x"
+        },
+        {
+            "type": "string",
+            "value": "y"
+        },
+        {
+            "type": "string",
+            "value": "xy"
+        },
+        {
+            "type": "string",
+            "value": "z"
+        }
+    ],
+    "metrics": {
+        "inspectedBytes": "17258"
+    }
+}
