@@ -1,5 +1,5 @@
-// Package logql implements a clean-room LogQL lexer (and, in later tasks, a
-// parser and injector) for the Querdian access proxy.
+// Package logql implements a clean-room LogQL lexer and parser (and, in
+// later tasks, an injector) for the Querdian access proxy.
 //
 // # Clean-room provenance
 //
@@ -59,4 +59,62 @@
 //     exercised against Loki).
 //   - Flags such as --strict are lexed as two '-' operators and an identifier;
 //     the parser reassembles them.
+//
+// # Parser
+//
+// [Parse] returns a [*Query] with its [QueryKind] (log or metric), the root
+// [Expr], and the positions of every stream selector ([Query.Selectors]) and
+// range aggregation ([Query.RangeAggs]). [Query.String] renders a canonical
+// form: Parse(String(Parse(x))) is equivalent to Parse(x). Parentheses are
+// not kept in the tree; the canonical form parenthesises every nested binary
+// operation. Anything not recognised is an error (*[ParseError] or the
+// lexer's *[Error]); there is no lenient pass-through.
+//
+// The metric layer (vector aggregations with by/without before or after the
+// arguments, binary operators with bool/on/ignoring/group_left/group_right,
+// range aggregations with unwrap, offset and literals, vector(), label_replace)
+// and stream selectors are parsed into the tree. The log pipeline is
+// validated structurally but kept as an opaque token slice with byte
+// positions, see [LogExpr.Pipeline].
+//
+// Operator precedence, lowest first: or; and, unless; comparisons; + -;
+// * / %; ^ (right associative). Unary minus binds tightest and is accepted
+// only directly in front of a number. and and unless sharing a level is an
+// assumption (docs/research/logql.md section 1).
+//
+// # Parser strictness beyond the lexer
+//
+//   - Range selectors and offset accept only integer durations and no us
+//     unit ([1.5m], [1us] are errors); [5m:1m] subqueries are errors.
+//   - offset must directly follow the range inside the function.
+//   - A literal on either side of and, or, unless is an error; bool is only
+//     accepted on comparisons; group_left/group_right need on or ignoring and
+//     are rejected on set operators.
+//   - A stream selector needs at least one = or =~ matcher that cannot match
+//     the empty string (or != ""); regexes must compile.
+//   - Keywords may be label names in selectors, by/without/on/ignoring lists,
+//     json/logfmt/drop/keep/label_format names and label filters. A stage
+//     keyword directly followed by a comparison operator is a label filter.
+//   - "or" directly after a line filter value chains another value
+//     (|= "a" or "b"); elsewhere in a pipeline it separates label filters.
+//     Label filters may be joined by and, or, ',' or juxtaposition.
+//   - logfmt accepts exactly --strict and --keep-empty (each at most once,
+//     before the parameters, no whitespace inside the flag); json accepts no
+//     flags and every json parameter needs ="expr".
+//   - After unwrap only label filters may follow; unwrap needs an unwrapped
+//     range function and an unwrapped range function needs unwrap. Not
+//     documented for rate with unwrap, so it is rejected. Grouping after the
+//     parentheses is accepted only for unwrapped functions.
+//   - The only functions are the range aggregations rate, count_over_time,
+//     bytes_rate, bytes_over_time, absent_over_time, rate_counter, sum_over_time,
+//     avg_over_time, max_over_time, min_over_time, stdvar_over_time,
+//     stddev_over_time, quantile_over_time, first_over_time, last_over_time;
+//     the vector aggregations sum avg min max count stddev stdvar topk bottomk
+//     sort sort_desc; and vector, label_replace. Everything else (distinct,
+//     approx_topk, abs, count_values, ...) is rejected. topk/bottomk/vector
+//     take plain numbers, label_replace takes exactly five arguments with
+//     string literals.
+//   - A log query must start with '{'; a bare or parenthesised selector as an
+//     operand of a metric expression is an error.
+//   - Nesting deeper than 100 levels is rejected.
 package logql
