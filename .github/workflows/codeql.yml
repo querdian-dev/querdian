@@ -13,6 +13,8 @@ permissions:
 jobs:
   analyze:
     name: codeql (go)
+    # Code scanning on a private repository needs GitHub Advanced Security; skipped until public.
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
