@@ -12,6 +12,9 @@ permissions: read-all
 jobs:
   analysis:
     name: scorecard
+    # Scorecard cannot read a private repository with GITHUB_TOKEN and publishing needs a public
+    # repo, so the job is skipped until the repository is public.
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
