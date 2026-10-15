@@ -508,12 +508,16 @@ picking up any task — section references (§) point there.
   - [x] Panels: request rate by decision/reason, latency (with exemplar links), upstream errors,
         fan-out terms distribution, snapshot health, policy readiness.
 
-### [ ] T5.6 — CNCF/OpenSSF readiness ∥
+### [~] T5.6 — CNCF/OpenSSF readiness ∥
 - **Depends on:** T0.2, T5.4
 - **Files:** `docs/security/self-assessment.md`, badge in README
 - **Acceptance:**
   - [ ] OpenSSF Best Practices "passing" criteria satisfied (badge application submitted `HUMAN`).
-  - [ ] TAG Security self-assessment draft complete.
+        (Checklist: `docs/openssf-best-practices.md`: 41 Met / 15 Unmet / 11 N/A on repository
+        evidence. Open: repository public, private vulnerability reporting, first release, the
+        bestpractices.dev registration. README badges are prepared as comments.)
+  - [x] TAG Security self-assessment draft complete (`docs/security/self-assessment.md`; gaps listed
+        in it; not reviewed by anyone outside the project).
 
 ### [ ] T5.7 — Release 0.1.0 `HUMAN` + agent
 - **Depends on:** all M5 tasks
