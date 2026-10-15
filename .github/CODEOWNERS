@@ -1,0 +1,7 @@
+# Security-relevant code needs the maintainer's review.
+*                       @geilername
+/internal/enforce/      @geilername
+/internal/policy/       @geilername
+/internal/proxy/        @geilername
+/pkg/logql/             @geilername
+/pkg/traceql/           @geilername

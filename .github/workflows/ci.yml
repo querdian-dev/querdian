@@ -114,3 +114,34 @@ jobs:
             git diff
             exit 1
           fi
+
+  chart:
+    name: chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # helm is preinstalled on GitHub-hosted Ubuntu runners.
+      - run: make chart-crds-check chart-lint
+      - run: go test ./charts/...
+
+  e2e:
+    name: e2e
+    # Differential and equivalence suites against real Prometheus, Loki and Tempo containers (docker is
+    # available on GitHub-hosted runners). Not a required check at first: the suites are new and depend
+    # on image pulls; promote it in the ruleset once it has been stable.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make e2e

@@ -91,8 +91,10 @@ Settings > Rules > Rulesets, target `main`:
   | `codeql (go)` | codeql.yml |
 
   `scorecard` runs on `main`, a schedule and branch-protection changes only; do not require it.
-  There is **no** CI job for `make e2e`, `make chart-lint` or `make release-check`; they are run
-  locally in the pre-flight below. Adding them to CI is recommended (see the self-assessment gaps).
+  `ci.yml` also has a `chart` job (CRD sync check, `helm lint`, chart tests) and an `e2e` job (the
+  differential suites against real Prometheus, Loki and Tempo containers). Both are new and have never
+  run on GitHub: do not require them until they have been green for a while, then add them to the list
+  above. There is no CI job for `make release-check`; it is run locally in the pre-flight below.
 * Add a tag ruleset for `v*`: restrict creation to maintainers, block deletion and updates (tags
   are the root of the signing identity; see rollback below).
 

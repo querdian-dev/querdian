@@ -31,7 +31,25 @@ make test-race        # with the race detector
 make fuzz             # short fuzz run
 make envtest          # controller tests against a local API server
 make generate manifests   # must produce no diff
+make e2e              # differential/equivalence suites against real Prometheus, Loki and Tempo (needs docker)
+make chart-lint       # Helm chart lint (needs helm)
+make licenses         # dependency licence gate
 ```
+
+## What a change needs
+
+* Unit tests for new code, and tests that fail without the change for a bug fix. Parsers and rewriters
+  also need corpus or fuzz coverage; behaviour that depends on a backend needs a case in `test/e2e`.
+* `make lint test-race` green, `make generate manifests` without a diff, and no new dependency outside
+  the licence allowlist (`make licenses`).
+* Documentation for user-visible behaviour (`docs/`), including new decision reasons in
+  `docs/troubleshooting.md`.
+* A sign-off on every commit (`git commit -s`).
+
+## Reporting bugs and requesting features
+
+Open an issue using the templates. For anything that lets a user read data their policy does not grant,
+do not open an issue: see [SECURITY.md](SECURITY.md).
 
 ## Reporting security issues
 
