@@ -422,7 +422,9 @@ picking up any task — section references (§) point there.
   and JSON. Attribute matching against DNF terms (resource + span attributes).
 - **Acceptance:**
   - [x] Spans outside policy removed; empty result → 404; formats preserved.
-  - [x] `pkg/tempopb` is the only Tempo import (license job green).
+  - [x] `pkg/tempopb` is the only Tempo code used. It is copied into `internal/tempopb` by
+    `hack/sync-tempopb.sh` (Tempo's tags are not importable as Go module versions) and a monthly
+    workflow reports drift against the latest release.
   - [x] Client `q` on trace by ID → 400; only `start`/`end` forwarded.
 
 ### [x] T4.6 — Tempo differential, E2E and equivalence

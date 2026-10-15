@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	tracev1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
+	tracev1 "github.com/querdian-dev/querdian/internal/tempopb/trace/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/querdian-dev/querdian/test/e2e/framework"

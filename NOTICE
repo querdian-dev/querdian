@@ -1,0 +1,7 @@
+Querdian
+Copyright The Querdian Authors
+
+This product includes software developed by Grafana Labs (https://github.com/grafana/tempo),
+licensed under the Apache License, Version 2.0: the generated OpenTelemetry protobuf types in
+internal/tempopb (copied from pkg/tempopb). See internal/tempopb/SOURCE for the exact release and
+internal/tempopb/LICENSE_APACHE2 for the licence.

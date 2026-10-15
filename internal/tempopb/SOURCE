@@ -1,0 +1,4 @@
+Copied from https://github.com/grafana/tempo (pkg/tempopb/{common,resource,trace}/v1, Apache-2.0)
+tag:    v3.1.0
+commit: 77fc4563d1135d0ca2656709c7384c278a9c67b0
+Update with hack/sync-tempopb.sh; do not edit the .pb.go files by hand.

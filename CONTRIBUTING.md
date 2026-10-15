@@ -12,6 +12,8 @@ Every commit must be signed off (`git commit -s`), certifying the
 - Do **not** import, copy, or read the source of `grafana/loki` (except Apache-licensed dirs
   `pkg/logproto`, `pkg/loghttp`, `pkg/logqlmodel`, `pkg/push`) or `grafana/tempo` (except
   `pkg/tempopb`). In particular never open Loki's or Tempo's grammar/parser sources.
+  The generated protobuf types in `internal/tempopb` are copied from Tempo's `pkg/tempopb` by
+  `hack/sync-tempopb.sh`; never edit them by hand.
 - Do **not** copy anything (code, tests, fixtures, docs, images) from `evoila/janus`.
 - The LogQL and TraceQL parsers are written **only from the public language documentation**
   (grafana.com/docs). Record the doc URLs used in package docs.

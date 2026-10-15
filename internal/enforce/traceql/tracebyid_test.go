@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	commonv1 "github.com/grafana/tempo/pkg/tempopb/common/v1"
-	resourcev1 "github.com/grafana/tempo/pkg/tempopb/resource/v1"
-	tracev1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
+	commonv1 "github.com/querdian-dev/querdian/internal/tempopb/common/v1"
+	resourcev1 "github.com/querdian-dev/querdian/internal/tempopb/resource/v1"
+	tracev1 "github.com/querdian-dev/querdian/internal/tempopb/trace/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"

@@ -79,7 +79,7 @@ jobs:
           go-version-file: go.mod
       # Pinned and run from the module proxy so it stays out of go.mod;
       # Renovate bumps the version (see renovate.json).
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -format json ./... | hack/govulncheck-filter.sh
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   licenses:
     name: licenses

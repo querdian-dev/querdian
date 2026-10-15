@@ -1,0 +1,63 @@
+name: tempopb drift
+
+# Monthly check that internal/tempopb still matches the latest Tempo release. Opens (or updates)
+# an issue when it does not; syncing is a deliberate change made with hack/sync-tempopb.sh.
+on:
+  schedule:
+    - cron: "17 5 1 * *" # first day of each month, 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write # open the drift issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare with the latest Tempo release
+        id: diff
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          hack/sync-tempopb.sh "" "$tmp" >/dev/null
+          tag=$(sed -n 's/^tag: *//p' "$tmp/SOURCE")
+          current=$(sed -n 's/^tag: *//p' internal/tempopb/SOURCE)
+          echo "latest=$tag" >>"$GITHUB_OUTPUT"
+          echo "current=$current" >>"$GITHUB_OUTPUT"
+          # Compare the Go files and the licence; SOURCE differs whenever the tag does.
+          if diff -r -x SOURCE internal/tempopb "$tmp" >"$tmp.diff"; then
+            echo "drift=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >>"$GITHUB_OUTPUT"
+            head -n 200 "$tmp.diff"
+          fi
+      - name: Open or update the drift issue
+        if: steps.diff.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.diff.outputs.latest }}
+          CURRENT: ${{ steps.diff.outputs.current }}
+        run: |
+          set -euo pipefail
+          title="internal/tempopb differs from Tempo $LATEST"
+          body="internal/tempopb was copied from $CURRENT and the latest Tempo release is $LATEST, with different generated files.
+
+          1. Run hack/sync-tempopb.sh
+          2. Review the diff: new fields that can carry attributes need handling in internal/enforce/traceql (trace-by-ID filter)
+          3. Run make test-race e2e and open a PR
+
+          Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          existing=$(gh issue list --state open --label tempopb-drift --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+          else
+            gh label create tempopb-drift --description "internal/tempopb out of date" 2>/dev/null || true
+            gh issue create --title "$title" --body "$body" --label tempopb-drift
+          fi
