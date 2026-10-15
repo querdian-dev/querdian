@@ -1,0 +1,9 @@
+# Advisories accepted for govulncheck, one per line: <OSV id> <reason>. Review on every Tempo bump.
+#
+# The Go vulnerability database lists these only against the whole module github.com/grafana/tempo,
+# with no package or symbol, and the fix is in release branches (v2.10.2/v2.10.3) that it cannot map
+# to the pseudo-version we must use (Tempo's go.mod is not tagged as a Go module). govulncheck therefore
+# flags any use of the module. We import only the protobuf types in pkg/tempopb/{trace,common,resource}/v1
+# for trace-by-ID filtering, not the Tempo server code the advisories concern.
+GO-2026-5528 CVE-2026-21728 Tempo server resource consumption; server code not imported
+GO-2026-5359 CVE-2026-28377 Tempo server encryption strength; server code not imported
