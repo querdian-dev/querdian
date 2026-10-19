@@ -9,8 +9,13 @@
 # 2. Queries the Querdian proxy directly (kubectl port-forward) with PromQL, LogQL, TraceQL
 #    search and trace-by-ID and asserts who sees what, including the denied-label example and the
 #    spoofed-namespace attempts of the order-service sample.
-# 3. Checks Grafana: health, provisioned data sources, and (headless) the real browser flow:
-#    Keycloak login form -> Grafana session -> data source proxy queries with OAuth pass-through.
+# 3. Checks the backfilled history (DEMO_HISTORY_HOURS, default 24): the earliest metric sample, log
+#    line and trace are about a day old, each user only sees the history of their own namespace,
+#    the incidents are in the data, error logs link to traces, the denied label stays hidden.
+# 4. Checks Grafana: health, provisioned data sources and dashboards, and (headless) the real
+#    browser flow: Keycloak login form -> Grafana session -> data source proxy queries with OAuth
+#    pass-through. Then runs every query of every provisioned dashboard as alice, bob and carol
+#    through Grafana (POST /api/ds/query with the user's session, so Querdian sees their token).
 #
 # Requires: curl, jq, kubectl. Exit status 1 if any assertion fails.
 set -uo pipefail
@@ -93,6 +98,9 @@ if [ -z "$ALICE" ] || [ -z "$BOB" ] || [ -z "$CAROL" ] || [ "$ALICE" = null ]; t
 fi
 
 LOGS_Q='{k8s_namespace_name=~".+"}'
+HOURS="${DEMO_HISTORY_HOURS:-24}"
+NOW=$(date +%s)
+MIN_AGE=$((HOURS * 3600 * 23 / 24)) # the history must reach back at least this far (23 h of 24)
 
 if [ $SMOKE = 1 ]; then
   # Data must have arrived everywhere (carol sees all namespaces).
@@ -102,6 +110,12 @@ if [ $SMOKE = 1 ]; then
   [[ "$(loki_ns)" == *order-service* && "$(loki_ns)" == *payment-service* ]] || exit 1
   call "$CAROL" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=50
   [[ "$(tempo_roots)" == *order-service* && "$(tempo_roots)" == *payment-service* ]] || exit 1
+  # the history (Prometheus blocks, Loki and Tempo backfill) must be queryable as well
+  call "$CAROL" /prom/api/v1/query --data-urlencode 'query=http_requests_total' --data-urlencode "time=$((NOW - MIN_AGE))"
+  [[ "$(prom_ns)" == *order-service* && "$(prom_ns)" == *payment-service* ]] || exit 1
+  call "$CAROL" /tempo/api/search --data-urlencode 'q={}' --data-urlencode "start=$((NOW - (HOURS + 2) * 3600))" \
+    --data-urlencode "end=$((NOW - MIN_AGE))" --data-urlencode limit=20
+  [ "$(tempo_n)" -ge 1 ] 2>/dev/null || exit 1
   exit 0
 fi
 
@@ -178,8 +192,8 @@ expect "alice: namespaces in logs" order-service "$(loki_ns)"
 expect_ge "alice: log streams" 1 "$(loki_n)"
 call "$BOB" /loki/loki/api/v1/query_range --data-urlencode "query=$LOGS_Q" --data-urlencode limit=100
 expect "bob: namespaces in logs" payment-service "$(loki_ns)"
-call "$CAROL" /loki/loki/api/v1/query_range --data-urlencode "query=$LOGS_Q" --data-urlencode limit=500
-ns=$(jq -r '[.data.result[].stream.k8s_namespace_name] | unique | join(",")' <<<"$BODY")
+call "$CAROL" /loki/loki/api/v1/label/k8s_namespace_name/values
+ns=$(jq -r '.data | join(",")' <<<"$BODY")
 [[ "$ns" == *order-service* && "$ns" == *payment-service* && "$ns" == *querdian* ]] \
   && pass "carol: logs of all namespaces ($ns)" || failed "carol: log namespaces: $ns"
 call "$ALICE" /loki/loki/api/v1/query_range --data-urlencode 'query={k8s_namespace_name="payment-service"}' --data-urlencode limit=100

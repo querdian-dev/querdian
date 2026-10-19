@@ -83,13 +83,35 @@ spec:
       annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9090", prometheus.io/path: /metrics}
     spec:
       serviceAccountName: prometheus
+      initContainers:
+        # Backfill: Prometheus does not accept old samples over remote write, so the history is
+        # generated as an OpenMetrics file and turned into TSDB blocks with promtool before
+        # Prometheus starts. The image is Prometheus plus the demo data generator (hack/quickstart/demogen).
+        - name: backfill
+          image: @@DEMOGEN_IMAGE@@
+          imagePullPolicy: Never # built by up.sh and loaded into kind
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              if ls /prometheus/01* >/dev/null 2>&1; then echo "history already in place"; exit 0; fi
+              demogen metrics -hours @@DEMO_HISTORY_HOURS@@ -step 30s > /work/history.om
+              ls -l /work/history.om
+              promtool tsdb create-blocks-from openmetrics /work/history.om /prometheus
+              rm -f /work/history.om
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 400Mi}
+          volumeMounts:
+            - {name: data, mountPath: /prometheus}
+            - {name: work, mountPath: /work}
       containers:
         - name: prometheus
           image: docker.io/prom/prometheus:v3.5.0
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=2h
+            - --storage.tsdb.retention.time=@@RETENTION_HOURS@@h
           ports: [{containerPort: 9090}]
           readinessProbe: {httpGet: {path: /-/ready, port: 9090}, periodSeconds: 5}
           resources:
@@ -102,4 +124,6 @@ spec:
         - name: config
           configMap: {name: prometheus}
         - name: data
+          emptyDir: {}
+        - name: work
           emptyDir: {}

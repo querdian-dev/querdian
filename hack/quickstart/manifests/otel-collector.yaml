@@ -77,6 +77,11 @@ data:
           metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
         pod_association:
           - sources: [{from: resource_attribute, name: k8s.pod.uid}]
+      # Loki derives the label service_name from service.name; container logs have none (it would
+      # become the container name "app"), so the demo names the service after its namespace.
+      resource/service-name:
+        attributes:
+          - {key: service.name, from_attribute: k8s.namespace.name, action: upsert}
       batch:
         timeout: 2s
     exporters:
@@ -95,7 +100,7 @@ data:
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [memory_limiter, k8sattributes/uid, batch]
+          processors: [memory_limiter, k8sattributes/uid, resource/service-name, batch]
           exporters: [otlphttp/loki]
         traces:
           receivers: [otlp]

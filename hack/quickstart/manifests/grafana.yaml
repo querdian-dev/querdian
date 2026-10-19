@@ -18,6 +18,9 @@ data:
         jsonData:
           oauthPassThru: true
           httpMethod: POST
+          # The history is sampled every 30 s (the live workloads are scraped every 10 s), so
+          # $__rate_interval must not drop below two samples.
+          timeInterval: 30s
       - name: Loki (via Querdian)
         uid: loki
         type: loki
@@ -25,6 +28,15 @@ data:
         url: http://querdian.querdian:8080/loki
         jsonData:
           oauthPassThru: true
+          maxLines: 1000
+          # log -> trace: the trace id in JSON (\"trace_id\":\"...\") and logfmt (trace_id=...) lines.
+          derivedFields:
+            - name: TraceID
+              matcherType: regex
+              matcherRegex: 'trace_id"?[=:]\s*"?([0-9a-f]{32})'
+              url: '$${__value.raw}'
+              datasourceUid: tempo
+              urlDisplayLabel: Open trace
       - name: Tempo (via Querdian)
         uid: tempo
         type: tempo
@@ -34,6 +46,42 @@ data:
           oauthPassThru: true
           # gRPC streaming is not supported through Querdian.
           streamingEnabled: {search: false, metrics: false}
+          # trace -> logs: logs of the span's namespace that mention the trace id.
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: -5m
+            spanEndTimeShift: 5m
+            filterByTraceID: true
+            filterBySpanID: false
+            tags:
+              - {key: k8s.namespace.name, value: k8s_namespace_name}
+          # trace -> metrics: the request rate of the span's namespace.
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: -30m
+            spanEndTimeShift: 30m
+            tags:
+              - {key: k8s.namespace.name, value: namespace}
+            queries:
+              - name: Request rate
+                query: 'sum(rate(http_requests_total{$$__tags}[$$__rate_interval]))'
+---
+# File provisioning of the demo dashboards (JSON in hack/quickstart/dashboards, packed into the
+# ConfigMap grafana-dashboards by up.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-dashboard-provider, namespace: observability}
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: querdian-demo
+        folder: Querdian demo
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options: {path: /var/lib/grafana/dashboards}
 ---
 apiVersion: v1
 kind: Service
@@ -65,6 +113,7 @@ spec:
             - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false"}
             - {name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true"}
             - {name: GF_USERS_DEFAULT_THEME, value: dark}
+            - {name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /var/lib/grafana/dashboards/service-overview.json}
             # Keycloak login. auth_url is opened by the browser (laptop), token_url/api_url by
             # Grafana itself (in-cluster); both use the same issuer host, see keycloak.yaml.
             - {name: GF_AUTH_GENERIC_OAUTH_ENABLED, value: "true"}
@@ -89,6 +138,12 @@ spec:
             limits: {memory: 500Mi}
           volumeMounts:
             - {name: datasources, mountPath: /etc/grafana/provisioning/datasources}
+            - {name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards}
+            - {name: dashboards, mountPath: /var/lib/grafana/dashboards}
       volumes:
         - name: datasources
           configMap: {name: grafana-datasources}
+        - name: dashboard-provider
+          configMap: {name: grafana-dashboard-provider}
+        - name: dashboards
+          configMap: {name: grafana-dashboards}

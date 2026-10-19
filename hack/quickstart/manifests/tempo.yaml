@@ -21,11 +21,14 @@ data:
         ring: {replication_factor: 1}
     compactor:
       compaction:
-        block_retention: 2h
+        block_retention: @@RETENTION_HOURS@@h
     storage:
       trace:
         backend: local
-        wal: {path: /var/tempo/wal}
+        wal:
+          path: /var/tempo/wal
+          ingestion_time_range_slack: @@RETENTION_HOURS@@h
+        blocklist_poll: 30s
         local: {path: /var/tempo/blocks}
 ---
 apiVersion: v1

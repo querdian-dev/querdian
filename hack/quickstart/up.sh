@@ -8,6 +8,7 @@
 #   SKIP_BUILD=1 hack/quickstart/up.sh            # reuse an already built image (IMAGE_TAG)
 #   QUICKSTART_NETWORKPOLICY=1 hack/quickstart/up.sh   # also enable NetworkPolicies
 #   CLEANUP_ON_FAILURE=1 hack/quickstart/up.sh    # delete the cluster if the script fails
+#   DEMO_HISTORY_HOURS=6 hack/quickstart/up.sh    # backfill 6 hours of demo data instead of 24
 #
 # Requires: kind, kubectl, helm, docker (or podman with a docker shim), make, curl.
 set -Eeuo pipefail
@@ -62,10 +63,23 @@ if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   die "kind cluster '$CLUSTER' already exists; run hack/quickstart/down.sh first (or choose CLUSTER=...)"
 fi
 
-# --- 1. image (built in the background while the cluster starts) --------------------------
-if [ "$SKIP_BUILD" != 1 ]; then
-  step "building $IMAGE_REPO:$IMAGE_TAG (background)"
-  (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG" >"$WORK/build.log" 2>&1) &
+# --- 1. images (built in the background while the cluster starts) ------------------------
+# Querdian itself, and the small demo data generator (hack/quickstart/demogen; the image is also
+# the Prometheus image, so that the backfill init container can run promtool).
+build_demogen() {
+  local ctx="$WORK/demogen-ctx"
+  mkdir -p "$ctx"
+  cp "$ROOT/go.mod" "$ctx/"
+  cp -R "$QS_DIR/demogen" "$ctx/demogen"
+  cp "$QS_DIR/demogen/Dockerfile" "$ctx/Dockerfile"
+  docker build -t "$DEMOGEN_IMAGE" "$ctx"
+}
+if [ "$SKIP_BUILD" != 1 ] || ! docker image inspect "$DEMOGEN_IMAGE" >/dev/null 2>&1; then
+  step "building $IMAGE_REPO:$IMAGE_TAG and $DEMOGEN_IMAGE (background)"
+  (
+    if [ "$SKIP_BUILD" != 1 ]; then (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") || exit 1; fi
+    build_demogen
+  ) >"$WORK/build.log" 2>&1 &
   BUILD_PID=$!
 fi
 
@@ -95,16 +109,20 @@ k -n kube-system create cm coredns --from-file=Corefile="$WORK/Corefile" --dry-r
 k -n kube-system rollout restart deploy/coredns >/dev/null
 
 # --- 4. image into the cluster ---------------------------------------------------------------
-if [ "$SKIP_BUILD" != 1 ]; then
-  step "waiting for the image build"
+if [ -n "$BUILD_PID" ]; then
+  step "waiting for the image builds"
   if ! wait "$BUILD_PID"; then BUILD_PID=""; tail -30 "$WORK/build.log" >&2; die "image build failed"; fi
   BUILD_PID=""
 fi
-docker image inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 || die "image $IMAGE_REPO:$IMAGE_TAG not found"
-step "loading the image into kind"
-docker save -o "$WORK/querdian.tar" "$IMAGE_REPO:$IMAGE_TAG"
-kind load image-archive "$WORK/querdian.tar" --name "$CLUSTER"
-rm -f "$WORK/querdian.tar"
+for img in "$IMAGE_REPO:$IMAGE_TAG" "$DEMOGEN_IMAGE"; do
+  docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found"
+done
+step "loading the images into kind"
+for img in "$IMAGE_REPO:$IMAGE_TAG" "$DEMOGEN_IMAGE"; do
+  docker save -o "$WORK/image.tar" "$img"
+  kind load image-archive "$WORK/image.tar" --name "$CLUSTER"
+  rm -f "$WORK/image.tar"
+done
 
 # --- 5. the stack ------------------------------------------------------------------------------
 step "namespaces, Keycloak, backends, collector, Grafana, sample workloads"
@@ -113,16 +131,33 @@ k -n keycloak create cm keycloak-realm --from-file=realm-observability.json="$QS
 for ns in order-service payment-service; do
   k -n "$ns" create cm workload --from-file=workload.sh="$QS_DIR/workload.sh"
 done
+# The dashboards (JSON in the repo) are provisioned into Grafana from this ConfigMap.
+dash_args=()
+for f in "$QS_DIR"/dashboards/*.json; do dash_args+=(--from-file="$f"); done
+k -n observability create cm grafana-dashboards "${dash_args[@]}"
 for f in keycloak prometheus loki tempo otel-collector grafana workloads; do
   render "$QS_DIR/manifests/$f.yaml" | k apply -f - >/dev/null
 done
 
+# The backends come up first (Prometheus backfills its blocks in an init container); as soon as
+# Loki and Tempo are ready a Job pushes the log and trace history while Keycloak is still starting.
+step "waiting for Prometheus, Loki and Tempo; backfilling $DEMO_HISTORY_HOURS h of logs and traces"
+for d in prometheus loki tempo; do k -n observability rollout status "deploy/$d" --timeout=300s; done
+T_BACKFILL=$SECONDS
+render "$QS_DIR/manifests/backfill.yaml" | k apply -f - >/dev/null
+
 step "waiting for Keycloak (the slowest part)"
 k -n keycloak rollout status deploy/keycloak --timeout=480s
-for d in prometheus loki tempo grafana; do k -n observability rollout status "deploy/$d" --timeout=300s; done
+k -n observability rollout status deploy/grafana --timeout=300s
 k -n observability rollout status ds/otel-collector --timeout=300s
 k -n order-service rollout status deploy/order-service --timeout=300s
 k -n payment-service rollout status deploy/payment-service --timeout=300s
+if ! k -n observability wait --for=condition=complete job/demo-backfill --timeout=300s >/dev/null; then
+  k -n observability logs job/demo-backfill --tail=30 >&2 || true
+  die "the backfill job did not complete"
+fi
+k -n observability logs job/demo-backfill | sed 's/^/    /'
+info "logs and traces backfilled, finished $((SECONDS - T_BACKFILL))s after the start of the job"
 
 # --- 6. Querdian ---------------------------------------------------------------------------------
 step "helm install querdian"

@@ -1,0 +1,28 @@
+# Backfill of the demo history into Loki and Tempo (Prometheus is backfilled by an init container,
+# see prometheus.yaml). The generator pushes OTLP/JSON with timestamps up to @@DEMO_HISTORY_HOURS@@
+# hours in the past, straight to the backends and as tenant "demo" (like the OTel Collector does);
+# it runs before Querdian and any NetworkPolicy exist. Deterministic: the same seed always gives
+# the same data. Tempo is flushed afterwards so that the blocks are searchable immediately.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: demo-backfill, namespace: observability}
+spec:
+  backoffLimit: 3
+  template:
+    metadata: {labels: {app: demo-backfill}}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: backfill
+          image: @@DEMOGEN_IMAGE@@
+          imagePullPolicy: Never # built by up.sh and loaded into kind
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              demogen loki -hours @@DEMO_HISTORY_HOURS@@ -tenant demo -url http://loki.observability:3100
+              demogen tempo -hours @@DEMO_HISTORY_HOURS@@ -tenant demo -url http://tempo.observability:4318 \
+                -flush http://tempo.observability:3200/flush
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
