@@ -46,12 +46,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": {
-          "query": "label_values(up, namespace)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery",
-          "qryType": 1
-        },
+        "query": "label_values(up, namespace)",
         "refresh": 2,
+        "definition": "label_values(up, namespace)",
         "sort": 1,
         "includeAll": true,
         "multi": true,
@@ -74,12 +71,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": {
-          "query": "label_names()",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery",
-          "qryType": 0
-        },
+        "query": "label_names()",
         "refresh": 2,
+        "definition": "label_names()",
         "sort": 1,
         "includeAll": true,
         "multi": true,
@@ -102,13 +96,9 @@
           "type": "loki",
           "uid": "loki"
         },
-        "query": {
-          "refId": "LokiVariableQueryEditor-VariableQuery",
-          "type": 1,
-          "stream": "",
-          "label": "k8s_namespace_name"
-        },
+        "query": "label_values(k8s_namespace_name)",
         "refresh": 2,
+        "definition": "label_values(k8s_namespace_name)",
         "sort": 1,
         "includeAll": true,
         "multi": true,
@@ -131,12 +121,9 @@
           "type": "loki",
           "uid": "loki"
         },
-        "query": {
-          "refId": "LokiVariableQueryEditor-VariableQuery",
-          "type": 0,
-          "stream": ""
-        },
+        "query": "label_names()",
         "refresh": 2,
+        "definition": "label_names()",
         "sort": 1,
         "includeAll": true,
         "multi": true,

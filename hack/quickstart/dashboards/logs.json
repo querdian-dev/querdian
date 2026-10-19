@@ -46,13 +46,9 @@
           "type": "loki",
           "uid": "loki"
         },
-        "query": {
-          "refId": "LokiVariableQueryEditor-VariableQuery",
-          "type": 1,
-          "stream": "",
-          "label": "k8s_namespace_name"
-        },
+        "query": "label_values(k8s_namespace_name)",
         "refresh": 2,
+        "definition": "label_values(k8s_namespace_name)",
         "sort": 1,
         "includeAll": true,
         "multi": false,

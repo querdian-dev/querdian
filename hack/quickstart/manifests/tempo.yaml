@@ -55,11 +55,14 @@ spec:
         - name: tempo
           image: docker.io/grafana/tempo:2.9.0
           args: [-config.file=/etc/tempo/tempo.yaml]
+          # The 24 h history makes searches and the compactor touch more data; keep the Go heap
+          # below the container limit so that the GC works before the kernel's OOM killer does.
+          env: [{name: GOMEMLIMIT, value: 500MiB}]
           ports: [{containerPort: 3200}, {containerPort: 4318}]
           readinessProbe: {httpGet: {path: /ready, port: 3200}, periodSeconds: 5, initialDelaySeconds: 10}
           resources:
-            requests: {cpu: 50m, memory: 150Mi}
-            limits: {memory: 500Mi}
+            requests: {cpu: 50m, memory: 200Mi}
+            limits: {memory: 700Mi}
           volumeMounts:
             - {name: config, mountPath: /etc/tempo}
             - {name: data, mountPath: /var/tempo}

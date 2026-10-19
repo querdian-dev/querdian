@@ -114,8 +114,8 @@ if [ $SMOKE = 1 ]; then
   call "$CAROL" /prom/api/v1/query --data-urlencode 'query=http_requests_total' --data-urlencode "time=$((NOW - MIN_AGE))"
   [[ "$(prom_ns)" == *order-service* && "$(prom_ns)" == *payment-service* ]] || exit 1
   call "$CAROL" /tempo/api/search --data-urlencode 'q={}' --data-urlencode "start=$((NOW - (HOURS + 2) * 3600))" \
-    --data-urlencode "end=$((NOW - MIN_AGE))" --data-urlencode limit=20
-  [ "$(tempo_n)" -ge 1 ] 2>/dev/null || exit 1
+    --data-urlencode "end=$((NOW - MIN_AGE))" --data-urlencode limit=100
+  [[ "$(tempo_roots)" == *order-service* && "$(tempo_roots)" == *payment-service* ]] || exit 1
   exit 0
 fi
 
@@ -240,6 +240,116 @@ expect "no span of order-service carries the spoofed namespace (collector overwr
 call "$CAROL" /tempo/api/search --data-urlencode 'q={ resource.service.name = "order-service" && resource.k8s.namespace.name = "order-service" }' --data-urlencode limit=50
 expect_ge "order-service spans carry the namespace set by the collector" 1 "$(tempo_n)"
 
+# --- history (backfilled demo data) -------------------------------------------------------------------
+section "history: ${HOURS} h of backfilled metrics, logs and traces"
+for u in alice:"$ALICE":order-service bob:"$BOB":payment-service; do
+  IFS=: read -r name tok want <<<"$u"
+  call "$tok" /prom/api/v1/query --data-urlencode 'query=http_requests_total' --data-urlencode "time=$((NOW - MIN_AGE))"
+  expect "$name: metrics reach back $((MIN_AGE / 3600)) h, only his namespace" "$want" "$(prom_ns)"
+  call "$tok" /prom/api/v1/query --data-urlencode 'query=http_requests_total' --data-urlencode "time=$((NOW - (HOURS + 1) * 3600))"
+  expect "$name: no metrics older than the history" 0 "$(prom_n)"
+done
+call "$CAROL" /prom/api/v1/query --data-urlencode 'query=http_requests_total' --data-urlencode "time=$((NOW - MIN_AGE))"
+ns=$(prom_ns)
+[[ "$ns" == *order-service* && "$ns" == *payment-service* ]] && pass "carol: old metrics of both services ($ns)" || failed "carol: old metric namespaces: $ns"
+
+# earliest log line: forward direction, limit 1
+earliest_log_age() { # token -> ELA_AGE: age in seconds of the oldest visible log line (BODY is kept)
+  call "$1" /loki/loki/api/v1/query_range --data-urlencode "query=$LOGS_Q" --data-urlencode direction=forward \
+    --data-urlencode limit=1 --data-urlencode "start=${LOG_FROM}000000000" --data-urlencode "end=${NOW}000000000"
+  local ts
+  ts=$(jq -r '[.data.result[].values[][0] | tonumber] | min // empty' <<<"$BODY")
+  ELA_AGE=0
+  [ -z "$ts" ] || ELA_AGE=$((NOW - ts / 1000000000))
+}
+LOG_FROM=$((NOW - (HOURS + 2) * 3600))
+for u in alice:"$ALICE":order-service bob:"$BOB":payment-service carol:"$CAROL":all; do
+  IFS=: read -r name tok want <<<"$u"
+  earliest_log_age "$tok"
+  expect_ge "$name: oldest log line is at least $((MIN_AGE / 3600)) h old (s)" "$MIN_AGE" "$ELA_AGE"
+  [ "$want" = all ] && continue
+  expect "$name: oldest log line belongs to his namespace" "$want" "$(loki_ns)"
+done
+call "$ALICE" /loki/loki/api/v1/query --data-urlencode "query=sum(count_over_time({k8s_namespace_name=~\".+\"}[${HOURS}h]))" --data-urlencode "time=$NOW"
+expect_ge "alice: log lines in the history window" 10000 "$(jq -r '.data.result[0].value[1] // 0 | tonumber | floor' <<<"$BODY")"
+call "$BOB" /loki/loki/api/v1/query --data-urlencode "query=sum by (k8s_namespace_name) (count_over_time({k8s_namespace_name=~\".+\"}[${HOURS}h]))" --data-urlencode "time=$NOW"
+expect "bob: history log lines are only payment-service" payment-service "$(jq -r '[.data.result[].metric.k8s_namespace_name]|unique|join(",")' <<<"$BODY")"
+call "$ALICE" /loki/loki/api/v1/query --data-urlencode "query=sum by (detected_level) (count_over_time({k8s_namespace_name=\"order-service\"}[${HOURS}h]))" --data-urlencode "time=$NOW"
+lv=$(jq -r '[.data.result[].metric.detected_level]|sort|join(",")' <<<"$BODY")
+[[ "$lv" == *debug* && "$lv" == *error* && "$lv" == *info* && "$lv" == *warn* ]] && pass "alice: logs have the levels debug, error, info, warn ($lv)" || failed "alice: log levels: $lv"
+
+# traces older than MIN_AGE: window [now-H-2h, now-23h]
+old_traces() { # token
+  call "$1" /tempo/api/search --data-urlencode 'q={}' --data-urlencode "start=$((NOW - (HOURS + 2) * 3600))" \
+    --data-urlencode "end=$((NOW - MIN_AGE))" --data-urlencode limit=100
+}
+for u in alice:"$ALICE":order-service bob:"$BOB":payment-service; do
+  IFS=: read -r name tok want <<<"$u"
+  old_traces "$tok"
+  expect_ge "$name: traces older than $((MIN_AGE / 3600)) h" 1 "$(tempo_n)"
+  expect "$name: old traces only in his namespace" "$want" "$(tempo_ns)"
+done
+old_traces "$CAROL"
+r=$(tempo_roots)
+[[ "$r" == *order-service* && "$r" == *payment-service* ]] && pass "carol: old traces of both services ($r)" || failed "carol: old trace roots: $r"
+call "$BOB" /tempo/api/search --data-urlencode 'q={}' --data-urlencode "start=$((NOW - (HOURS + 48) * 3600))" \
+  --data-urlencode "end=$((NOW - (HOURS + 1) * 3600))" --data-urlencode limit=5
+expect "bob: no traces older than the history" 0 "$(tempo_n)"
+
+section "history: labels, routes, denied label"
+for u in alice:"$ALICE" bob:"$BOB" carol:"$CAROL"; do
+  name=${u%%:*}
+  tok=${u#*:}
+  call "$tok" /prom/api/v1/labels --data-urlencode "start=$((NOW - HOURS * 3600))" --data-urlencode "end=$((NOW - MIN_AGE + 3600))"
+  lbl=$(jq -r '.data | join(",")' <<<"$BODY")
+  [[ ",$lbl," == *,route,* && ",$lbl," == *,status,* && ",$lbl," == *,method,* ]] && pass "$name: old series carry route, method and status" || failed "$name: old labels: $lbl"
+  want=true; [ "$name" = alice ] && want=false
+  expect "$name: customer_id in the label list of the history" "$want" "$([[ ",$lbl," == *,customer_id,* ]] && echo true || echo false)"
+done
+call "$ALICE" /prom/api/v1/label/route/values
+expect "alice: routes" "/cart,/orders,/orders/{id},/orders/{id}/cancel" "$(jq -r '.data|join(",")' <<<"$BODY")"
+call "$BOB" /prom/api/v1/label/route/values
+expect "bob: routes" "/payment-methods,/payments,/payments/{id},/payments/{id}/refund,/webhooks/provider" "$(jq -r '.data|join(",")' <<<"$BODY")"
+call "$ALICE" /prom/api/v1/query_range --data-urlencode 'query=sum by (customer_id) (rate(demo_requests_total[5m]))' \
+  --data-urlencode "start=$((NOW - 7200))" --data-urlencode "end=$NOW" --data-urlencode step=300
+expect "alice: grouping the history by customer_id -> 403" 403 "$STATUS"
+call "$BOB" /prom/api/v1/query_range --data-urlencode 'query=sum by (customer_id) (rate(demo_requests_total[5m]))' \
+  --data-urlencode "start=$((NOW - HOURS * 3600 + 3600))" --data-urlencode "end=$((NOW - MIN_AGE + 7200))" --data-urlencode step=600
+expect_ge "bob: customer_id series in the history" 3 "$(prom_n)"
+
+section "history: incidents are in the data"
+ratio() { # token, selector-extra, age-seconds -> 5xx ratio
+  call "$1" /prom/api/v1/query --data-urlencode "query=sum(rate(http_requests_total{status=~\"5..\"$2}[10m])) / sum(rate(http_requests_total{$3}[10m]))" \
+    --data-urlencode "time=$((NOW - $4))"
+  jq -r '.data.result[0].value[1] // "0"' <<<"$BODY"
+}
+gt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'; }
+if [ "$HOURS" -ge 8 ]; then
+  bad=$(ratio "$ALICE" "" 'namespace="order-service"' $((3 * 3600 + 25 * 60)))
+  good=$(ratio "$ALICE" "" 'namespace="order-service"' 3600)
+  if gt "$bad" 0.08 && gt 0.03 "$good"; then pass "alice: order-service 5xx ratio during the bad deploy $bad vs $good an hour ago"; else failed "alice: bad deploy not visible ($bad vs $good)"; fi
+  p95() { call "$BOB" /prom/api/v1/query --data-urlencode "query=histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route=\"/payments\"}[10m])))" --data-urlencode "time=$((NOW - $1))"; jq -r '.data.result[0].value[1] // "0"' <<<"$BODY"; }
+  slow=$(p95 $((7 * 3600))); fast=$(p95 $((5 * 3600)))
+  if gt "$slow" "$(awk -v f="$fast" 'BEGIN{print f*3}')"; then pass "bob: POST /payments p95 during the provider incident ${slow}s vs ${fast}s"; else failed "bob: latency incident not visible (${slow}s vs ${fast}s)"; fi
+fi
+
+section "history: log -> trace links (trace_id in the log line exists in Tempo)"
+for u in alice:"$ALICE":order-service:json bob:"$BOB":payment-service:logfmt; do
+  IFS=: read -r name tok ns fmt <<<"$u"
+  call "$tok" /loki/loki/api/v1/query_range --data-urlencode "query={k8s_namespace_name=\"$ns\"} | detected_level=\"error\" |= \"trace_id\"" \
+    --data-urlencode "start=${LOG_FROM}000000000" --data-urlencode "end=${NOW}000000000" --data-urlencode limit=1 --data-urlencode direction=forward
+  line=$(jq -r '.data.result[0].values[0][1] // ""' <<<"$BODY")
+  tid=$(grep -oE 'trace_id"?[=:]"?[0-9a-f]{32}' <<<"$line" | grep -oE '[0-9a-f]{32}' | head -1)
+  if [ -n "$tid" ]; then pass "$name: an old $fmt error log line carries trace_id $tid"; else failed "$name: no error log line with a trace id"; fi
+  call "$tok" "/tempo/api/traces/$tid"
+  expect "$name: that trace is found via Querdian" 200 "$STATUS"
+  expect_ge "$name: the trace has several spans" 2 "$(jq -r '[.batches[].scopeSpans[].spans[]] | length' <<<"$BODY")"
+  expect "$name: the error log line and the trace are one namespace" "$ns" "$(jq -r '[.batches[].resource.attributes[] | select(.key=="k8s.namespace.name") | .value.stringValue] | unique | join(",")' <<<"$BODY")"
+  other=$([ "$ns" = order-service ] && echo "$BOB" || echo "$ALICE")
+  call "$other" "/tempo/api/traces/$tid"
+  expect "$name: the other team cannot fetch that trace (404)" 404 "$STATUS"
+done
+
 # --- Grafana ------------------------------------------------------------------------------------------------------
 section "Grafana"
 G="http://localhost:$GRAFANA_PORT"
@@ -265,7 +375,7 @@ gf_login() { # user password -> cookie jar in $WORK/jar-$1
 gf() { curl -fsS -b "$WORK/jar-$1" "${CURL_KC[@]}" "$G$2" "${@:3}" 2>/dev/null; }
 
 HEADLESS_OK=1
-for u in alice:alice-demo bob:bob-demo; do
+for u in alice:alice-demo bob:bob-demo carol:carol-demo; do
   name=${u%%:*}
   if gf_login "$name" "${u##*:}" && [ "$(gf "$name" /api/user | jq -r .login)" = "$name" ]; then
     pass "grafana: Keycloak login as $name"
@@ -293,6 +403,104 @@ if [ $HEADLESS_OK = 1 ]; then
   # The local admin has no OAuth token, so nothing is forwarded and Querdian refuses.
   code=$(curl -sS -o /dev/null -w '%{http_code}' -u admin:admin -G "$G/api/datasources/proxy/uid/prometheus/api/v1/query" --data-urlencode query=up)
   expect "grafana as local admin (no token): query refused" "refused" "$([ "$code" != 200 ] && echo refused || echo "$code")"
+fi
+
+if [ $HEADLESS_OK = 1 ]; then
+# --- dashboards -----------------------------------------------------------------------------------------------------
+section "dashboards: provisioned from hack/quickstart/dashboards"
+DASH_DIR="$QS_DIR/dashboards"
+shopt -s nullglob
+DASH_FILES=("$DASH_DIR"/*.json)
+shopt -u nullglob
+expect_ge "dashboard files in the repo" 4 "${#DASH_FILES[@]}"
+found=$(curl -fsS -u admin:admin "$G/api/search?type=dash-db&tag=querdian-demo" | jq -r '[.[].uid] | sort | join(",")')
+want=$(jq -r '.uid' "${DASH_FILES[@]}" | sort | paste -sd, -)
+expect "grafana lists exactly the repo's dashboards" "$want" "$found"
+for f in "${DASH_FILES[@]}"; do
+  uid=$(jq -r .uid "$f")
+  d=$(curl -fsS -u admin:admin "$G/api/dashboards/uid/$uid")
+  expect "dashboard $uid: provisioned (read-only, from file)" true "$(jq -r '.meta.provisioned' <<<"$d")"
+  expect "dashboard $uid: folder" "Querdian demo" "$(jq -r '.meta.folderTitle' <<<"$d")"
+  bad=$(jq -r --argjson ds "$(jq -c '[.[].uid]' <<<"$ds")" '[.. | objects | select(has("datasource")) | .datasource | select(type=="object") | .uid | select(. != null and (. as $u | $ds | index($u) | not))] | unique | join(",")' "$f")
+  expect "dashboard $uid: every datasource uid is provisioned" "" "$bad"
+done
+home=$(curl -fsS -u admin:admin "$G/api/dashboards/home" | jq -r '.dashboard.uid // .redirectUri // ""')
+[[ "$home" == *demo-service-overview* || "$home" == *service-overview* ]] && pass "home dashboard is the service overview" || failed "home dashboard: '$home'"
+
+# Datasource-resource calls behind the dashboard variables (label values and names).
+for u in alice:order-service bob:payment-service carol:order-service,payment-service; do
+  name=${u%%:*}
+  want=${u#*:}
+  BODY=$(gq "$name" prometheus/api/v1/label/namespace/values --data-urlencode 'match[]=http_requests_total')
+  expect "grafana as $name: variable namespace (Prometheus label values)" "$want" "$(jq -r '.data|join(",")' <<<"$BODY")"
+  BODY=$(gq "$name" loki/loki/api/v1/label/k8s_namespace_name/values)
+  ns=$(jq -r '.data|join(",")' <<<"$BODY")
+  if [ "$name" = carol ]; then
+    [[ "$ns" == *order-service* && "$ns" == *payment-service* ]] && pass "grafana as carol: Loki namespaces ($ns)" || failed "carol Loki namespaces: $ns"
+  else
+    expect "grafana as $name: variable Loki namespaces" "$want" "$ns"
+  fi
+  BODY=$(gq "$name" prometheus/api/v1/labels)
+  hidden=false
+  [ "$name" = alice ] && hidden=true
+  expect "grafana as $name: customer_id hidden in the label_names() variable" "$hidden" "$(jq -r '.data|index("customer_id")==null' <<<"$BODY")"
+done
+
+section "dashboards: every panel query, as alice, bob and carol (POST /api/ds/query through Grafana)"
+# Template variables are replaced the way an "All" selection would: regex ".+".
+SUBST='def subst: walk(if type == "string" then
+    gsub("\\$\\{?namespace\\}?"; ".+") | gsub("\\$\\{?route\\}?"; ".+") | gsub("\\$\\{?level\\}?"; ".+")
+    | gsub("\\$\\{?search\\}?"; "") | gsub("\\$\\{?min_duration\\}?"; "500ms") | gsub("\\$\\{?traceid\\}?"; "") else . end);'
+sees() { # user namespace -> true/false
+  case "$1:$2" in alice:order-service | bob:payment-service | carol:*) echo true ;; *) echo false ;; esac
+}
+from_secs() { local h=${1#now-}; echo $(( ${h%h} * 3600 )); } # "now-24h" -> 86400
+panel_has_data() { jq -r '[.results[]?.frames[]?.data.values[0] | length] | add // 0' <<<"$1"; }
+total=0
+for u in alice bob carol; do
+  nq=0
+  bad=0
+  for f in "${DASH_FILES[@]}"; do
+    from=$(jq -r .time.from "$f")
+    while IFS= read -r row; do
+      title=$(jq -r .title <<<"$row")
+      q=$(jq -c "$SUBST"' .target | subst | . + {intervalMs: 60000, maxDataPoints: 800}' <<<"$row")
+      # skip queries that are empty after substitution (the trace-by-ID panel without an ID)
+      [ "$(jq -r '(.expr // .query // "x")' <<<"$q")" = "" ] && continue
+      if [ "$(jq -r '.datasource.type' <<<"$q")" = tempo ]; then
+        # Grafana runs TraceQL searches in the browser, not in its backend: the data source
+        # proxy gets GET /api/search?q=...&limit=...&spss=...&start=...&end=...
+        resp=$(curl -sS -b "$WORK/jar-$u" -G "$G/api/datasources/proxy/uid/tempo/api/search" \
+          --data-urlencode "q=$(jq -r .query <<<"$q")" --data-urlencode "limit=$(jq -r '.limit // 20' <<<"$q")" \
+          --data-urlencode spss=3 --data-urlencode "start=$((NOW - $(from_secs "$from")))" --data-urlencode "end=$NOW")
+        err=""
+        jq -e '.traces' <<<"$resp" >/dev/null 2>&1 || err="$resp"
+        n=$(jq -r '.traces | length' <<<"$resp" 2>/dev/null || echo 0)
+      else
+        resp=$(curl -sS -b "$WORK/jar-$u" -H 'Content-Type: application/json' -X POST "$G/api/ds/query" \
+          -d "{\"queries\":[$q],\"from\":\"$from\",\"to\":\"now\"}")
+        err=$(jq -r '(.message // "") as $m | ([.results[]?.error // empty] | first // $m)' <<<"$resp")
+        n=$(panel_has_data "$resp")
+      fi
+      nq=$((nq + 1))
+      desc="$u: [$(jq -r .uid "$f")] $title"
+      if [[ "$title" == *"denied for order-team"* && "$u" == alice ]]; then
+        if [[ "$err" == *customer_id* ]]; then pass "$desc -> refused by Querdian (denied label)"; else failed "$desc: expected a denied-label error, got '$err' / $n values"; bad=$((bad + 1)); fi
+      elif [ -n "$err" ]; then
+        failed "$desc: error: $err"
+        bad=$((bad + 1))
+      elif [[ "$title" =~ \[ns:([a-z-]+)\] ]]; then
+        if [ "$(sees "$u" "${BASH_REMATCH[1]}")" = true ]; then expect_ge "$desc (own namespace has data)" 1 "$n"; else expect "$desc (other namespace is empty)" 0 "$n"; fi
+      elif ! [ "$n" -ge 1 ] 2>/dev/null; then
+        failed "$desc: no data"
+        bad=$((bad + 1))
+      fi
+    done < <(jq -c '[.. | objects | select(has("targets") and .type != "row") | . as $p | .targets[] | {title: $p.title, target: .}] | .[]' "$f")
+  done
+  total=$((total + nq))
+  if [ $bad = 0 ]; then pass "$u: all $nq dashboard queries return data (or the expected refusal)"; else failed "$u: $bad of $nq dashboard queries failed"; fi
+done
+[ $SMOKE = 1 ] || printf '    dashboard queries executed: %s\n' "$total"
 fi
 
 echo

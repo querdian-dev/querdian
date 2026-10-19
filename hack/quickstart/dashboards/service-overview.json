@@ -46,12 +46,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": {
-          "query": "label_values(http_requests_total, namespace)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery",
-          "qryType": 1
-        },
+        "query": "label_values(http_requests_total, namespace)",
         "refresh": 2,
+        "definition": "label_values(http_requests_total, namespace)",
         "sort": 1,
         "includeAll": true,
         "multi": false,
@@ -74,12 +71,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": {
-          "query": "label_values(http_requests_total{namespace=~\"$namespace\"}, route)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery",
-          "qryType": 1
-        },
+        "query": "label_values(http_requests_total{namespace=~\"$namespace\"}, route)",
         "refresh": 2,
+        "definition": "label_values(http_requests_total{namespace=~\"$namespace\"}, route)",
         "sort": 1,
         "includeAll": true,
         "multi": false,
