@@ -150,14 +150,14 @@ func (ev *events) request(r *rng, rt *route, t time.Time, age time.Duration) {
 		steps = append(steps, execStep{st: st, dur: st.Median * c.mult(st.Dep) * math.Exp(0.35*r.norm())})
 	}
 	errText, errDep := "", ""
-	switch {
-	case status == 400:
+	switch status {
+	case 400:
 		steps = nil
-	case status == 404:
+	case 404:
 		if len(steps) > 1 {
 			steps = steps[:1]
 		}
-	case status == 503:
+	case 503:
 		fi := -1
 		for i, es := range steps {
 			if es.st.Dep == "payment" || es.st.Dep == "provider" {
@@ -184,7 +184,7 @@ func (ev *events) request(r *rng, rt *route, t time.Time, age time.Duration) {
 			errText = peer + " returned 502"
 		}
 		steps[fi].err = errText
-	case status == 500:
+	case 500:
 		fi := -1
 		for i, es := range steps {
 			if es.st.Dep == "db" {

@@ -101,7 +101,7 @@ func TestDashboards(t *testing.T) {
 	}
 	seen := map[string]string{}
 	for _, f := range files {
-		raw, err := os.ReadFile(f)
+		raw, err := os.ReadFile(f) // #nosec G304 -- file names come from the glob above
 		if err != nil {
 			t.Fatal(err)
 		}

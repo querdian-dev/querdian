@@ -484,6 +484,18 @@ picking up any task — section references (§) point there.
         (71 assertions) drives the Keycloak login headlessly and queries through the Grafana data
         sources with OAuth pass-through. The interactive Explore UI in a real browser was NOT
         automated (manual walkthrough in the doc).
+  - [x] About 24 h of deterministic demo history for metrics, logs and traces in both sample
+        namespaces plus live data at the "now" end (`hack/quickstart/demogen`, `docs/quickstart.md`);
+        verified by `verify.sh`: oldest sample, log line and trace are >= 23 h old, per-user isolation
+        of the history, denied label hidden, error logs link to traces. Prometheus via promtool blocks,
+        Loki via OTLP push, Tempo via OTLP push with raised `ingestion_time_range_slack` and a flush.
+  - [x] Four provisioned Grafana dashboards (service overview, logs, traces and latency, what can I
+        see) in `hack/quickstart/dashboards`; JSON, data source uids and all PromQL/LogQL/TraceQL
+        parse-checked by `go test ./hack/quickstart/dashboards/`; every panel query executed as
+        alice, bob and carol through Grafana by `verify.sh` (150 assertions in total). Visual
+        rendering in a real browser was NOT checked.
+  - [x] Footprint measured with the history: VM 2.6 GiB used, 3.3 GiB available of 5.9 GiB;
+        `up.sh` 2 min 40 s, `verify.sh` 23 s (see `docs/quickstart.md`).
   - Note: the chart's `backendProtection` names its policy per namespace, so several targets in one
     namespace collide; the quickstart works around it with one `matchExpressions` target.
 

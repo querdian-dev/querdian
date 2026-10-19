@@ -1,5 +1,9 @@
 # Grafana dashboard
 
+This page describes the Querdian overview dashboard shipped with the chart. The quickstart has its
+own, separate set of demo dashboards for the services behind Querdian; see
+[Demo dashboards](#demo-dashboards-quickstart) at the end.
+
 `charts/querdian/dashboards/querdian.json` is the Querdian overview dashboard (uid `querdian-overview`,
 tags `querdian`, `observability`, ...). It uses only the metrics of PLAN section 11.1, scraped from the
 management port.
@@ -141,3 +145,19 @@ using the `result!="ok"` rule.
 Set `dashboards.enabled=true` to render the dashboard as a ConfigMap labelled `grafana_dashboard: "1"`, which
 the Grafana dashboards sidecar picks up. Use `dashboards.labels` to match your sidecar's label selector and
 `dashboards.namespace` to place the ConfigMap in Grafana's namespace.
+
+## Demo dashboards (quickstart)
+
+The kind quickstart provisions four dashboards of the *sample services* (not of Querdian itself) into
+the Grafana folder *Querdian demo*: `service-overview` (also the home dashboard), `logs`, `traces`
+and `isolation`. The JSON lives in `hack/quickstart/dashboards/`, `up.sh` packs it into the ConfigMap
+`grafana-dashboards` and a file provider (`grafana-dashboard-provider`) loads it. They only use the
+three provisioned data sources (`prometheus`, `loki`, `tempo`, all via Querdian with OAuth
+pass-through) and only constructs Querdian accepts; what each one shows is described in
+[quickstart.md](quickstart.md#dashboards).
+
+Checks: `go test ./hack/quickstart/dashboards/` parses every PromQL expression with the Prometheus
+parser, every LogQL expression with `pkg/logql` and every TraceQL query with `pkg/traceql` (the same
+parsers Querdian enforces with, with Grafana variables substituted), checks panel ids, variables
+and that every data source uid is one of the provisioned ones. `hack/quickstart/verify.sh` then runs
+every query of every dashboard as alice, bob and carol through Grafana.

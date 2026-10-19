@@ -46,7 +46,7 @@ func (r *rng) exp(mean float64) float64 {
 }
 
 // intn returns an integer in [0, n).
-func (r *rng) intn(n int) int { return int(r.next() % uint64(n)) }
+func (r *rng) intn(n int) int { return int(r.next() % uint64(max(n, 1))) } // #nosec G115 -- n is a small positive count
 
 // poisson returns a Poisson sample (Knuth for small means, normal approximation otherwise).
 func (r *rng) poisson(mean float64) int {

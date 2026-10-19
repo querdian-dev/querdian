@@ -185,7 +185,9 @@ func writeOpenMetrics(w io.Writer, perService [][]*family, end time.Time, hours 
 	buf := make([]byte, 0, 256)
 	for _, name := range names {
 		f := merged[name]
-		fmt.Fprintf(bw, "# TYPE %s %s\n", f.name, f.typ)
+		if _, err := fmt.Fprintf(bw, "# TYPE %s %s\n", f.name, f.typ); err != nil {
+			return err
+		}
 		for _, se := range f.series {
 			for i := 1; i <= n; i++ {
 				ts := end.Add(-time.Duration(n-i) * step).Unix()

@@ -29,7 +29,7 @@ See [PLAN.md](PLAN.md) for the design and [TASKS.md](TASKS.md) for the work brea
 ## Documentation
 
 * [Quickstart on kind](docs/quickstart.md): a complete isolation demo (Keycloak, Grafana, Prometheus,
-  Loki, Tempo, two teams) on a laptop with one script.
+  Loki, Tempo, two teams, 24 h of demo history and four Grafana dashboards) on a laptop with one script.
 * [Policy guide](docs/policy-guide.md): the CRDs, union semantics, tenants, denied labels and status
   conditions. Includes the requirement that the namespace label is set by your telemetry pipeline.
 * [Operations](docs/operations.md): configuration reference, flags, limits, metrics, tracing, logging.

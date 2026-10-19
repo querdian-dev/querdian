@@ -72,7 +72,12 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   configuration, and a release workflow with cosign keyless signing, SBOMs, GitHub build-provenance
   attestations and an OCI Helm chart. The pipeline has not run yet.
 * Kind quickstart with Keycloak, Grafana, Prometheus, Loki, Tempo and two demo teams, with a
-  71-assertion verification script.
+  150-assertion verification script.
+* Quickstart demo data: 24 hours (`DEMO_HISTORY_HOURS`) of deterministic, backfilled metrics, JSON and
+  logfmt logs and multi-span traces with incidents, produced by `hack/quickstart/demogen` (Prometheus
+  via `promtool` blocks in an init container, Loki and Tempo via a Job pushing OTLP), live workloads
+  that continue it, and four provisioned Grafana dashboards (service overview, logs, traces and
+  latency, what can I see) whose queries are verified per user.
 
 #### Quality and project
 
