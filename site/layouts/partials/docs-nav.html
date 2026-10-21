@@ -1,7 +1,7 @@
 {{- $current := . -}}
 <nav class="docs-nav" aria-label="Documentation">
   <a class="docs-home{{ if eq $current.RelPermalink "/docs/" }} on{{ end }}" href="/docs/">Overview</a>
-  {{ range site.Data.nav }}
+  {{ range hugo.Data.nav }}
   <h2>{{ .title }}</h2>
   <ul>
     {{ range .pages }}

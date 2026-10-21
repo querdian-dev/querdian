@@ -1,6 +1,6 @@
 {{- /* Full-text index of the documentation, fetched by assets/js/search.js on first use. */ -}}
 {{- $nav := dict -}}
-{{- range site.Data.nav }}{{ $group := .title }}{{ range .pages }}{{ $nav = merge $nav (dict (index (split . " | ") 0) $group) }}{{ end }}{{ end -}}
+{{- range hugo.Data.nav }}{{ $group := .title }}{{ range .pages }}{{ $nav = merge $nav (dict (index (split . " | ") 0) $group) }}{{ end }}{{ end -}}
 {{- $out := slice -}}
 {{- range where site.RegularPages "Section" "docs" -}}
   {{- $key := strings.TrimSuffix ".md" (strings.TrimPrefix "docs/" (.Params.source | default "")) -}}

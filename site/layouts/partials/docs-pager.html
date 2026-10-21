@@ -1,5 +1,5 @@
 {{- $flat := slice -}}
-{{- range site.Data.nav }}{{ range .pages }}{{ $flat = $flat | append . }}{{ end }}{{ end -}}
+{{- range hugo.Data.nav }}{{ range .pages }}{{ $flat = $flat | append . }}{{ end }}{{ end -}}
 {{- $me := "" -}}
 {{- range $i, $p := $flat }}{{ with site.GetPage (printf "/docs/%s" (index (split $p " | ") 0)) }}{{ if eq .RelPermalink $.RelPermalink }}{{ $me = $i }}{{ end }}{{ end }}{{ end -}}
 {{- if ne $me "" }}
