@@ -9,6 +9,7 @@
 
 CLUSTER="${CLUSTER:-querdian-demo}"
 KEYCLOAK_PORT="${KEYCLOAK_PORT:-8080}"
+UI_PORT=8081 # fixed: the Querdian policy dashboard, kind maps it to the NodePort 30081
 GRAFANA_PORT=3000 # fixed: the realm redirect URI and Grafana root_url say http://localhost:3000
 IMAGE_TAG="${IMAGE_TAG:-quickstart}"
 IMAGE_REPO="${IMAGE_REPO:-ghcr.io/querdian-dev/querdian}"

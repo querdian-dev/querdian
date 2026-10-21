@@ -15,6 +15,8 @@ One binary, `querdian`, runs three things:
   clients reach the backends.
 * the **management listener** (`--management-listen`, default `:9090`): `GET /metrics`,
   `GET /healthz`, `GET /readyz`. It is unauthenticated; do not expose it outside the cluster.
+* the optional **dashboard listener** (`--ui-listen`, off by default): a read-only view of the active
+  policies, see [dashboard.md](dashboard.md).
 * the **controller**: informers on `ClusterAccessPolicy`, `AccessPolicy` and `Namespace`, a 250 ms
   debounce, snapshot compilation and, on the leader only, status writing.
 
@@ -112,6 +114,9 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 | `--config` | `/etc/querdian/config.yaml` | Static configuration file. |
 | `--listen` | `:8080` | Proxy listener. |
 | `--management-listen` | `:9090` | `/metrics`, `/healthz`, `/readyz`. Must differ from `--listen`. |
+| `--ui-listen` | empty (off) | Read-only policy dashboard, see [dashboard.md](dashboard.md). Must differ from the other listeners. |
+| `--ui-auth` | `oidc` | `oidc` (bearer token required) or `none`. |
+| `--ui-admin-group` | empty | With `oidc`: group a token must carry. Empty: any valid token. |
 | `--leader-elect` | `true` | Leader election for the status writer. |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `--log-format` | `json` | `json` or `text`. |

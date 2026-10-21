@@ -27,6 +27,13 @@ spec:
         - port: {{ $.Values.management.port }}
           protocol: TCP
     {{- end }}
+    {{- if and $.Values.ui.enabled $np.ingress.uiFrom }}
+    - from:
+        {{- toYaml $np.ingress.uiFrom | nindent 8 }}
+      ports:
+        - port: {{ $.Values.ui.port }}
+          protocol: TCP
+    {{- end }}
   egress:
     {{- if $np.egress.dns.enabled }}
     - to:

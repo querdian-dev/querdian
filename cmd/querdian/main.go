@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,7 @@ import (
 	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/server"
+	"github.com/querdian-dev/querdian/internal/ui"
 )
 
 // version is injected at build time via -ldflags "-X main.version=...".
@@ -111,15 +113,28 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	enforcers := map[config.BackendType]enforce.Enforcer{
+		config.BackendPrometheus: enforcepromql.New(),
+		config.BackendLoki:       enforcelogql.New(),
+		config.BackendTempo:      enforcetraceql.New(),
+	}
+	var uiHandler http.Handler
+	if flags.UIListen != "" {
+		uiHandler = ui.Handler(ui.Deps{Config: cfg, Snapshots: ctl, Enforcers: enforcers, Version: version, Logger: logger})
+		if flags.UIAuth == "oidc" {
+			uiHandler = authn.Middleware(server.RequireGroup(flags.UIAdminGroup, uiHandler))
+		} else {
+			logger.Warn("dashboard authentication is disabled (--ui-auth=none); expose --ui-listen only to a trusted network",
+				"ui", flags.UIListen)
+		}
+	}
 	srv := server.New(server.Deps{
-		Config:    cfg,
-		Snapshots: ctl,
-		Auth:      authn,
-		Enforcers: map[config.BackendType]enforce.Enforcer{
-			config.BackendPrometheus: enforcepromql.New(),
-			config.BackendLoki:       enforcelogql.New(),
-			config.BackendTempo:      enforcetraceql.New(),
-		},
+		UIListen:     flags.UIListen,
+		UIHandler:    uiHandler,
+		Config:       cfg,
+		Snapshots:    ctl,
+		Auth:         authn,
+		Enforcers:    enforcers,
 		TailPlanners: map[config.BackendType]server.TailPlanner{config.BackendLoki: enforcelogql.PlanTail},
 		Metrics:      metrics,
 		Gatherer:     reg,
@@ -133,7 +148,7 @@ func run(args []string) error {
 	go func() { errc <- mgr.Start(ctx) }()
 	go func() { errc <- srv.Run(ctx, flags.Listen, flags.ManagementListen, shutdownTimeout) }()
 
-	logger.Info("querdian started", "version", version, "listen", flags.Listen, "management", flags.ManagementListen)
+	logger.Info("querdian started", "version", version, "listen", flags.Listen, "management", flags.ManagementListen, "ui", flags.UIListen)
 	err = <-errc // first component to stop: cancel the other and wait for it
 	cancel()
 	if err2 := <-errc; err == nil {
