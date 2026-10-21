@@ -49,12 +49,15 @@ metadata:
     {{- include "querdian.labels" . | nindent 4 }}
     app.kubernetes.io/component: ui
 spec:
-  type: ClusterIP
+  type: {{ .Values.ui.service.type }}
   selector:
     {{- include "querdian.selectorLabels" . | nindent 4 }}
   ports:
     - name: ui
       port: {{ .Values.ui.service.port }}
       targetPort: ui
+      {{- if and (eq .Values.ui.service.type "NodePort") .Values.ui.service.nodePort }}
+      nodePort: {{ .Values.ui.service.nodePort }}
+      {{- end }}
       protocol: TCP
 {{- end }}

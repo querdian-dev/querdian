@@ -40,9 +40,12 @@ ui:
   auth: oidc
   adminGroup: ""
   service:
-    # Create a ClusterIP Service for the dashboard port.
+    # Create a Service for the dashboard port.
     enabled: false
+    # ClusterIP, or NodePort for local clusters such as the kind quickstart. Never LoadBalancer.
+    type: ClusterIP
     port: 8081
+    nodePort: null
 
 service:
   type: ClusterIP
@@ -202,6 +205,8 @@ networkPolicy:
     from: []
     # Peers allowed to reach the management port (e.g. Prometheus). Empty = nobody.
     managementFrom: []
+    # Peers allowed to reach the dashboard port (only used when ui.enabled). Empty = nobody.
+    uiFrom: []
   egress:
     dns:
       enabled: true

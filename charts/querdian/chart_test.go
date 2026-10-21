@@ -173,3 +173,17 @@ func TestDashboardOptIn(t *testing.T) {
 		}
 	}
 }
+
+// The kind quickstart reaches the dashboard through a NodePort and, with NetworkPolicies, an ingress rule.
+func TestQuickstartDashboardValues(t *testing.T) {
+	var sb strings.Builder
+	for _, d := range helmTemplate(t, "-f", "../../hack/quickstart/querdian-values.yaml", "-f", "../../hack/quickstart/querdian-networkpolicy-values.yaml") {
+		raw, _ := yaml.Marshal(d)
+		sb.Write(raw)
+	}
+	for _, want := range []string{"type: NodePort", "nodePort: 30081", "--ui-listen=:8081", "--ui-auth=none", "port: 8081"} {
+		if !strings.Contains(sb.String(), want) {
+			t.Errorf("quickstart render lacks %q", want)
+		}
+	}
+}

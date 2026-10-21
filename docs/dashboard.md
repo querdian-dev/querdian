@@ -27,6 +27,8 @@ querdian --ui-listen=127.0.0.1:8081 --ui-auth=none
 | `--ui-auth` | `oidc` | `oidc`: every request needs a valid bearer token. `none`: no authentication. |
 | `--ui-admin-group` | empty | With `oidc`: the token must carry this group. Empty: any valid token. |
 
+The kind quickstart enables it by default on <http://localhost:8081> (see [quickstart](quickstart.md)).
+
 With the Helm chart set `ui.enabled=true` (and `ui.service.enabled=true` for a ClusterIP Service), then
 `kubectl port-forward deploy/querdian 8081:8081` and open <http://localhost:8081>.
 
