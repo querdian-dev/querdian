@@ -44,42 +44,115 @@
     return n;
   }
 
+  // Typo tolerance. Every distinct word of the docs is a candidate; a query term with no exact hit in a page
+  // falls back to the candidates within a small edit distance (a swap of two letters counts as one edit).
+  var vocab = null;
+  function words() {
+    if (vocab) { return vocab; }
+    var seen = {};
+    docs.forEach(function (p) {
+      (p.tl + " " + p.hl.join(" ") + " " + p.bl).replace(/[a-z0-9]+(?:_[a-z0-9]+)*/g, function (w) {
+        seen[w] = true;
+        if (w.indexOf("_") !== -1) { w.split("_").forEach(function (x) { seen[x] = true; }); }
+        return w;
+      });
+    });
+    vocab = Object.keys(seen).filter(function (w) { return w.length >= 3; });
+    return vocab;
+  }
+
+  function dist(a, b, max) {
+    var la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > max) { return max + 1; }
+    var prev2 = null, prev = [], cur, i, j;
+    for (j = 0; j <= lb; j++) { prev.push(j); }
+    for (i = 1; i <= la; i++) {
+      cur = [i];
+      var rowMin = i;
+      for (j = 1; j <= lb; j++) {
+        var c = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+        var v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + c);
+        if (i > 1 && j > 1 && a.charCodeAt(i - 1) === b.charCodeAt(j - 2) && a.charCodeAt(i - 2) === b.charCodeAt(j - 1)) {
+          v = Math.min(v, prev2[j - 2] + 1);
+        }
+        cur.push(v);
+        if (v < rowMin) { rowMin = v; }
+      }
+      if (rowMin > max) { return max + 1; }
+      prev2 = prev; prev = cur;
+    }
+    return prev[lb];
+  }
+
+  // Words close to t, excluding t itself. Short terms get no tolerance (too many false friends); a longer word
+  // also matches when only its beginning resembles t, so half-typed words with a typo still work.
+  function similar(t) {
+    var max = t.length >= 8 ? 2 : t.length >= 4 ? 1 : 0;
+    if (!max) { return []; }
+    var out = [];
+    words().forEach(function (w) {
+      if (w === t) { return; }
+      var d = dist(t, w, max);
+      if (d > max && t.length >= 5 && w.length > t.length) { d = dist(t, w.slice(0, t.length), max); }
+      if (d <= max) { out.push(w); }
+    });
+    return out;
+  }
+
+  // Score of one literal word against one page.
+  function scoreWord(p, t) {
+    var s = 0, head = -1, headScore = 0;
+    if (p.tl.indexOf(t) !== -1) { s += 20; }
+    for (var j = 0; j < p.hl.length; j++) {
+      if (p.hl[j].indexOf(t) !== -1) {
+        s += 8;
+        var hs = p.hl[j] === t ? 3 : 1;
+        if (hs > headScore || head === -1) { head = j; headScore = hs; }
+      }
+    }
+    s += count(p.bl, t, 8);
+    return { s: s, head: head, hs: headScore };
+  }
+
   function search(q) {
     var ts = terms(q);
     if (!ts.length) { return []; }
+    var near = ts.map(similar);
     var out = [];
     docs.forEach(function (p) {
-      var score = 0, bestHead = -1, bestHeadScore = 0, ok = true;
-      for (var i = 0; i < ts.length; i++) {
-        var t = ts[i], s = 0;
-        if (p.tl.indexOf(t) !== -1) { s += 20; }
-        for (var j = 0; j < p.hl.length; j++) {
-          if (p.hl[j].indexOf(t) !== -1) {
-            s += 8;
-            var hs = p.hl[j] === t ? 3 : 1;
-            if (hs > bestHeadScore || bestHead === -1) { bestHead = j; bestHeadScore = hs; }
+      var score = 0, bestHead = -1, bestHeadScore = 0, ok = true, hit = [];
+      for (var i = 0; i < ts.length && ok; i++) {
+        var r = scoreWord(p, ts[i]), s = r.s, head = r.head, hs = r.hs;
+        if (s > 0) { hit.push(ts[i]); }
+        else {
+          // Exact miss on this page: accept near words at half weight.
+          for (var k = 0; k < near[i].length; k++) {
+            var f = scoreWord(p, near[i][k]);
+            if (f.s === 0) { continue; }
+            hit.push(near[i][k]);
+            s += Math.max(1, Math.floor(f.s / 2));
+            if (f.head !== -1 && (head === -1 || f.hs > hs)) { head = f.head; hs = f.hs; }
           }
         }
-        s += count(p.bl, t, 8);
         if (s === 0) { ok = false; break; }
         score += s;
+        if (head !== -1 && (bestHead === -1 || hs > bestHeadScore)) { bestHead = head; bestHeadScore = hs; }
       }
-      if (ok) { out.push({ p: p, score: score, head: bestHead }); }
+      if (ok) { out.push({ p: p, score: score, head: bestHead, terms: hit }); }
     });
     out.sort(function (a, b) { return b.score - a.score; });
-    return out.slice(0, 8).map(function (r) { r.terms = ts; return r; });
+    return out.slice(0, 8);
   }
 
   function esc(s) {
     return s.replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
   }
+  // One alternation, longest word first, so a match is wrapped once and never inside an earlier <mark> tag.
   function mark(text, ts) {
-    var out = esc(text);
-    ts.forEach(function (t) {
-      var re = new RegExp("(" + esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
-      out = out.replace(re, "<mark>$1</mark>");
-    });
-    return out;
+    var parts = ts.slice().sort(function (a, b) { return b.length - a.length; })
+      .map(function (t) { return esc(t).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
+    if (!parts.length) { return esc(text); }
+    return esc(text).replace(new RegExp("(" + parts.join("|") + ")", "gi"), "<mark>$1</mark>");
   }
   function snippet(p, ts) {
     var at = -1;
