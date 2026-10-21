@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/auth"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
 	enforcelogql "github.com/querdian-dev/querdian/internal/enforce/logql"
@@ -177,5 +178,29 @@ func TestTempoTagListFilteredEndToEnd(t *testing.T) {
 	resp, body := get(t, srv, "/tempo/api/v2/search/tags", h.issuer.token(t, "u", "g"))
 	if resp.StatusCode != 200 || strings.Contains(body, "secret") || !strings.Contains(body, "service.name") {
 		t.Fatalf("tag list not filtered: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestRequireGroup(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	for name, c := range map[string]struct {
+		group  string
+		id     *auth.Identity
+		status int
+	}{
+		"no group required": {"", nil, http.StatusNoContent},
+		"member":            {"admins", &auth.Identity{Username: "u", Groups: []string{"admins"}}, http.StatusNoContent},
+		"not a member":      {"admins", &auth.Identity{Username: "u", Groups: []string{"x"}}, http.StatusForbidden},
+		"no identity":       {"admins", nil, http.StatusForbidden},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if c.id != nil {
+			r = r.WithContext(auth.WithIdentity(r.Context(), *c.id))
+		}
+		w := httptest.NewRecorder()
+		RequireGroup(c.group, next).ServeHTTP(w, r)
+		if w.Code != c.status {
+			t.Errorf("%s: want %d, got %d", name, c.status, w.Code)
+		}
 	}
 }

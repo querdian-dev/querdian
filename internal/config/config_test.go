@@ -109,10 +109,12 @@ func TestFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mut := range map[string]func(*Flags){
-		"same listeners": func(f *Flags) { f.Listen = f.ManagementListen },
-		"bad level":      func(f *Flags) { f.LogLevel = "loud" },
-		"bad format":     func(f *Flags) { f.LogFormat = "xml" },
-		"empty config":   func(f *Flags) { f.ConfigFile = "" },
+		"same listeners":   func(f *Flags) { f.Listen = f.ManagementListen },
+		"bad level":        func(f *Flags) { f.LogLevel = "loud" },
+		"ui same as proxy": func(f *Flags) { f.UIListen = f.Listen },
+		"bad ui auth":      func(f *Flags) { f.UIListen = ":8081"; f.UIAuth = "basic" },
+		"bad format":       func(f *Flags) { f.LogFormat = "xml" },
+		"empty config":     func(f *Flags) { f.ConfigFile = "" },
 	} {
 		g := *f
 		mut(&g)

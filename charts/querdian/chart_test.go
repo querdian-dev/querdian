@@ -152,3 +152,24 @@ func TestBackendProtectionNamesAreUniquePerTarget(t *testing.T) {
 		t.Fatalf("want 2 backend policies in monitoring, got %d (%v)", len(seen), seen)
 	}
 }
+
+// The dashboard listener, port and Service exist only when ui.enabled is set.
+func TestDashboardOptIn(t *testing.T) {
+	render := func(args ...string) string {
+		var sb strings.Builder
+		for _, d := range helmTemplate(t, args...) {
+			raw, _ := yaml.Marshal(d)
+			sb.Write(raw)
+		}
+		return sb.String()
+	}
+	if out := render(); strings.Contains(out, "--ui-listen") || strings.Contains(out, "-ui\n") {
+		t.Error("dashboard rendered by default")
+	}
+	out := render("-f", "ci/all-features-values.yaml")
+	for _, want := range []string{"--ui-listen=:8081", "--ui-auth=oidc", "--ui-admin-group=querdian-admins", "name: ui"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("all-features lacks %q", want)
+		}
+	}
+}

@@ -38,3 +38,23 @@ spec:
       targetPort: management
       protocol: TCP
 {{- end }}
+{{- if and .Values.ui.enabled .Values.ui.service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "querdian.fullname" . }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "querdian.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: ui
+      port: {{ .Values.ui.service.port }}
+      targetPort: ui
+      protocol: TCP
+{{- end }}

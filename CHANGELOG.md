@@ -14,6 +14,12 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 
 ### Added
 
+#### Policy dashboard
+
+* Optional read-only web dashboard (`--ui-listen`, off by default): policies with compile status,
+  effective access per user or group, backends, and a query test bench that shows the rewritten query
+  without contacting a backend. Helm values `ui.*`. See [docs/dashboard.md](docs/dashboard.md).
+
 #### Policy API and controller
 
 * CRDs `ClusterAccessPolicy` and `AccessPolicy` in `policy.querdian.dev/v1alpha1`, with CEL

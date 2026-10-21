@@ -29,6 +29,21 @@ management:
     enabled: false
     port: 9090
 
+# Optional read-only policy dashboard (--ui-listen). Off by default. It shows group names, tenants and
+# matchers, so keep it cluster-internal and reach it with kubectl port-forward or an authenticating ingress.
+ui:
+  enabled: false
+  # Container port of the dashboard listener.
+  port: 8081
+  # oidc: every request needs a valid bearer token (and the admin group, if set). none: no authentication,
+  # only for a trusted network, for example kubectl port-forward.
+  auth: oidc
+  adminGroup: ""
+  service:
+    # Create a ClusterIP Service for the dashboard port.
+    enabled: false
+    port: 8081
+
 service:
   type: ClusterIP
   port: 8080

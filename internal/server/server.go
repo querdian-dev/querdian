@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/querdian-dev/querdian/internal/auth"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
 	"github.com/querdian-dev/querdian/internal/fanout"
@@ -55,6 +57,10 @@ type Deps struct {
 	TailPlanners map[config.BackendType]TailPlanner
 	// Mergers combine fan-out responses per merge kind.
 	Mergers map[enforce.MergeKind]proxy.Merger
+
+	// UIListen and UIHandler enable the optional read-only dashboard listener (both set, or neither).
+	UIListen  string
+	UIHandler http.Handler
 
 	Metrics *observability.Metrics
 	// Gatherer backs /metrics; nil serves the default registry.
@@ -152,6 +158,9 @@ func (s *Server) Run(ctx context.Context, proxyAddr, mgmtAddr string, shutdownTi
 		{Addr: proxyAddr, Handler: s.ProxyHandler(), ReadHeaderTimeout: 10 * time.Second},
 		{Addr: mgmtAddr, Handler: s.ManagementHandler(), ReadHeaderTimeout: 10 * time.Second},
 	}
+	if s.d.UIListen != "" && s.d.UIHandler != nil {
+		servers = append(servers, &http.Server{Addr: s.d.UIListen, Handler: s.d.UIHandler, ReadHeaderTimeout: 10 * time.Second})
+	}
 	var listeners []net.Listener
 	for _, srv := range servers {
 		l, err := net.Listen("tcp", srv.Addr)
@@ -187,4 +196,19 @@ func (s *Server) serve(ctx context.Context, servers []*http.Server, listeners []
 		first = nil
 	}
 	return first
+}
+
+// RequireGroup wraps next so that only authenticated callers carrying group (when non-empty) get through.
+// It must run inside Authenticator.Middleware.
+func RequireGroup(group string, next http.Handler) http.Handler {
+	if group == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id, ok := auth.IdentityFrom(r.Context()); ok && slices.Contains(id.Groups, group) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		proxy.WriteError(w, r, http.StatusForbidden, "forbidden", "dashboard access requires membership of the admin group")
+	})
 }

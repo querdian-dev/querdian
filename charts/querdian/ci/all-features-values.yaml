@@ -4,6 +4,12 @@ podAntiAffinityPreset: hard
 management:
   service:
     enabled: true
+ui:
+  enabled: true
+  auth: oidc
+  adminGroup: querdian-admins
+  service:
+    enabled: true
 serviceMonitor:
   enabled: true
   labels:
