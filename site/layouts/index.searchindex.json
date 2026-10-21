@@ -1,0 +1,11 @@
+{{- /* Full-text index of the documentation, fetched by assets/js/search.js on first use. */ -}}
+{{- $nav := dict -}}
+{{- range site.Data.nav }}{{ $group := .title }}{{ range .pages }}{{ $nav = merge $nav (dict (index (split . " | ") 0) $group) }}{{ end }}{{ end -}}
+{{- $out := slice -}}
+{{- range where site.RegularPages "Section" "docs" -}}
+  {{- $key := strings.TrimSuffix ".md" (strings.TrimPrefix "docs/" (.Params.source | default "")) -}}
+  {{- $heads := slice -}}
+  {{- range .Fragments.Headings }}{{ range .Headings }}{{ $heads = $heads | append (slice .ID .Title) }}{{ end }}{{ end -}}
+  {{- $out = $out | append (dict "t" .Title "u" .RelPermalink "g" (index $nav $key | default "Docs") "h" $heads "b" (.Plain | htmlUnescape | replaceRE "\\s+" " ")) -}}
+{{- end -}}
+{{- $out | jsonify -}}

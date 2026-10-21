@@ -9,6 +9,9 @@ The landing page and documentation, built with [Hugo](https://gohugo.io) and dep
   maps links between pages to site paths. Add a page to the site by adding it to `data/nav.yaml`.
 * The rewrites on the landing page are the output of the real enforcers for the quickstart policies. If the
   enforcers change how they rewrite, update `assets/js/pass.js`.
+* Search is client-side: Hugo writes `search-index.json` (the plain text of every docs page, from
+  `layouts/index.searchindex.json`) and `assets/js/search.js` scores it in the browser; there is no external
+  service or dependency. Press `/` to open it.
 * Fonts (Archivo, JetBrains Mono) are self-hosted under `static/fonts` and licensed under the SIL OFL 1.1.
 
 ```sh

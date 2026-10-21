@@ -24,6 +24,9 @@
     {{ block "main" . }}{{ end }}
   </main>
   {{ partial "footer.html" . }}
+  {{ partial "search.html" . }}
+  {{- $search := resources.Get "js/search.js" | resources.Minify | resources.Fingerprint }}
+  <script src="{{ $search.RelPermalink }}" integrity="{{ $search.Data.Integrity }}" data-index="/search-index.json" defer></script>
   {{- block "scripts" . }}{{ end }}
 </body>
 </html>
