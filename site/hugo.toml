@@ -23,7 +23,7 @@ enableGitInfo = false
   description = "Querdian is a Kubernetes-native reverse proxy that enforces per-team, label-based access control on Prometheus, Loki and Tempo queries."
   repo = "querdian-dev/querdian"
   # Set to true when the repository is public: enables the GitHub links on the site.
-  repoPublic = false
+  repoPublic = true
 
 [outputs]
   home = ["HTML", "SearchIndex"]

@@ -12,7 +12,7 @@ label matchers that are injected into every query before it reaches the backend,
 read its own namespace's metrics, logs and traces.
 
 ## Status (must be stated plainly on every public surface)
-Pre-alpha, not released, no published image or chart, repository not yet public. No adopters, no
+Pre-alpha, not released, no published image or chart. Repository is public. No adopters, no
 benchmarks, no production claims. Known limits are documented in docs/limitations.md.
 
 ## Audience
