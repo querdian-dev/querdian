@@ -1,4 +1,6 @@
-# Querdian
+<p align="center"><img src="assets/logo.svg" alt="Querdian logo" width="96"></p>
+
+<h1 align="center">Querdian</h1>
 
 Querdian (query + guardian) is an Apache-2.0, Kubernetes-native reverse proxy that enforces
 label-based access control on read queries against Prometheus/Thanos (PromQL), Loki (LogQL) and
