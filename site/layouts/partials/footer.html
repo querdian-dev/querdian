@@ -1,0 +1,12 @@
+<footer class="site-footer">
+  <div class="foot-grid">
+    <p class="foot-name">Querdian</p>
+    <p>Apache-2.0. Pre-alpha, not released.</p>
+    <ul>
+      <li><a href="/docs/quickstart/">Quickstart</a></li>
+      <li><a href="/docs/limitations/">Known limitations</a></li>
+      <li><a href="/docs/security/threat-model/">Threat model</a></li>
+      {{ if site.Params.repoPublic }}<li><a href="https://github.com/{{ site.Params.repo }}">Source on GitHub</a></li>{{ else }}<li>Source code: published with the first release</li>{{ end }}
+    </ul>
+  </div>
+</footer>

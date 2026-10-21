@@ -1,0 +1,29 @@
+baseURL = "https://querdian.dev/"
+title = "Querdian"
+locale = "en"
+disableKinds = ["taxonomy", "term", "RSS"]
+enableRobotsTXT = true
+enableGitInfo = false
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = false
+  [markup.highlight]
+    noClasses = false
+    codeFences = true
+    guessSyntax = false
+    lineNos = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 3
+    ordered = false
+
+[params]
+  description = "Querdian is a Kubernetes-native reverse proxy that enforces per-team, label-based access control on Prometheus, Loki and Tempo queries."
+  repo = "querdian-dev/querdian"
+  # Set to true when the repository is public: enables the GitHub links on the site.
+  repoPublic = false
+
+[outputs]
+  home = ["HTML"]

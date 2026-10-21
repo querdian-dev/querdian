@@ -1,0 +1,10 @@
+{{- $flat := slice -}}
+{{- range site.Data.nav }}{{ range .pages }}{{ $flat = $flat | append . }}{{ end }}{{ end -}}
+{{- $me := "" -}}
+{{- range $i, $p := $flat }}{{ with site.GetPage (printf "/docs/%s" (index (split $p " | ") 0)) }}{{ if eq .RelPermalink $.RelPermalink }}{{ $me = $i }}{{ end }}{{ end }}{{ end -}}
+{{- if ne $me "" }}
+<nav class="pager" aria-label="Previous and next page">
+  {{ if gt $me 0 }}{{ with site.GetPage (printf "/docs/%s" (index (split (index $flat (sub $me 1)) " | ") 0)) }}<a class="prev" href="{{ .RelPermalink }}"><span>Previous</span>{{ .Title }}</a>{{ end }}{{ else }}<span></span>{{ end }}
+  {{ if lt $me (sub (len $flat) 1) }}{{ with site.GetPage (printf "/docs/%s" (index (split (index $flat (add $me 1)) " | ") 0)) }}<a class="next" href="{{ .RelPermalink }}"><span>Next</span>{{ .Title }}</a>{{ end }}{{ end }}
+</nav>
+{{- end }}

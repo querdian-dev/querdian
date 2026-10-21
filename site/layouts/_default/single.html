@@ -1,0 +1,20 @@
+{{ define "bodyclass" }}docs{{ end }}
+{{ define "main" }}
+<div class="docs-shell">
+  {{ partial "docs-nav.html" . }}
+  <article class="doc">
+    <h1>{{ .Title }}</h1>
+    {{ with .Params.source }}<p class="doc-meta">Source: <code>{{ . }}</code>{{ if site.Params.repoPublic }} · <a href="https://github.com/{{ site.Params.repo }}/blob/main/{{ . }}">Edit on GitHub</a>{{ end }}</p>{{ end }}
+    <div class="prose">
+      {{ .Content }}
+    </div>
+    {{ partial "docs-pager.html" . }}
+  </article>
+  {{ if gt (len .TableOfContents) 80 }}
+  <aside class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    {{ .TableOfContents }}
+  </aside>
+  {{ end }}
+</div>
+{{ end }}

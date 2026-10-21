@@ -1,0 +1,5 @@
+content/docs/*
+!content/docs/_index.md
+public/
+resources/
+.hugo_build.lock

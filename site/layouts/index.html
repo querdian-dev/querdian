@@ -1,0 +1,179 @@
+{{ define "bodyclass" }}landing{{ end }}
+{{ define "main" }}
+<section class="hero" aria-labelledby="h1">
+  <div class="hero-copy">
+    <h1 id="h1">Per-team access control for Prometheus, Loki and&nbsp;Tempo</h1>
+    <p class="lede">Teams that share one Prometheus, Loki and Tempo can normally read each other's data. Querdian is a Kubernetes proxy in front of them: it adds each team's label filters to every PromQL, LogQL and TraceQL query, so a team only gets its own telemetry. Unknown users, endpoints and queries are refused.</p>
+    <p class="actions">
+      <a class="btn btn-primary" href="/docs/quickstart/">Run the quickstart</a>
+      <a class="btn" href="/docs/">Read the docs</a>
+    </p>
+    <p class="status">Pre-alpha, not released. Apache-2.0.</p>
+  </div>
+
+  <div class="hero-pass">
+    <svg class="lanyard" viewBox="0 -14 320 134" aria-hidden="true" focusable="false">
+      <rect x="14" y="-14" width="292" height="16" rx="8" fill="var(--ink)"/>
+      <path d="M58 -2 L150 112 L128 118 L36 -2 Z" fill="var(--ink)"/>
+      <path d="M262 -2 L170 112 L192 118 L284 -2 Z" fill="var(--ink)"/>
+      <rect x="132" y="96" width="56" height="20" rx="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="3"/>
+    </svg>
+    <div class="pass" id="pass">
+      <div class="pass-slot" aria-hidden="true"></div>
+      <p class="pass-label">Access pass</p>
+      <p class="pass-name" id="pass-name">Alice</p>
+      <p class="pass-group"><span id="pass-group">order-team</span></p>
+      <p class="pass-scope" id="pass-scope">Namespace order-service</p>
+      <ul class="zones">
+        <li class="z-metrics"><b>Metrics</b><code id="z-metrics">namespace="order-service"</code></li>
+        <li class="z-logs"><b>Logs</b><code id="z-logs">k8s_namespace_name="order-service"</code></li>
+        <li class="z-traces"><b>Traces</b><code id="z-traces">resource.k8s.namespace.name="order-service"</code></li>
+      </ul>
+      <p class="pass-all">All zones</p>
+      <p class="pass-denied" id="pass-denied"><b>Denied label</b> customer_id (metrics)</p>
+      <p class="pass-foot">Demo user from the quickstart</p>
+    </div>
+    <div class="switch" role="radiogroup" aria-label="Choose a pass">
+      <button type="button" role="radio" aria-checked="true" data-pass="alice">Alice</button>
+      <button type="button" role="radio" aria-checked="false" data-pass="bob">Bob</button>
+      <button type="button" role="radio" aria-checked="false" data-pass="carol">Carol</button>
+    </div>
+  </div>
+
+  <div class="hoist" id="hoist">
+    <div class="tabs" role="tablist" aria-label="Query language">
+      <button type="button" role="tab" id="t-metrics" aria-selected="true" aria-controls="hoist-panel" data-tab="metrics">Metrics · PromQL</button>
+      <button type="button" role="tab" id="t-logs" aria-selected="false" aria-controls="hoist-panel" data-tab="logs">Logs · LogQL</button>
+      <button type="button" role="tab" id="t-traces" aria-selected="false" aria-controls="hoist-panel" data-tab="traces">Traces · TraceQL</button>
+      <button type="button" role="tab" id="t-denied" aria-selected="false" aria-controls="hoist-panel" data-tab="denied">Denied label</button>
+    </div>
+    <div class="hoist-panel" id="hoist-panel" role="tabpanel" tabindex="0" aria-labelledby="t-metrics" aria-live="polite">
+      <div class="hoist-row">
+        <p class="hoist-label">The client sends</p>
+        <pre><code id="q-in">sum by (route) (rate(http_requests_total{status=~"5.."}[5m]))</code></pre>
+      </div>
+      <div class="hoist-row hoist-out">
+        <p class="hoist-label" id="out-label">The backend receives</p>
+        <pre><code id="q-out">sum by (route) (rate(http_requests_total{<mark>namespace="order-service"</mark>,status=~"5.."}[5m]))</code></pre>
+      </div>
+      <p class="hoist-note" id="q-note">Rewritten by the PromQL enforcer; the matcher is added inside the selector.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band band-metrics" aria-labelledby="b-metrics">
+  <div class="band-inner">
+    <h2 id="b-metrics">Metrics<span>Prometheus and Thanos</span></h2>
+    <div class="band-text">
+      <p>Matchers are injected into every vector selector, including selectors inside range vectors and subqueries. A matcher the user wrote on the same label can only narrow the result further.</p>
+      <p>When a user has several grants, selectors are lifted into <code>or</code> expressions. Label and series endpoints are expanded and filtered, and denied labels are hidden from them.</p>
+    </div>
+  </div>
+</section>
+<section class="band band-logs" aria-labelledby="b-logs">
+  <div class="band-inner">
+    <h2 id="b-logs">Logs<span>Loki</span></h2>
+    <div class="band-text">
+      <p>Matchers go into the stream selector. Several grants fan out into separate requests whose results are merged, and live tailing over WebSocket is covered too.</p>
+      <p>Templates that could read a denied label, such as <code>{{`{{ . }}`}}</code> in <code>line_format</code>, are refused instead of guessed at.</p>
+    </div>
+  </div>
+</section>
+<section class="band band-traces" aria-labelledby="b-traces">
+  <div class="band-inner">
+    <h2 id="b-traces">Traces<span>Tempo</span></h2>
+    <div class="band-text">
+      <p>Search queries receive the grant as a parenthesised condition. Trace lookups by ID are filtered span by span, and denied attributes are removed from the spans that remain.</p>
+      <p>A query that would reveal root-span fields the grant does not cover is rejected, because the answer itself would leak.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section refusals" aria-labelledby="h-refuse">
+  <div class="section-head">
+    <h2 id="h-refuse">Refusing is the feature</h2>
+    <p>Anything Querdian cannot rewrite exactly is rejected, never approximated. Every decision carries a reason code you can search for in logs and traces. These are real ones from the troubleshooting guide.</p>
+  </div>
+  <table class="reasons">
+    <caption class="sr">Reason codes and their HTTP status</caption>
+    <thead><tr><th scope="col">Reason</th><th scope="col">Status</th><th scope="col">When</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><code>no_grant</code></th><td class="st st-deny">403</td><td>No policy grants this user the backend.</td></tr>
+      <tr><th scope="row"><code>endpoint_not_allowed</code></th><td class="st st-deny">403</td><td>The path or method is not in the endpoint table. Everything not listed is denied.</td></tr>
+      <tr><th scope="row"><code>denied_label</code></th><td class="st st-deny">403</td><td>The query references a label the policy denies, or a template that could read it.</td></tr>
+      <tr><th scope="row"><code>parse_error</code></th><td class="st">400</td><td>The query did not parse. The parsers are stricter than the backends.</td></tr>
+      <tr><th scope="row"><code>unsupported</code></th><td class="st">400</td><td>Valid, but not rewritable exactly for this user's policy.</td></tr>
+      <tr><th scope="row"><code>bad_request</code></th><td class="st">400</td><td>An unknown parameter, such as <code>storeMatch[]</code>, or a malformed request.</td></tr>
+    </tbody>
+  </table>
+  <p class="more"><a href="/docs/troubleshooting/">All reason codes in the troubleshooting guide</a></p>
+</section>
+
+<section class="section policy" aria-labelledby="h-policy">
+  <div class="section-head">
+    <h2 id="h-policy">Policies are Kubernetes objects</h2>
+    <p>Teams get an <code>AccessPolicy</code> in their own namespace. Platform admins get a <code>ClusterAccessPolicy</code>, the only kind that can be unrestricted. This is the policy file the quickstart applies.</p>
+  </div>
+  <div class="policy-grid">
+    <pre class="yaml" tabindex="0"><code><span class="c"># AccessPolicy: implicitly limited to its own namespace, on every backend</span>
+<span class="k">apiVersion:</span> policy.querdian.dev/v1alpha1
+<span class="k">kind:</span> AccessPolicy
+<span class="k">metadata:</span> {name: order-team, namespace: order-service}
+<span class="k">spec:</span>
+  <span class="k">subjects:</span> {groups: [order-team]}
+  <span class="k">rules:</span>
+    - <span class="k">backends:</span> [metrics]
+      <span class="k">labels:</span> {deny: [customer_id]}
+    - <span class="k">backends:</span> [logs, traces]
+<span class="c">---</span>
+<span class="c"># ClusterAccessPolicy: may be unrestricted, per tenant</span>
+<span class="k">apiVersion:</span> policy.querdian.dev/v1alpha1
+<span class="k">kind:</span> ClusterAccessPolicy
+<span class="k">metadata:</span> {name: platform-admins}
+<span class="k">spec:</span>
+  <span class="k">subjects:</span> {groups: [platform-admins]}
+  <span class="k">rules:</span>
+    - <span class="k">backends:</span> [metrics, logs, traces]
+      <span class="k">tenants:</span> [demo]
+      <span class="k">unrestricted:</span> true</code></pre>
+    <div class="policy-notes">
+      <p>The group names come from the token your identity provider issues. Querdian verifies the token with OIDC discovery and accepts only RS256.</p>
+      <p>A policy is ANDed with the namespace label of its own namespace, so the namespace label must be set by your telemetry pipeline, not by the teams.</p>
+      <p>A policy that fails validation grants nothing, and its status says why.</p>
+    </div>
+  </div>
+  <p class="more"><a href="/docs/policy-guide/">Policy guide</a></p>
+</section>
+
+<section class="section try" aria-labelledby="h-try">
+  <div class="section-head">
+    <h2 id="h-try">Try it on a laptop</h2>
+    <p>One script creates a kind cluster with Keycloak, Prometheus, Loki, Tempo, Grafana, two sample teams and 24 hours of demo data. Log in to Grafana as Alice or Bob and see different data.</p>
+  </div>
+  <div class="try-grid">
+    <pre class="cmd" tabindex="0"><code>hack/quickstart/up.sh       <span class="c"># cluster and everything, prints the URLs</span>
+hack/quickstart/verify.sh   <span class="c"># 150 automatic checks</span>
+hack/quickstart/down.sh</code></pre>
+    <p class="try-note">Needs kind, kubectl, helm, make, curl, jq, and Docker or Podman with about 3 GiB of free memory. There is no published image yet, so the script builds Querdian from the repository.</p>
+  </div>
+  <p class="more"><a href="/docs/quickstart/">Quickstart guide</a></p>
+</section>
+
+<section class="section status-section" aria-labelledby="h-status">
+  <div class="section-head">
+    <h2 id="h-status">Pre-alpha, and what that means</h2>
+    <p>Nothing here is ready for production. There is no release, no published image or chart, and no adopters. The proxy, the policy objects and the three enforcers are implemented and tested:</p>
+  </div>
+  <ul class="facts">
+    <li>Unit, fuzz and envtest suites, plus differential suites that run the same queries against real Prometheus, Loki and Tempo and compare the results.</li>
+    <li>A threat model and a security self-assessment, written alongside the code.</li>
+    <li>Known limits, written down: metadata endpoints for Loki under tenant-bound policies fail closed, the parsers reject some valid queries, and denied labels hide labels but do not redact query results.</li>
+  </ul>
+  <p class="more"><a href="/docs/limitations/">Known limitations</a> · <a href="/docs/security/threat-model/">Threat model</a></p>
+</section>
+{{ end }}
+
+{{ define "scripts" }}
+{{- $js := resources.Get "js/pass.js" | resources.Minify | resources.Fingerprint }}
+<script src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}" defer></script>
+{{ end }}

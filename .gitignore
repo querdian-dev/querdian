@@ -7,3 +7,11 @@ coverage.*
 .vscode/
 .DS_Store
 testdata/fuzz/**/*.tmp
+
+# Impeccable working files (keep PRODUCT.md, DESIGN.md, design.json and surface briefs)
+.impeccable/review/
+.impeccable/questions/
+.impeccable/round*.json
+.impeccable/brief-*.md
+.impeccable/mocks/
+.impeccable/build/

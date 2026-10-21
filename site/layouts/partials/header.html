@@ -1,0 +1,13 @@
+<div class="zoneband" aria-hidden="true"><i></i><i></i><i></i></div>
+<header class="site-header">
+  <a class="wordmark" href="/" aria-label="Querdian home">
+    <svg class="mark" viewBox="0 0 24 30" width="20" height="25" aria-hidden="true" focusable="false"><rect x="1.5" y="1.5" width="21" height="27" rx="3.5" fill="none" stroke="currentColor" stroke-width="2.4"/><rect x="8" y="5" width="8" height="3" rx="1.5" fill="currentColor"/><rect x="5" y="14" width="14" height="3" fill="var(--metrics)"/><rect x="5" y="19" width="14" height="3" fill="var(--logs)"/><rect x="5" y="24" width="14" height="2" fill="var(--traces)"/></svg>
+    <span>Querdian</span>
+  </a>
+  <nav aria-label="Primary">
+    <a href="/docs/"{{ if hasPrefix .RelPermalink "/docs/" }} aria-current="page"{{ end }}>Docs</a>
+    <a href="/docs/quickstart/">Quickstart</a>
+    <a href="/docs/security/threat-model/">Threat model</a>
+    {{ if site.Params.repoPublic }}<a href="https://github.com/{{ site.Params.repo }}">GitHub</a>{{ end }}
+  </nav>
+</header>

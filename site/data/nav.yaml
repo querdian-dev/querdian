@@ -1,0 +1,22 @@
+- title: Start
+  pages:
+    - quickstart
+    - policy-guide
+- title: Operate
+  pages:
+    - operations
+    - troubleshooting
+    - dashboards | Grafana dashboard
+- title: Reference
+  pages:
+    - endpoints | Endpoint inventory
+    - promql-enforcement
+    - limitations
+- title: Security
+  pages:
+    - security/threat-model
+    - security/self-assessment | Security self-assessment
+- title: Project
+  pages:
+    - releasing
+    - openssf-best-practices | OpenSSF Best Practices checklist

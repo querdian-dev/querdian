@@ -1,0 +1,12 @@
+<div class="docs-index">
+{{ range site.Data.nav }}
+  <section>
+    <h2>{{ .title }}</h2>
+    <ul>
+    {{ range .pages }}{{ with site.GetPage (printf "/docs/%s" (index (split . " | ") 0)) }}
+      <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
+    {{ end }}{{ end }}
+    </ul>
+  </section>
+{{ end }}
+</div>

@@ -5,7 +5,7 @@ ENVTEST_K8S_VERSION ?= 1.33.0
 IMAGE ?= ghcr.io/querdian-dev/querdian
 GORELEASER_VERSION ?= v2.18.3
 
-.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e fmt docker-build release-check
+.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e fmt docker-build release-check site site-serve
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/querdian ./cmd/querdian
@@ -68,3 +68,13 @@ docker-build:
 # Validates .goreleaser.yaml (module-proxy run, stays out of go.mod).
 release-check:
 	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check
+
+# Landing page and documentation (Hugo, pinned in .github/workflows/pages.yml).
+HUGO ?= go run github.com/gohugoio/hugo@v0.168.0
+site:
+	site/build-content.sh
+	$(HUGO) --source site --minify --gc
+
+site-serve:
+	site/build-content.sh
+	$(HUGO) server --source site

@@ -26,6 +26,8 @@ Inspired by [evoila/janus](https://github.com/evoila/janus).
 
 See [PLAN.md](PLAN.md) for the design and [TASKS.md](TASKS.md) for the work breakdown.
 
+The website (landing page and rendered documentation) is built from [site/](site/) and `docs/` and published at <https://querdian.dev>, see [site/README.md](site/README.md).
+
 ## Documentation
 
 * [Quickstart on kind](docs/quickstart.md): a complete isolation demo (Keycloak, Grafana, Prometheus,

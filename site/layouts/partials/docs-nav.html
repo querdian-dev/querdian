@@ -1,0 +1,14 @@
+{{- $current := . -}}
+<nav class="docs-nav" aria-label="Documentation">
+  <a class="docs-home{{ if eq $current.RelPermalink "/docs/" }} on{{ end }}" href="/docs/">Overview</a>
+  {{ range site.Data.nav }}
+  <h2>{{ .title }}</h2>
+  <ul>
+    {{ range .pages }}
+      {{ with site.GetPage (printf "/docs/%s" (index (split . " | ") 0)) }}
+      <li><a href="{{ .RelPermalink }}"{{ if eq .RelPermalink $current.RelPermalink }} aria-current="page"{{ end }}>{{ .Title }}</a></li>
+      {{ end }}
+    {{ end }}
+  </ul>
+  {{ end }}
+</nav>

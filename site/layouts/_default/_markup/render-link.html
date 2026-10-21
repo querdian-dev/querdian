@@ -1,0 +1,31 @@
+{{- /* Rewrites links in the repository's markdown for the site: links to published docs become site paths,
+       other repository files link to GitHub once the repository is public and are plain text until then. */ -}}
+{{- $dest := .Destination -}}
+{{- $repo := printf "https://github.com/%s" site.Params.repo -}}
+{{- $out := $dest -}}
+{{- $plain := false -}}
+{{- $ext := or (hasPrefix $dest "http://") (hasPrefix $dest "https://") (hasPrefix $dest "mailto:") -}}
+{{- if and (not $ext) (not (hasPrefix $dest "#")) -}}
+  {{- $parts := split $dest "#" -}}
+  {{- $file := index $parts 0 -}}
+  {{- $frag := "" -}}{{- if gt (len $parts) 1 }}{{ $frag = printf "#%s" (index $parts 1) }}{{ end -}}
+  {{- $dir := path.Dir (.Page.Params.source | default "docs/x.md") -}}
+  {{- $target := path.Join $dir $file -}}
+  {{- $page := "" -}}
+  {{- if and (hasPrefix $target "docs/") (strings.HasSuffix $target ".md") -}}
+    {{- $page = site.GetPage (printf "/%s" (strings.TrimSuffix ".md" $target)) -}}
+  {{- end -}}
+  {{- if $page -}}
+    {{- $out = printf "%s%s" $page.RelPermalink $frag -}}
+  {{- else if site.Params.repoPublic -}}
+    {{- $kind := cond (or (strings.HasSuffix $file "/") (not (strings.Contains (path.Base $file) "."))) "tree" "blob" -}}
+    {{- $out = printf "%s/%s/main/%s%s" $repo $kind $target $frag -}}
+  {{- else -}}
+    {{- $plain = true -}}
+  {{- end -}}
+{{- end -}}
+{{- if $plain -}}
+<span class="unlinked" title="Linked once the repository is public">{{ .Text | safeHTML }}</span>
+{{- else -}}
+<a href="{{ $out | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}{{ if $ext }} rel="noopener"{{ end }}>{{ .Text | safeHTML }}</a>
+{{- end -}}
