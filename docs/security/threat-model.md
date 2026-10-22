@@ -76,14 +76,28 @@ user's policies cannot be expressed for a request, it is rejected with a reason.
 
 ## 3. Header and request handling
 
-* **Tenant headers.** The configured `tenantHeader` and `X-Scope-OrgID` from the client are always
-  deleted; the proxy sets the tenant header only from the effective policy (`t1|t2` for several
-  tenants). A client can never choose its tenant.
-* **Credentials and client metadata are stripped** before forwarding: `Authorization`, `Cookie`,
-  `Proxy-Authorization`, `X-Scope-OrgID`, `Baggage`, `Traceparent`, `Tracestate`, `Forwarded`,
-  `X-Forwarded-*`, `X-Real-Ip`, `Content-Length`; hop-by-hop headers are handled by `net/http`.
-  `traceparent` is re-injected from Querdian's own span, and only W3C trace context goes out (the
-  propagator is fixed in code). WebSocket upstream handshakes carry none of the client's headers.
+* **Tenant headers.** Client tenant headers are dropped by the allow-list below, and the
+  configured `tenantHeader`, `X-Scope-OrgID` and Thanos `THANOS-TENANT` cannot be added to it. The
+  proxy sets the tenant header only from the effective policy (`t1|t2` for several tenants). A
+  client can never choose its tenant, unless an operator allow-lists a header that selects tenants
+  under another name.
+* **Client headers are forwarded by allow-list** (`forwardHeaders` per backend). By default only
+  `Accept`, `Accept-Encoding` and `User-Agent` are copied from the client, plus
+  `X-Loki-Response-Encoding-Flags` towards Loki (the `categorize-labels` encoding is handled by the
+  merges and by redaction). Everything else is dropped, such as backend controls like
+  `X-Loki-Query-Limits`. Credentials, tenant headers, trace context, forwarding headers, hop-by-hop
+  headers (`Upgrade`, `Connection`, ...), `Host`, `Content-Type` and `Content-Length` cannot be
+  allow-listed; the configuration is rejected at startup. An operator who adds a header hands its
+  effect in the backend to every client. Querdian sets `Content-Type`, the tenant header and
+  `traceparent` from its own span (only W3C trace context goes out; the propagator is fixed in
+  code). On streamed
+  (single-request) plans `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` are re-set
+  by the proxy (client values discarded) and `Forwarded` is not sent. Fan-out requests and
+  WebSocket upstream handshakes carry none of the client's headers.
+* **Protocol switches.** Only Loki `tail` is proxied as a WebSocket, on its own code path. On every
+  other route the client's `Upgrade` is never forwarded, and a `101 Switching Protocols` from a
+  backend (or a gateway in front of it) fails with `502` before any byte reaches the client, so no
+  raw tunnel can bypass the response filters.
 * **Path confusion.** Routes are matched on a canonical path only. Escaped slashes, backslash,
   `%00`, residual `%`, `.`/`..`, empty segments, trailing slashes, control characters and invalid
   UTF-8 are rejected, so no encoding can make a request alias a different route. Lookup is

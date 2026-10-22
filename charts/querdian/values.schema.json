@@ -261,6 +261,13 @@
                   "deny",
                   "filter"
                 ]
+              },
+              "forwardHeaders": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                }
               }
             },
             "required": [

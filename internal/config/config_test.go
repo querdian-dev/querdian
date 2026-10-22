@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,56 @@ func TestDefaults(t *testing.T) {
 	c, err = Parse([]byte(tempo))
 	if err != nil || c.Backends[0].TraceByID != TraceByIDDeny {
 		t.Fatalf("tempo traceByID should default to deny: %v %+v", err, c)
+	}
+}
+
+func TestForwardHeaders(t *testing.T) {
+	withHeaders := func(typ, list string) string {
+		in := strings.Replace(base, "type: prometheus", "type: "+typ, 1)
+		if list != "" {
+			in = strings.Replace(in, "namespaceLabel: namespace", "namespaceLabel: namespace, forwardHeaders: "+list, 1)
+		}
+		return in
+	}
+	for _, tc := range []struct {
+		name, typ, list string
+		want            []string
+	}{
+		{"prometheus default", "prometheus", "", []string{"Accept", "Accept-Encoding", "User-Agent"}},
+		{"tempo default", "tempo", "", []string{"Accept", "Accept-Encoding", "User-Agent"}},
+		{"loki default", "loki", "", []string{"Accept", "Accept-Encoding", "User-Agent", "X-Loki-Response-Encoding-Flags"}},
+		{"configured list replaces the default and is canonicalised", "loki", "[accept, x-query-tags]", []string{"Accept", "X-Query-Tags"}},
+		{"empty list forwards nothing", "prometheus", "[]", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(withHeaders(tc.typ, tc.list)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Backends[0].ForwardHeaders; got == nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("forwardHeaders = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+
+	for _, list := range []string{
+		"[authorization]", "[Cookie]", "[Proxy-Authorization]",
+		"[X-Scope-OrgID]", "[THANOS-TENANT]",
+		"[traceparent]", "[Baggage]", "[X-Forwarded-For]", "[X-Real-IP]",
+		"[Upgrade]", "[Connection]", "[TE]", "[Host]", "[Content-Type]",
+	} {
+		if _, err := Parse([]byte(withHeaders("prometheus", list))); err == nil || !strings.Contains(err.Error(), "forwardHeaders") {
+			t.Errorf("%s: want a forwardHeaders error, got %v", list, err)
+		}
+	}
+	ownTenant := strings.Replace(withHeaders("loki", "[x-tenant]"), "namespaceLabel: namespace,", "namespaceLabel: namespace, tenantHeader: X-Tenant,", 1)
+	if _, err := Parse([]byte(ownTenant)); err == nil || !strings.Contains(err.Error(), "tenant") {
+		t.Errorf("the backend's own tenantHeader must be rejected, got %v", err)
+	}
+	for _, list := range []string{`["X Bad"]`, `[""]`, `["X-Bad:"]`} {
+		if _, err := Parse([]byte(withHeaders("prometheus", list))); err == nil || !strings.Contains(err.Error(), "not a valid header name") {
+			t.Errorf("%s: want an invalid-name error, got %v", list, err)
+		}
 	}
 }
 

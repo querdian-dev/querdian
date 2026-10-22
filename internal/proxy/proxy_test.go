@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +66,8 @@ var traceCtx = func() context.Context {
 
 func backend(t *testing.T, upstream, tenantHeader string) *config.Backend {
 	t.Helper()
-	return &config.Backend{Name: "b", Type: config.BackendPrometheus, URL: upstream, PathPrefix: "/prom", NamespaceLabel: "namespace", TenantHeader: tenantHeader}
+	return &config.Backend{Name: "b", Type: config.BackendPrometheus, URL: upstream, PathPrefix: "/prom", NamespaceLabel: "namespace", TenantHeader: tenantHeader,
+		ForwardHeaders: config.DefaultForwardHeaders(config.BackendPrometheus)}
 }
 
 func newProxy() *Proxy {
@@ -154,6 +157,106 @@ func TestStreamStripsClientHeadersAndSetsTenant(t *testing.T) {
 				t.Errorf("response not streamed back: %d %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// Only the backend's forwardHeaders reach it from the client; tenant, trace and forwarding headers come from
+// the proxy.
+func TestStreamForwardsOnlyAllowListedHeaders(t *testing.T) {
+	proxySet := []string{"Traceparent", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Scope-Orgid"}
+	with := func(h ...string) []string { return slices.Sorted(slices.Values(append(slices.Clone(proxySet), h...))) }
+	for _, tc := range []struct {
+		name    string
+		typ     config.BackendType
+		forward []string
+		want    []string
+	}{
+		{"prometheus default", config.BackendPrometheus, config.DefaultForwardHeaders(config.BackendPrometheus), with("Accept", "Accept-Encoding", "User-Agent")},
+		{"loki default", config.BackendLoki, config.DefaultForwardHeaders(config.BackendLoki), with("Accept", "Accept-Encoding", "User-Agent", "X-Loki-Response-Encoding-Flags")},
+		{"tempo default", config.BackendTempo, config.DefaultForwardHeaders(config.BackendTempo), with("Accept", "Accept-Encoding", "User-Agent")},
+		{"configured", config.BackendLoki, []string{"Accept", "X-Query-Tags"}, with("Accept", "X-Query-Tags")},
+		{"none", config.BackendPrometheus, []string{}, proxySet},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := &recorder{}
+			up := httptest.NewServer(rc.handler(200, `{"status":"success"}`))
+			defer up.Close()
+
+			r := clientRequest(http.MethodGet, "/prom/api/v1/query?query=up", "")
+			for k, v := range map[string]string{
+				"Accept-Encoding": "br", "User-Agent": "Grafana/12.0.0", "X-Loki-Response-Encoding-Flags": "categorize-labels",
+				"Thanos-Tenant": "evil-tenant", "X-Loki-Query-Limits": `{"maxEntriesLimitPerQuery":100000}`,
+				"X-Loki-Disable-Pipeline-Wrappers": "true", "X-Query-Tags": "Source=evil", "X-Grafana-Id": "id-token",
+				"Proxy-Authorization": "Basic x", "X-Real-Ip": "6.6.6.6", "X-Forwarded-Host": "evil.example",
+				"Tracestate": "k=v", "If-None-Match": `"abc"`, "Range": "bytes=0-10", "Te": "trailers",
+				"Upgrade": "websocket", "Connection": "Upgrade, X-Hop", "X-Hop": "hop", "X-Arbitrary": "anything",
+			} {
+				r.Header.Set(k, v)
+			}
+			b := backend(t, up.URL, "X-Scope-OrgID")
+			b.Type, b.ForwardHeaders = tc.typ, tc.forward
+			plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}}
+			newProxy().Execute(httptest.NewRecorder(), r, Target{Backend: b, Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query", Effective: policy.Effective{Tenants: []string{"t1"}}}, plan, nil)
+
+			got := rc.last(t)
+			if !slices.Contains(tc.forward, "Accept-Encoding") && got.Header.Get("Accept-Encoding") == "gzip" {
+				got.Header.Del("Accept-Encoding") // the transport's own, for transparent decompression
+			}
+			if keys := slices.Sorted(maps.Keys(got.Header)); !slices.Equal(keys, tc.want) {
+				t.Errorf("upstream headers = %v, want %v", keys, tc.want)
+			}
+			for h, want := range map[string]string{"Accept": "application/json", "Accept-Encoding": "br", "User-Agent": "Grafana/12.0.0",
+				"X-Query-Tags": "Source=evil", "X-Scope-OrgID": "t1", "X-Forwarded-For": "192.0.2.1", "X-Forwarded-Host": "example.com"} {
+				if v := got.Header.Get(h); v != want && slices.Contains(tc.want, http.CanonicalHeaderKey(h)) {
+					t.Errorf("%s = %q, want %q", h, v, want)
+				}
+			}
+		})
+	}
+}
+
+// A backend that switches protocols on a query route would tunnel raw bytes past the response filter. The
+// client's Upgrade is never forwarded, and a 101 fails closed before any response hook runs.
+func TestStreamRejectsProtocolSwitch(t *testing.T) {
+	var mu sync.Mutex
+	var upgrades []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		upgrades = append(upgrades, r.Header.Get("Upgrade"))
+		mu.Unlock()
+		c, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nSECRET")
+		_ = buf.Flush()
+	}))
+	defer up.Close()
+
+	for _, clientUpgrade := range []bool{false, true} {
+		r := clientRequest(http.MethodGet, "/prom/api/v1/query?query=up", "")
+		if clientUpgrade {
+			r.Header.Set("Connection", "Upgrade")
+			r.Header.Set("Upgrade", "websocket")
+		}
+		hookRan := false
+		w := httptest.NewRecorder()
+		plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}, ResponseFilter: filterFn}
+		newProxy().Execute(w, r, Target{Backend: backend(t, up.URL, ""), Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query",
+			ModifyResponse: func(*http.Response) error { hookRan = true; return nil }}, plan, nil)
+		var body ErrorBody
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 502 || body.ErrorType != "upstream" || strings.Contains(w.Body.String(), "SECRET") {
+			t.Errorf("client upgrade %v: got %d %s", clientUpgrade, w.Code, w.Body.String())
+		}
+		if hookRan {
+			t.Errorf("client upgrade %v: response hook ran on a 101", clientUpgrade)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(upgrades, []string{"", ""}) {
+		t.Errorf("Upgrade reached the backend: %q", upgrades)
 	}
 }
 

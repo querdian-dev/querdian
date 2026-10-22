@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,6 +81,9 @@ func TestRenderedConfigIsValid(t *testing.T) {
 				}
 				if name == "all-features" && cfg.Auth.CAFile != "/etc/querdian-oidc-ca/ca.crt" {
 					t.Errorf("auth.caFile = %q", cfg.Auth.CAFile)
+				}
+				if b, _ := cfg.Backend("logs"); name == "all-features" && !slices.Contains(b.ForwardHeaders, "X-Query-Tags") {
+					t.Errorf("logs forwardHeaders = %v", b.ForwardHeaders)
 				}
 			}
 			if !found {

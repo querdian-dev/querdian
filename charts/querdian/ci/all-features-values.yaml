@@ -27,6 +27,28 @@ oidcCA:
   existingSecret: oidc-ca
   key: ca.crt
 extraArgs: ["--log-level=debug"]
+config:
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://thanos-query.monitoring:10902
+      pathPrefix: /prometheus
+      namespaceLabel: namespace
+    - name: logs
+      type: loki
+      url: http://loki-gateway.monitoring
+      pathPrefix: /loki
+      namespaceLabel: k8s_namespace_name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: tenantIdLabel
+      forwardHeaders: [Accept, Accept-Encoding, User-Agent, X-Loki-Response-Encoding-Flags, X-Query-Tags]
+    - name: traces
+      type: tempo
+      url: http://tempo-query-frontend.monitoring:3200
+      pathPrefix: /tempo
+      namespaceLabel: resource.k8s.namespace.name
+      tenantHeader: X-Scope-OrgID
+      traceByID: filter
 networkPolicy:
   enabled: true
   ingress:

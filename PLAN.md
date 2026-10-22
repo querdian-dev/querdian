@@ -360,6 +360,7 @@ backends:
     namespaceLabel: k8s_namespace_name
     tenantHeader: X-Scope-OrgID
     tenantFederation: tenantIdLabel # T0.4: Loki 3.5.0 supports __tenant_id__ matcher -> default tenantIdLabel
+    forwardHeaders: [Accept, Accept-Encoding, User-Agent, X-Loki-Response-Encoding-Flags] # client headers passed through; this is the Loki default
   - name: traces
     type: tempo
     url: http://tempo-query-frontend.monitoring:3200
@@ -376,7 +377,8 @@ limits:
 ```
 
 Validation at startup (fail to start on error): unique backend names and prefixes, valid URLs,
-known types, non-empty audiences, `traceByID` only on tempo.
+known types, non-empty audiences, `traceByID` only on tempo, `forwardHeaders` valid header names
+and none of the reserved ones (§9).
 
 ### 5.2 Flags
 
@@ -659,9 +661,14 @@ data source with URL `https://proxy/<pathPrefix>` calls.
 - Merge URL query and form body the way Prometheus does, then:
   - more than one value for a single-valued enforcement param (`query`, `q`) → 400;
   - forward as: GET → rewritten URL query; POST → rewritten form body, empty URL query.
-- Strip from client request before forwarding: `Authorization`, `Cookie`, any configured
-  `tenantHeader`, `X-Scope-OrgID`, `Forwarded`/`X-Forwarded-*` (re-set by proxy), `baggage`.
+- Forward only allow-listed client headers (`forwardHeaders` per backend; default `Accept`,
+  `Accept-Encoding`, `User-Agent`, and for Loki `X-Loki-Response-Encoding-Flags`). Everything else
+  is dropped. Credentials, tenant headers (configured `tenantHeader`, `X-Scope-OrgID`,
+  `THANOS-TENANT`), `traceparent`/`baggage`, `Forwarded`/`X-Forwarded-*`, hop-by-hop headers such
+  as `Upgrade`/`Connection`, `Host` and `Content-*` cannot be allow-listed (startup error). On
+  streamed requests `X-Forwarded-*` are re-set by the proxy (client values discarded).
 - Set: tenant header from `Effective.Tenants`; `traceparent` (propagation).
+- A `101 Switching Protocols` on a non-WebSocket route fails closed (502).
 - Single-request plans use `httputil.ReverseProxy` with `Rewrite`, streaming responses.
 - Fan-out plans: `internal/fanout` runs requests in parallel (bounded by `maxFanout`), shared
   context cancellation, any branch error → whole request fails (502, upstream error surfaced),
@@ -762,7 +769,7 @@ tracing privacy flag is enabled.
 - **Namespace label integrity:** `AccessPolicy` isolation relies on `namespaceLabel` being set by
   the collection pipeline (Prometheus scrape config, OTel k8sattributes, Promtail/Alloy), not by
   workloads. Must be prominent in docs.
-- Tenant headers from clients are always stripped.
+- Tenant headers from clients are never forwarded (client headers are allow-listed).
 - Backends must not be reachable by clients directly (NetworkPolicy in the chart).
 - Threat model document (`docs/security/threat-model.md`) covers: query injection via
   parser divergence, label oracle attacks (filters on denied labels), metadata leaks (Tempo root

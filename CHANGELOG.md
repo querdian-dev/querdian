@@ -46,7 +46,8 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   dotted claim paths for username and groups, custom CA, typed 401 reasons.
 * Default-deny route tables for Prometheus/Thanos, Loki and Tempo, per-route parameter allow-lists,
   canonical-path checks, method checks, and request normalisation (duplicate enforcement
-  parameters rejected, tenant and credential headers stripped, tenant header set from the policy).
+  parameters rejected, only allow-listed client headers forwarded, tenant header set from the
+  policy).
 * Streaming reverse proxy for single-request plans; bounded parallel fan-out with merge strategies
   and a byte cap; WebSocket fan-out for Loki `tail`.
 * Prometheus-style JSON errors with `traceId` and an `X-Trace-Id` header on every response.
@@ -105,6 +106,12 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   trace-level intrinsics and `compare()` are rejected unless the root span is covered (root-span
   metadata oracle); Loki tenant binding of metric queries uses a negative matcher; denied labels are
   filtered out of Loki series responses; tag lists are filtered against denied labels.
+* Client headers are forwarded by allow-list instead of a strip list, configurable per backend with
+  `forwardHeaders` (default `Accept`, `Accept-Encoding`, `User-Agent`, and Loki's
+  `X-Loki-Response-Encoding-Flags`). Tenant headers of any name (for example Thanos
+  `THANOS-TENANT`), `Upgrade` and backend controls such as `X-Loki-Query-Limits` no longer reach
+  backends; credentials, tenant, trace, forwarding and hop-by-hop headers cannot be allow-listed. A `101 Switching Protocols` from a backend on a non-WebSocket route fails
+  with `502` instead of tunnelling unfiltered bytes past the response filters.
 
 ### Known limitations
 
