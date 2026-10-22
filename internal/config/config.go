@@ -293,7 +293,9 @@ func (c *Config) Validate() error {
 // validHeaderName reports whether s is an RFC 9110 token, the syntax of a header field name.
 func validHeaderName(s string) bool {
 	for _, c := range []byte(s) {
-		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0) {
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
 			return false
 		}
 	}
