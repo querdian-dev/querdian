@@ -12,6 +12,7 @@ import (
 
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
+	"github.com/querdian-dev/querdian/internal/enforce/redact"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/routes"
 )
@@ -30,12 +31,34 @@ type matcherJSON struct {
 }
 
 type ruleJSON struct {
-	Backend      string        `json:"backend"`
-	Type         string        `json:"type"`
-	Tenants      []string      `json:"tenants"`
-	Unrestricted bool          `json:"unrestricted"`
-	Matchers     []matcherJSON `json:"matchers"`
-	DeniedLabels []string      `json:"deniedLabels"`
+	Backend      string          `json:"backend"`
+	Type         string          `json:"type"`
+	Tenants      []string        `json:"tenants"`
+	Unrestricted bool            `json:"unrestricted"`
+	Matchers     []matcherJSON   `json:"matchers"`
+	DeniedLabels []string        `json:"deniedLabels"` // includes the redacted names
+	Redactions   []redactionJSON `json:"redactions"`
+}
+
+// redactionJSON describes one labels.redact entry, with an example of its effect on a value.
+type redactionJSON struct {
+	Name     string `json:"name"`
+	Strategy string `json:"strategy"`
+	Octets   int    `json:"octets,omitempty"`
+	Effect   string `json:"effect"`
+	Before   string `json:"before"`
+	After    string `json:"after"` // empty: the label is removed
+}
+
+func redactionViews(m map[string]policy.Redaction) []redactionJSON {
+	out := make([]redactionJSON, 0, len(m))
+	for name, red := range m {
+		before, after := redact.Example(red)
+		out = append(out, redactionJSON{Name: name, Strategy: string(red.Strategy), Octets: red.Octets,
+			Effect: redact.Describe(red), Before: before, After: after})
+	}
+	slices.SortFunc(out, func(a, b redactionJSON) int { return strings.Compare(a.Name, b.Name) })
+	return out
 }
 
 type policyJSON struct {
@@ -75,7 +98,8 @@ func (h *handler) policyViews(s *policy.Snapshot) []policyJSON {
 			Users: nz(v.Users), Groups: nz(v.Groups), Rules: []ruleJSON{}}
 		for _, r := range v.Rules {
 			rj := ruleJSON{Backend: r.Backend, Type: h.backendType(r.Backend), Tenants: nz(r.Tenants),
-				Unrestricted: r.Unrestricted, DeniedLabels: nz(r.DeniedLabels), Matchers: []matcherJSON{}}
+				Unrestricted: r.Unrestricted, DeniedLabels: nz(r.DeniedLabels), Matchers: []matcherJSON{},
+				Redactions: redactionViews(r.Redactions)}
 			for _, m := range r.Matchers {
 				rj.Matchers = append(rj.Matchers, matcherJSON{Name: m.Name, Op: opSymbol[string(m.Op)], Value: m.Value})
 			}
@@ -131,15 +155,16 @@ type termJSON struct {
 }
 
 type accessJSON struct {
-	Backend      string     `json:"backend"`
-	Type         string     `json:"type"`
-	Granted      bool       `json:"granted"`
-	Reason       string     `json:"reason,omitempty"`
-	Unrestricted bool       `json:"unrestricted"`
-	Tenants      []string   `json:"tenants"`
-	Terms        []termJSON `json:"terms"`
-	DeniedLabels []string   `json:"deniedLabels"`
-	Policies     []string   `json:"policies"`
+	Backend      string          `json:"backend"`
+	Type         string          `json:"type"`
+	Granted      bool            `json:"granted"`
+	Reason       string          `json:"reason,omitempty"`
+	Unrestricted bool            `json:"unrestricted"`
+	Tenants      []string        `json:"tenants"`
+	Terms        []termJSON      `json:"terms"`
+	DeniedLabels []string        `json:"deniedLabels"` // includes the redacted names
+	Redactions   []redactionJSON `json:"redactions"`
+	Policies     []string        `json:"policies"`
 }
 
 func resolveReason(err error) string {
@@ -177,7 +202,7 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 	for i := range h.d.Config.Backends {
 		b := &h.d.Config.Backends[i]
 		a := accessJSON{Backend: b.Name, Type: string(b.Type), Tenants: []string{}, Terms: []termJSON{},
-			DeniedLabels: []string{}, Policies: []string{}}
+			DeniedLabels: []string{}, Redactions: []redactionJSON{}, Policies: []string{}}
 		eff, err := s.Resolve(user, groups, b.Name)
 		if err != nil {
 			a.Reason = resolveReason(err)
@@ -186,6 +211,7 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 		}
 		a.Granted, a.Unrestricted = true, eff.Unrestricted
 		a.Tenants, a.DeniedLabels, a.Policies = nz(eff.Tenants), nz(eff.DeniedLabels), nz(eff.Policies)
+		a.Redactions = redactionViews(eff.Redactions)
 		for _, t := range eff.Terms {
 			tj := termJSON{Tenant: t.Tenant, Matchers: []matcherJSON{}}
 			for _, m := range t.Matchers {
@@ -310,5 +336,14 @@ func (h *handler) test(w http.ResponseWriter, r *http.Request) {
 		ups = append(ups, upstreamJSON{Term: u.Term, Query: u.Query.Get(ep.Param)})
 	}
 	res["allowed"], res["strategy"], res["upstream"] = true, plan.Strategy, ups
+	// How the response would be redacted: values rewritten in query results, names removed elsewhere.
+	res["redactions"] = redactionViews(eff.Redactions)
+	res["redactionMode"] = "none"
+	if len(eff.Redactions) > 0 {
+		res["redactionMode"] = "remove"
+		if redact.RewritesValues(b.Type, ep.Template) {
+			res["redactionMode"] = "rewrite"
+		}
+	}
 	writeJSON(w, http.StatusOK, res)
 }

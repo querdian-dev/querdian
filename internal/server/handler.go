@@ -16,6 +16,7 @@ import (
 	"github.com/querdian-dev/querdian/internal/auth"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
+	"github.com/querdian-dev/querdian/internal/enforce/redact"
 	"github.com/querdian-dev/querdian/internal/enforce/traceql"
 	"github.com/querdian-dev/querdian/internal/fanout"
 	"github.com/querdian-dev/querdian/internal/observability"
@@ -201,8 +202,13 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 	s.d.Privacy.SetQueries(span, strings.Join(params[ep.Param], " "), strings.Join(plan.Requests[0].Query[ep.Param], " "))
 
 	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff}
+	red := redact.New(eff.Redactions)
 	if ep.Websocket {
-		s.proxies[b.Name].ServeTail(w, r, target, plan, proxy.TailOptions{})
+		var opt proxy.TailOptions
+		if red != nil {
+			opt.Rewrite = red.TailFrame
+		}
+		s.proxies[b.Name].ServeTail(w, r, target, plan, opt)
 		return
 	}
 
@@ -210,6 +216,7 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		f, err := traceql.NewTraceFilter(eff, traceql.TraceFilterOptions{
 			V2:       ep.Template == "/api/v2/traces/:id",
 			MaxBytes: s.d.Config.Limits.MaxMergeBytes,
+			Redactor: red,
 		})
 		if err != nil {
 			st.set(decisionError, "trace_filter_failed")
@@ -225,7 +232,32 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 	r = r.WithContext(context.WithValue(r.Context(), effKey{}, eff))
 	r.Form = params
 	merge := s.merger(b, ep, &plan, eff)
+	if rewrite := red.ResultRewriter(b.Type, ep.Template); rewrite != nil {
+		limit := s.d.Config.Limits.MaxMergeBytes
+		if plan.Merge == enforce.MergeNone && len(plan.Requests) == 1 {
+			plan.ResponseFilter = chainFilters(plan.ResponseFilter, rewrite)
+			if plan.ResponseFilterMaxBytes <= 0 || plan.ResponseFilterMaxBytes > limit {
+				plan.ResponseFilterMaxBytes = limit
+			}
+		} else {
+			merge = proxy.FilterMerger(merge, rewrite, limit)
+		}
+	}
 	s.proxies[b.Name].Execute(w, r, target, plan, merge)
+}
+
+// chainFilters applies first (if any), then second.
+func chainFilters(first, second func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
+	if first == nil {
+		return second
+	}
+	return func(body []byte) ([]byte, error) {
+		out, err := first(body)
+		if err != nil {
+			return nil, err
+		}
+		return second(out)
+	}
 }
 
 type effKey struct{}

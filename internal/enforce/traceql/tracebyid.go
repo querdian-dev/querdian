@@ -19,6 +19,7 @@ import (
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/enforce"
+	"github.com/querdian-dev/querdian/internal/enforce/redact"
 	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/routes"
 	"github.com/querdian-dev/querdian/pkg/traceql"
@@ -95,12 +96,16 @@ type TraceFilterOptions struct {
 	V2 bool
 	// MaxBytes caps the (decompressed) upstream body that ModifyResponse buffers; values < 1 use 64 MiB.
 	MaxBytes int64
+	// Redactor, if set, rewrites redacted attributes (policy labels.redact) instead of removing them like
+	// the other denied attributes. It makes the filter stateful: use it for one response only.
+	Redactor *redact.Redactor
 }
 
 const defaultMaxTraceBytes = 64 << 20
 
 // TraceFilter removes the spans a policy does not admit from a trace-by-ID response. Create one per
-// request with NewTraceFilter; it is stateless afterwards and safe for concurrent use.
+// request with NewTraceFilter; it is stateless afterwards and safe for concurrent use, unless
+// TraceFilterOptions.Redactor is set.
 //
 // # Hooking it in
 //
@@ -424,11 +429,36 @@ func (f *TraceFilter) stripKVs(scope string, kvs []*commonv1.KeyValue) []*common
 	}
 	out := kvs[:0:0]
 	for _, kv := range kvs {
-		if kv != nil && !f.isDenied(scope, kv.Key) {
+		if kv == nil {
+			continue
+		}
+		if red := f.opt.Redactor; red != nil {
+			if rule, id, ok := red.AttrRule(scope, kv.Key); ok {
+				if nv, keep := red.Value(rule, id, protoIdentity(kv.Value)); keep {
+					out = append(out, &commonv1.KeyValue{Key: kv.Key, Value: &commonv1.AnyValue{
+						Value: &commonv1.AnyValue_StringValue{StringValue: nv},
+					}})
+				}
+				continue
+			}
+		}
+		if !f.isDenied(scope, kv.Key) {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// protoIdentity is the string representing an attribute value for redaction: the string itself, or the
+// compact text form of any other value.
+func protoIdentity(v *commonv1.AnyValue) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.Value.(*commonv1.AnyValue_StringValue); ok {
+		return s.StringValue
+	}
+	return v.String()
 }
 
 func protoAttrs(kvs []*commonv1.KeyValue) attrSet {

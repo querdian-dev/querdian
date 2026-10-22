@@ -7,7 +7,7 @@
 # 1. Gets access tokens from Keycloak with the password grant (direct access grants are enabled
 #    on the demo client `grafana` ONLY FOR THIS DEMO) for alice, bob and carol.
 # 2. Queries the Querdian proxy directly (kubectl port-forward) with PromQL, LogQL, TraceQL
-#    search and trace-by-ID and asserts who sees what, including the denied-label example and the
+#    search and trace-by-ID and asserts who sees what, including the redacted-label example and the
 #    spoofed-namespace attempts of the order-service sample.
 # 3. Checks the backfilled history (DEMO_HISTORY_HOURS, default 24): the earliest metric sample, log
 #    line and trace are about a day old, each user only sees the history of their own namespace,
@@ -170,7 +170,7 @@ call "$ALICE" /prom/api/v1/query --data-urlencode 'query=demo_spoof_attempt'
 expect "alice: the spoofed series sits in her namespace" order-service "$(prom_ns)"
 expect "alice: the claim was kept as exported_namespace" payment-service "$(jq -r '.data.result[0].metric.exported_namespace' <<<"$BODY")"
 
-section "metrics: denied label example (order-team denies customer_id)"
+section "metrics: redacted label example (order-team redacts customer_id)"
 call "$ALICE" /prom/api/v1/query --data-urlencode 'query=sum by (customer_id) (demo_requests_total)'
 expect "alice: grouping by customer_id -> 403" 403 "$STATUS"
 expect "alice: message" "label customer_id denied by policy (by/without)" "$(jq -r .error <<<"$BODY")"
@@ -180,6 +180,12 @@ call "$ALICE" /prom/api/v1/label/customer_id/values
 expect "alice: label values of customer_id -> 403" 403 "$STATUS"
 call "$ALICE" /prom/api/v1/labels
 expect "alice: customer_id hidden from the label list" false "$(jq -r '.data|index("customer_id")!=null' <<<"$BODY")"
+call "$ALICE" /prom/api/v1/query --data-urlencode 'query=demo_requests_total'
+expect "alice: raw query with customer_id in the result -> 200" 200 "$STATUS"
+expect "alice: customer_id values are redacted" true \
+  "$(jq -r '[.data.result[].metric.customer_id // empty] | length > 0 and all(test("^redacted-[0-9]+$"))' <<<"$BODY")"
+expect "alice: redaction notice for Grafana" true \
+  "$(jq -r '[.warnings[]? | startswith("querdian: label values redacted by policy: customer_id")] | any' <<<"$BODY")"
 call "$BOB" /prom/api/v1/query --data-urlencode 'query=sum by (customer_id) (demo_requests_total)'
 expect "bob (no deny): grouping by customer_id works" 200 "$STATUS"
 call "$BOB" /prom/api/v1/labels

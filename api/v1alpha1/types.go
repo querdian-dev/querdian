@@ -46,6 +46,42 @@ type LabelFilter struct {
 	// Deny lists label/attribute names hidden from label endpoints; queries referencing them are rejected.
 	// +optional
 	Deny []string `json:"deny,omitempty"`
+	// Redact lists labels/attributes whose values are rewritten in query results. A redacted name is
+	// also denied: queries referencing it are rejected and label endpoints hide it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Redact []RedactRule `json:"redact,omitempty"`
+}
+
+// RedactStrategy says how a redacted label value is rewritten in responses.
+// +kubebuilder:validation:Enum=Remove;Placeholder;Hash;IPv4Prefix
+type RedactStrategy string
+
+const (
+	// RedactRemove drops the label from every returned label set.
+	RedactRemove RedactStrategy = "Remove"
+	// RedactPlaceholder replaces each distinct value with redacted-<n>, numbered per response in random order.
+	RedactPlaceholder RedactStrategy = "Placeholder"
+	// RedactHash replaces each value with a keyed hash whose key is random per request.
+	RedactHash RedactStrategy = "Hash"
+	// RedactIPv4Prefix keeps the leading octets of an IPv4 address (10.1.x.x); other values become "redacted".
+	RedactIPv4Prefix RedactStrategy = "IPv4Prefix"
+)
+
+// RedactRule rewrites the values of one label in query results.
+// +kubebuilder:validation:XValidation:rule="(self.strategy == 'IPv4Prefix') == has(self.octets)",message="octets is required for IPv4Prefix and not allowed otherwise"
+type RedactRule struct {
+	// Name is a label (Prometheus/Loki) or attribute (Tempo, e.g. span.client.address).
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// Strategy is how values are rewritten.
+	Strategy RedactStrategy `json:"strategy"`
+	// Octets is the number of leading IPv4 octets kept (IPv4Prefix only).
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
+	Octets *int32 `json:"octets,omitempty"`
 }
 
 // ClusterRule is a rule of a ClusterAccessPolicy.

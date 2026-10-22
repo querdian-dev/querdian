@@ -62,7 +62,8 @@ token, so its queries are refused by Querdian (this is the point: use the Keyclo
 Policies (`hack/quickstart/manifests/policies.yaml`):
 
 * `AccessPolicy order-team` in `order-service` (group `order-team`): metrics, logs, traces; the
-  metrics rule also carries `labels.deny: [customer_id]` (the **denied-label example**).
+  metrics rule also carries `labels.redact: [{name: customer_id, strategy: Placeholder}]` (the
+  **redacted-label example**: the label is denied, and its values in results are replaced).
 * `AccessPolicy payment-team` in `payment-service` (group `payment-team`): metrics, logs, traces.
 * `ClusterAccessPolicy platform-admins` (group `platform-admins`): `unrestricted` on all three
   backends for tenant `demo`.
@@ -81,7 +82,7 @@ point (time before now), never on the wall clock, so the same seed always gives 
 
 | Signal | What exists | Volume (24 h) |
 |---|---|---|
-| Metrics (Prometheus) | `http_requests_total{route,method,status}`, the histogram `http_request_duration_seconds` (`route`, `method`), saturation gauges `demo_worker_pool_utilization`, `demo_db_connections_in_use`/`_max`, `demo_queue_depth`, `process_resident_memory_bytes`, `process_cpu_seconds_total`, and `demo_requests_total{customer_id}` (the denied-label example). 5 routes per service, a diurnal load wave, resolution 30 s. | 2 x 99 series, 570 000 samples |
+| Metrics (Prometheus) | `http_requests_total{route,method,status}`, the histogram `http_request_duration_seconds` (`route`, `method`), saturation gauges `demo_worker_pool_utilization`, `demo_db_connections_in_use`/`_max`, `demo_queue_depth`, `process_resident_memory_bytes`, `process_cpu_seconds_total`, and `demo_requests_total{customer_id}` (the redacted-label example). 5 routes per service, a diurnal load wave, resolution 30 s. | 2 x 99 series, 570 000 samples |
 | Logs (Loki) | order-service writes **JSON**, payment-service **logfmt**, both with `level`, `method`, `route`, `status`, `duration_ms` and, for errors, slow requests and about 12% of the rest, a `trace_id`. Background lines (pool statistics at debug level, cache refreshes, circuit-breaker and pool-saturation warnings). | about 56 000 lines |
 | Traces (Tempo) | multi-span traces: a server span per request with child spans for Redis, PostgreSQL and the downstream call (order-service calls `payment-service /payments`, payment-service calls `acme-pay`). Failing requests have error spans with an `exception` event. The `trace_id` in the logs is the id of these traces. | about 6 900 traces, 21 000 spans |
 
@@ -166,7 +167,7 @@ the user may see.
 | **Service overview (RED)** | request rate (by route, by status), error ratio (5xx, by route), latency p50/p95/p99 and p95 per route, saturation (worker pool, database connections against the limit, queue depth, memory, CPU). The incidents above are plainly visible. |
 | **Logs** | log volume by level (stacked), error and warning counts, error rate, log panels for errors/warnings, a level filter and free text search, and the lines that carry a trace id. The `TraceID` link opens the trace in Tempo. |
 | **Traces and latency** | a latency heatmap and p95 by namespace from metrics, and TraceQL searches through Querdian: recent traces, error traces, slow spans (threshold variable), failing downstream calls, server spans with a 5xx status, and a trace-by-ID panel. The trace view's *Logs* button runs the trace to logs query. |
-| **What can I see?** | makes the isolation visible: the namespaces and labels each backend reports for the signed-in user (label and label-value queries), series per namespace, log lines per namespace, spans per namespace, explicit queries against the other team's namespace (empty), and *requests by customer_id*, which is **refused for alice** (denied label) and shown for bob and carol. |
+| **What can I see?** | makes the isolation visible: the namespaces and labels each backend reports for the signed-in user (label and label-value queries), series per namespace, log lines per namespace, spans per namespace, explicit queries against the other team's namespace (empty), and *requests by customer_id*: grouped, it is **refused for alice** (redacted labels are denied); as raw series alice sees `redacted-1..3` with Querdian's notice on the panel, bob and carol see `c-1..c-3`. |
 
 What differs per user: alice sees only `order-service` everywhere and the label list of the second
 dashboard has no `customer_id`; bob only `payment-service`; carol both plus `observability` and
@@ -235,7 +236,9 @@ query-by-query walkthrough:
 2. **Explore**, data source *Prometheus (via Querdian)*: run `demo_requests_total` or
    `count by (namespace) (up)`. Only `order-service` appears. Run
    `sum by (customer_id) (demo_requests_total)`: Querdian answers `403`, `customer_id` is denied for
-   the order team.
+   the order team. Run `demo_requests_total` again and look at the `customer_id` column: the values
+   are `redacted-1`, `redacted-2`, ... and the query shows Querdian's warning *label values redacted
+   by policy*. The same query as bob shows `c-1`, `c-2`, ...
 3. Data source *Loki (via Querdian)*: `{k8s_namespace_name=~".+"}` returns only `order-service` logs;
    `{k8s_namespace_name="payment-service"}` returns nothing.
 4. Data source *Tempo (via Querdian)*, query type TraceQL: `{}` returns only `order-service` traces.
@@ -260,8 +263,9 @@ fields: Querdian redacts them whenever the policy cannot prove the root span mat
      `payment-service`, carol all namespaces; explicit cross-namespace selectors return nothing;
    * LogQL (log and metric queries, label values) and TraceQL (search, trace by ID: another team's
      trace answers 404) with the same expectations;
-   * the denied-label example (`sum by (customer_id)` is 403 for alice, `customer_id` is missing from
-     her label list, fine for bob);
+   * the redacted-label example (`sum by (customer_id)` is 403 for alice, `customer_id` is missing
+     from her label list, her raw `demo_requests_total` carries `redacted-<n>` values and the
+     redaction notice; fine for bob);
    * the spoofing attempts of `order-service` have no effect;
    * the **history** (`DEMO_HISTORY_HOURS`, default 24): the oldest metric sample, log line and
      trace are at least 23 hours old, none are older than the history, alice and bob only see their

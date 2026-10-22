@@ -16,6 +16,10 @@ function h(tag, attrs, ...kids) {
 const chip = (t, cls) => h("span", { class: "chip " + (cls || "") }, t);
 const chips = (a, cls) => (a && a.length ? a.map((x) => chip(x, cls)) : h("span", { class: "muted" }, "none"));
 const mstr = (m) => m.name + m.op + JSON.stringify(m.value);
+// Redacted names are also denied; "hidden" lists only the names that are denied without redaction.
+const hiddenOnly = (x) => x.deniedLabels.filter((n) => !x.redactions.some((r) => r.name === n));
+const rstr = (r) => r.name + ": " + r.before + " → " + (r.after || "removed");
+const redChips = (rs) => rs.map((r) => h("span", { class: "chip redact", title: r.strategy + " · " + r.effect }, rstr(r)));
 
 async function api(path, opts) {
   const r = await fetch("api/" + path, opts);
@@ -44,7 +48,8 @@ function ruleView(r) {
     h("span", { class: "chip z-" + r.type }, ZONE[r.type] || r.type), " ", h("b", {}, r.backend), " ",
     r.tenants.length ? h("span", { class: "muted" }, "tenants: ", r.tenants.join(", ")) : null,
     h("div", {}, r.unrestricted ? chip("unrestricted") : chips(r.matchers.map(mstr))),
-    r.deniedLabels.length ? h("div", {}, h("span", { class: "label" }, "Hidden labels "), chips(r.deniedLabels, "deny")) : null);
+    hiddenOnly(r).length ? h("div", {}, h("span", { class: "label" }, "Hidden labels "), chips(hiddenOnly(r), "deny")) : null,
+    r.redactions.length ? h("div", {}, h("span", { class: "label" }, "Redacted labels "), redChips(r.redactions)) : null);
 }
 
 async function policies() {
@@ -82,7 +87,8 @@ function pass(a) {
     const lines = x.unrestricted ? ["unrestricted"] : x.terms.map((t) => (t.tenant ? t.tenant + ": " : "") + (t.matchers.map(mstr).join(", ") || "all"));
     return h("div", { class: "zone " + x.type }, h("b", {}, (ZONE[x.type] || x.type) + " · " + x.backend),
       lines.map((l) => h("span", { class: "m" }, l)),
-      x.deniedLabels.length ? h("span", { class: "m" }, "hidden: " + x.deniedLabels.join(", ")) : null);
+      hiddenOnly(x).length ? h("span", { class: "m" }, "hidden: " + hiddenOnly(x).join(", ")) : null,
+      x.redactions.map((r) => h("span", { class: "m" }, "redacted: " + rstr(r) + " (" + r.effect + ")")));
   });
   return zones;
 }
@@ -138,6 +144,13 @@ async function test() {
       if (r.allowed) {
         r.upstream.forEach((u, i) => strip.append(h("div", { class: "out" }, h("span", { class: "label" }, r.upstream.length > 1 ? "Stamped query, term " + (i + 1) : "Stamped query"),
           h("pre", {}, u.query))));
+        if (r.redactionMode === "rewrite") {
+          strip.append(h("div", { class: "out" }, h("span", { class: "label" }, "Result labels · rewritten in the response"),
+            h("pre", { class: "redacted" }, r.redactions.map((x) => rstr(x) + "  (" + x.effect + ")").join("\n"))));
+        } else if (r.redactionMode === "remove") {
+          strip.append(h("div", { class: "out" }, h("span", { class: "label" }, "Result labels · removed by this endpoint"),
+            h("pre", { class: "redacted" }, r.redactions.map((x) => x.name).join(", "))));
+        }
         strip.append(h("div", { class: "meta" }, "strategy " + r.strategy + " · policies " + r.policies.join(", ")));
       } else {
         strip.append(h("div", { class: "out" }, h("span", { class: "label" }, "Refused · " + r.status), h("pre", { class: "refused" }, r.reason + (r.detail ? ": " + r.detail : ""))));

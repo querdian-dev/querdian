@@ -75,16 +75,46 @@ func compileMatchers(t config.BackendType, in []v1.Matcher) ([]Matcher, *compile
 	return out, nil
 }
 
-func compileDeny(t config.BackendType, f *v1.LabelFilter) ([]string, *compileError) {
+// compileLabels returns the denied names (including redacted ones) and the redactions of a rule.
+func compileLabels(t config.BackendType, f *v1.LabelFilter) ([]string, map[string]Redaction, *compileError) {
 	if f == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	for _, n := range f.Deny {
 		if !validName(t, n) {
-			return nil, fail(ReasonInvalidMatcher, "invalid denied label name %q for %s backend", n, t)
+			return nil, nil, fail(ReasonInvalidMatcher, "invalid denied label name %q for %s backend", n, t)
 		}
 	}
-	return sortedUnique(f.Deny), nil
+	deny := append([]string(nil), f.Deny...)
+	var red map[string]Redaction
+	for _, r := range f.Redact {
+		if !validName(t, r.Name) {
+			return nil, nil, fail(ReasonInvalidMatcher, "invalid redacted label name %q for %s backend", r.Name, t)
+		}
+		if _, dup := red[r.Name]; dup {
+			return nil, nil, fail(ReasonInvalidMatcher, "label %q is redacted twice", r.Name)
+		}
+		cr := Redaction{Strategy: r.Strategy}
+		switch r.Strategy {
+		case v1.RedactRemove, v1.RedactPlaceholder, v1.RedactHash:
+			if r.Octets != nil {
+				return nil, nil, fail(ReasonInvalidMatcher, "redact %q: octets is only allowed for %s", r.Name, v1.RedactIPv4Prefix)
+			}
+		case v1.RedactIPv4Prefix:
+			if r.Octets == nil || *r.Octets < 1 || *r.Octets > 3 {
+				return nil, nil, fail(ReasonInvalidMatcher, "redact %q: %s requires octets between 1 and 3", r.Name, v1.RedactIPv4Prefix)
+			}
+			cr.Octets = int(*r.Octets)
+		default:
+			return nil, nil, fail(ReasonInvalidMatcher, "redact %q: unknown strategy %q", r.Name, r.Strategy)
+		}
+		if red == nil {
+			red = map[string]Redaction{}
+		}
+		red[r.Name] = cr
+		deny = append(deny, r.Name)
+	}
+	return sortedUnique(deny), red, nil
 }
 
 func sortedUnique(in []string) []string {
@@ -265,11 +295,11 @@ func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*Com
 			if err != nil {
 				return nil, err
 			}
-			deny, err := compileDeny(b.Type, r.Labels)
+			deny, red, err := compileLabels(b.Type, r.Labels)
 			if err != nil {
 				return nil, err
 			}
-			cr := &CompiledRule{Policy: policy, Backend: bn, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny}
+			cr := &CompiledRule{Policy: policy, Backend: bn, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny, Redactions: red}
 			if b.TenantHeader != "" {
 				cr.Tenants = sortedUnique(r.Tenants)
 			}
@@ -304,13 +334,13 @@ func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]s
 			if err != nil {
 				return nil, err
 			}
-			deny, err := compileDeny(b.Type, r.Labels)
+			deny, red, err := compileLabels(b.Type, r.Labels)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, &CompiledRule{
 				Policy: policy, Backend: bn, Tenants: tenants,
-				Matchers: append([]Matcher{ns}, ms...), DeniedLabels: deny,
+				Matchers: append([]Matcher{ns}, ms...), DeniedLabels: deny, Redactions: red,
 			})
 		}
 	}

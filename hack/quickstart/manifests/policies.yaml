@@ -12,10 +12,13 @@ metadata: {name: order-team, namespace: order-service}
 spec:
   subjects: {groups: [order-team]}
   rules:
-    # Denied-label example: order-team can query metrics, but customer_id may not be used to
-    # filter, group or join (query -> 403 denied_label) and is hidden from /api/v1/labels.
+    # Redacted-label example: order-team can query metrics, but customer_id may not be used to
+    # filter, group or join (query -> 403 denied_label), is hidden from /api/v1/labels, and its
+    # values in query results are replaced by redacted-1, redacted-2, ... (labels.redact implies deny).
     - backends: [metrics]
-      labels: {deny: [customer_id]}
+      labels:
+        redact:
+          - {name: customer_id, strategy: Placeholder}
     - backends: [logs, traces]
 ---
 apiVersion: policy.querdian.dev/v1alpha1

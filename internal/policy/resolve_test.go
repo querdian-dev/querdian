@@ -273,3 +273,28 @@ func TestResolveIndependentOfOrder(t *testing.T) {
 		t.Fatalf("want a single merged term, got %s", render(first.Terms))
 	}
 }
+
+func TestResolveRedactionsStrictest(t *testing.T) {
+	s := snap(t, []v1.ClusterAccessPolicy{
+		capol("a", v1.Subjects{Groups: []string{"g1"}}, v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{ns("a")},
+			Labels: &v1.LabelFilter{Redact: []v1.RedactRule{{Name: "c", Strategy: v1.RedactHash}, {Name: "ip", Strategy: v1.RedactIPv4Prefix, Octets: i32(3)}}}}),
+		capol("b", v1.Subjects{Groups: []string{"g2"}}, v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{ns("b")},
+			Labels: &v1.LabelFilter{Deny: []string{"c"}, Redact: []v1.RedactRule{{Name: "ip", Strategy: v1.RedactIPv4Prefix, Octets: i32(1)}}}}),
+		capol("c", v1.Subjects{Groups: []string{"g3"}}, v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{ns("c")}}),
+	}, nil, nil)
+	eff, err := s.Resolve("u", []string{"g1", "g2", "g3"}, "metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A rule that only denies c does not weaken another rule's redaction of c.
+	if eff.Redactions["c"] != (Redaction{Strategy: v1.RedactHash}) || eff.Redactions["ip"] != (Redaction{Strategy: v1.RedactIPv4Prefix, Octets: 1}) {
+		t.Fatalf("redactions = %+v", eff.Redactions)
+	}
+	if strings.Join(eff.DeniedLabels, ",") != "c,ip" {
+		t.Fatalf("denied = %v", eff.DeniedLabels)
+	}
+	eff, err = s.Resolve("u", []string{"g3"}, "metrics")
+	if err != nil || eff.Redactions != nil {
+		t.Fatalf("no redactions expected: %+v, %v", eff.Redactions, err)
+	}
+}

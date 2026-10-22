@@ -44,6 +44,7 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 
 	var terms []Term
 	var denied, policies []string
+	var redactions map[string]Redaction
 	seen := make(map[*CompiledRule]bool, len(rules))
 	for _, r := range rules {
 		if seen[r] {
@@ -51,6 +52,15 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 		}
 		seen[r] = true
 		denied = append(denied, r.DeniedLabels...)
+		for name, red := range r.Redactions {
+			if redactions == nil {
+				redactions = map[string]Redaction{}
+			}
+			if cur, ok := redactions[name]; ok {
+				red = Stricter(cur, red)
+			}
+			redactions[name] = red
+		}
 		policies = append(policies, r.Policy)
 		if len(r.Tenants) == 0 {
 			terms = append(terms, Term{Matchers: r.Matchers})
@@ -76,6 +86,7 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 		}
 	}
 	eff.DeniedLabels = sortedUnique(denied)
+	eff.Redactions = redactions
 	eff.Policies = sortedUnique(policies)
 	return eff, nil
 }

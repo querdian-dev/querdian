@@ -1,6 +1,7 @@
 package traceql
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,6 +213,23 @@ func jsonAttrSet(raw json.RawMessage) (attrSet, error) {
 	return a, nil
 }
 
+// jsonIdentity is the string representing an attribute value for redaction: the string itself, or the
+// compacted JSON of any other value.
+func jsonIdentity(raw json.RawMessage) string {
+	var sv struct {
+		StringValue *string `json:"stringValue"`
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(raw, &probe) == nil && len(probe) == 1 && json.Unmarshal(raw, &sv) == nil && sv.StringValue != nil {
+		return *sv.StringValue
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, raw) != nil {
+		return string(raw)
+	}
+	return b.String()
+}
+
 // stripJSONAttrs removes denied attributes from obj["attributes"].
 func (f *TraceFilter) stripJSONAttrs(obj jsonObj, scope string) error {
 	if len(f.denied) == 0 {
@@ -228,10 +246,25 @@ func (f *TraceFilter) stripJSONAttrs(obj jsonObj, scope string) error {
 	kept := make([]json.RawMessage, 0, len(items))
 	for _, it := range items {
 		var kv struct {
-			Key string `json:"key"`
+			Key   string          `json:"key"`
+			Value json.RawMessage `json:"value"`
 		}
 		if err := json.Unmarshal(it, &kv); err != nil {
 			return fmt.Errorf("decode json trace: attribute: %w", err)
+		}
+		if red := f.opt.Redactor; red != nil {
+			if rule, id, ok := red.AttrRule(scope, kv.Key); ok {
+				nv, keep := red.Value(rule, id, jsonIdentity(kv.Value))
+				if !keep {
+					continue
+				}
+				b, err := json.Marshal(map[string]any{"key": kv.Key, "value": map[string]string{"stringValue": nv}})
+				if err != nil {
+					return err
+				}
+				kept = append(kept, b)
+				continue
+			}
 		}
 		if !f.isDenied(scope, kv.Key) {
 			kept = append(kept, it)

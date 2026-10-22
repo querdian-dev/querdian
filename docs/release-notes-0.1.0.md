@@ -67,7 +67,9 @@ The complete list is [limitations.md](limitations.md); the attacker model is in 
   Search responses lose `rootServiceName`, `rootTraceName` and `serviceStats`, and the trace start
   and duration are recomputed from the matching spans, for every user who is not unrestricted.
 * **Denied labels hide, they do not redact.** `labels.deny` blocks filtering, grouping and listing of
-  a label; the label can still appear in query results (except trace by ID).
+  a label; the label can still appear in query results (except trace by ID). Use the opt-in
+  `labels.redact` to rewrite its values as well; redacted responses are buffered rather than
+  streamed.
 * **Approximate results.** Summed Loki statistics, volume, patterns and detected-label cardinalities
   can count a record once per matching term when terms are not provably disjoint; such responses are
   marked with `X-Querdian-Approximate: true`.

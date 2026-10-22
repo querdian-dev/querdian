@@ -87,8 +87,8 @@ Diagram and trust boundary: [threat model, section 2](threat-model.md#2-assets-a
   provider or Kubernetes API, or from a workload that can forge the namespace label in the telemetry.
 * Authentication of backends, TLS termination, rate limiting, token revocation and DDoS protection
   (these belong to the ingress, mesh, identity provider and the backends).
-* Redacting denied labels from query results (`labels.deny` hides and blocks, see
-  [limitations](../limitations.md#denied-labels)).
+* Redacting denied labels from query results by default (`labels.deny` hides and blocks;
+  redaction is the opt-in `labels.redact`, see [limitations](../limitations.md#denied-labels)).
 * Compatibility with evoila/janus: credited as inspiration only; no code, tests or docs were copied.
 
 ## Self-assessment use
@@ -114,7 +114,7 @@ and by differential tests against real backends.
 | Query rewriting | `internal/enforce/*`, `pkg/logql`, `pkg/traceql` | Every selector or spanset filter carries the policy. PromQL uses the Prometheus parser; LogQL and TraceQL use clean-room parsers that are stricter than the backends. Property fuzzing, 10 fuzz targets, differential suites (see below). |
 | Denied labels and attributes | `internal/enforce/*` | Queries referencing denied labels are 403; label listings filtered. Conservative token scan for LogQL. |
 | Fan-out and merge | `internal/fanout` | All-or-nothing; byte caps; merges proven by property tests (e.g. top-L of the union). |
-| Response filtering and redaction | `internal/fanout`, `internal/enforce/traceql` | Tempo search metadata redaction, trace-by-ID filtering, Prometheus/Loki series and label filtering; undecodable bodies are `502`, never unfiltered. |
+| Response filtering and redaction | `internal/fanout`, `internal/enforce/traceql`, `internal/enforce/redact` | Tempo search metadata redaction, trace-by-ID filtering, Prometheus/Loki series and label filtering, `labels.redact` value rewriting; undecodable bodies are `502`, never unfiltered. |
 
 Evidence of end-to-end behaviour: `test/e2e/{prometheus,loki,tempo}` run real Prometheus, Loki and
 Tempo containers (`make e2e`): isolation across namespaces and tenants, semantic equivalence of the

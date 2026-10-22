@@ -42,7 +42,8 @@ type Plan struct {
 	// Content-Length; the proxy should request an uncompressed upstream response). An error from the filter, or a body larger than
 	// ResponseFilterMaxBytes, must fail the request closed (502); the unfiltered body must never be
 	// sent. Non-2xx responses carry no data and are streamed unchanged. It is used for the Prometheus
-	// "labels" endpoint to hide denied label names (promql.FilterLabelsResponse).
+	// "labels" endpoint to hide denied label names (promql.FilterLabelsResponse), and the server chains the
+	// label redaction of query results (internal/enforce/redact) into it.
 	ResponseFilter func(body []byte) ([]byte, error)
 	// ResponseFilterMaxBytes bounds the buffering for ResponseFilter; it is meaningful only when
 	// ResponseFilter is set.

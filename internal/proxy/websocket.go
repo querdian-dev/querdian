@@ -38,6 +38,10 @@ type TailOptions struct {
 	DialTimeout time.Duration
 	// WriteTimeout bounds one write to the client (default 10s).
 	WriteTimeout time.Duration
+	// Rewrite optionally rewrites each merged frame before it is sent (label redaction). It is called
+	// under the write lock, so it need not be safe for concurrent use. An error closes the tail; the
+	// original frame is never sent.
+	Rewrite func(frame []byte) ([]byte, error)
 }
 
 // ServeTail serves the Loki tail endpoint (PLAN §7.3): it opens one upstream WebSocket per plan request
@@ -170,6 +174,13 @@ func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Co
 					continue
 				}
 				writeMu.Lock()
+				if opt.Rewrite != nil {
+					if frame, err = opt.Rewrite(frame); err != nil {
+						writeMu.Unlock()
+						failWith(websocket.StatusInternalError, "invalid upstream frame")
+						return
+					}
+				}
 				wctx, cancel := context.WithTimeout(ioCtx, opt.WriteTimeout)
 				err = client.Write(wctx, websocket.MessageText, frame)
 				cancel()
