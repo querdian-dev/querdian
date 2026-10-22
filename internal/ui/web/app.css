@@ -46,6 +46,7 @@ tbody tr.row { cursor: pointer; } tbody tr.row:hover td { background: rgba(16,20
 
 .chip { display: inline-block; font-family: var(--mono); font-size: .8rem; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 3px; background: rgba(16,20,24,.07); }
 .chip.deny { background: repeating-linear-gradient(135deg, var(--paper) 0 8px, #dcdcd6 8px 16px); font-weight: 700; }
+.chip.redact { background: var(--ink); color: var(--paper); font-weight: 700; }
 .stamp { border-radius: 3px; font-weight: 700; padding: 1px 3px; }
 .z-prometheus { background: var(--metrics); color: var(--ink); } .z-loki { background: var(--logs); color: #fff; } .z-tempo { background: var(--traces); color: var(--ink); }
 
@@ -77,6 +78,7 @@ textarea { font-family: var(--mono); font-size: .9rem; min-height: 120px; resize
 .strip pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 .9rem/1.65 var(--mono); }
 .strip .out { grid-column: 1 / -1; } .strip.two .out { grid-column: auto; }
 .strip .refused { background: repeating-linear-gradient(135deg, rgba(244,244,240,.12) 0 8px, transparent 8px 16px); padding: 12px; border-radius: 3px; }
+.strip .redacted { border-left: 3px solid var(--paper); padding-left: 12px; }
 .strip .meta { grid-column: 1 / -1; color: #98a2ad; font-size: .85rem; }
 
 .drawer { border-top: 3px solid var(--ink); background: var(--card); padding: 20px; margin: 0 0 8px; }

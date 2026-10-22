@@ -232,7 +232,7 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 	r = r.WithContext(context.WithValue(r.Context(), effKey{}, eff))
 	r.Form = params
 	merge := s.merger(b, ep, &plan, eff)
-	if rewrite := resultRewriter(b.Type, ep.Template, red); rewrite != nil {
+	if rewrite := red.ResultRewriter(b.Type, ep.Template); rewrite != nil {
 		limit := s.d.Config.Limits.MaxMergeBytes
 		if plan.Merge == enforce.MergeNone && len(plan.Requests) == 1 {
 			plan.ResponseFilter = chainFilters(plan.ResponseFilter, rewrite)
@@ -244,36 +244,6 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		}
 	}
 	s.proxies[b.Name].Execute(w, r, target, plan, merge)
-}
-
-// resultRewriter returns the redaction rewriter for the query result endpoints, or nil when red is nil or
-// the endpoint returns no label values that are not already removed as denied labels (label lists,
-// series and index endpoints remove redacted names like denied ones). Trace by ID and tail are redacted
-// by their own paths.
-func resultRewriter(t config.BackendType, tmpl string, red *redact.Redactor) func([]byte) ([]byte, error) {
-	if red == nil {
-		return nil
-	}
-	switch t {
-	case config.BackendPrometheus:
-		switch tmpl {
-		case "/api/v1/query", "/api/v1/query_range":
-			return red.Query
-		case "/api/v1/query_exemplars":
-			return red.Exemplars
-		}
-	case config.BackendLoki:
-		switch tmpl {
-		case "/loki/api/v1/query", "/loki/api/v1/query_range":
-			return red.Query
-		}
-	case config.BackendTempo:
-		switch tmpl {
-		case "/api/search", "/api/metrics/query_range", "/api/metrics/query":
-			return red.Tempo
-		}
-	}
-	return nil
 }
 
 // chainFilters applies first (if any), then second.

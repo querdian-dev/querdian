@@ -7,13 +7,17 @@ It is off by default. It has no write path: it never changes a policy and never 
 
 * **Overview**: snapshot generation, policy counts (ready / not ready), users, groups, backends.
 * **Policies**: every `ClusterAccessPolicy` and `AccessPolicy` with its `Ready` reason and message.
-  Select a row for its compiled rules (backend, tenants, matchers, hidden labels).
-* **Access**: pick a user and groups and see the exact union of rules per backend, drawn as a pass.
+  Select a row for its compiled rules (backend, tenants, matchers, hidden labels, and redacted labels
+  with an example of their effect, such as `customer_id: 42 → redacted-1`).
+* **Access**: pick a user and groups and see the exact union of rules per backend, drawn as a pass,
+  including which labels are hidden and which are redacted with which strategy.
 * **Backends**: configured backends (no URLs or credentials) and the policies that reach each.
 * **Test bench**: choose a user, groups, a backend and a query. The dashboard resolves the effective
   policy and runs the same enforcer as the proxy, then shows the incoming and the rewritten query, or
   the refusal and its reason. Unknown users, denied labels and unparseable queries are refused exactly
-  as the proxy refuses them.
+  as the proxy refuses them. When the user's policy redacts labels, the bench also shows what happens
+  to them in the response: values rewritten (query endpoints) or names removed (series and label
+  endpoints).
 
 ## Enabling it
 

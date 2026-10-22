@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"maps"
 	"sort"
 
 	"github.com/querdian-dev/querdian/internal/config"
@@ -62,7 +63,8 @@ type RuleView struct {
 	Tenants      []string
 	Unrestricted bool
 	Matchers     []Matcher
-	DeniedLabels []string
+	DeniedLabels []string // includes the names of Redactions
+	Redactions   map[string]Redaction
 }
 
 // View is a read-only description of one policy as compiled into the snapshot.
@@ -101,6 +103,7 @@ func (s *Snapshot) Policies() []View {
 							Unrestricted: cr.Unrestricted,
 							Matchers:     append([]Matcher(nil), cr.Matchers...),
 							DeniedLabels: append([]string(nil), cr.DeniedLabels...),
+							Redactions:   maps.Clone(cr.Redactions),
 						})
 					}
 					if group {

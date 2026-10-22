@@ -10,7 +10,7 @@ import (
 func TestSnapshotPoliciesAndSubjects(t *testing.T) {
 	s := snap(t, []v1.ClusterAccessPolicy{
 		capol("p", v1.Subjects{Groups: []string{"g1", "g2"}, Users: []string{"alice"}},
-			v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{ns("a")}, Labels: &v1.LabelFilter{Deny: []string{"secret"}}}),
+			v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{ns("a")}, Labels: &v1.LabelFilter{Deny: []string{"secret"}, Redact: []v1.RedactRule{{Name: "c", Strategy: v1.RedactHash}}}}),
 		capol("bad", v1.Subjects{Groups: []string{"g3"}}, v1.ClusterRule{Backends: []string{"nope"}, Matchers: []v1.Matcher{ns("a")}}),
 	}, nil, nil)
 
@@ -25,7 +25,8 @@ func TestSnapshotPoliciesAndSubjects(t *testing.T) {
 	if strings.Join(p.Groups, ",") != "g1,g2" || strings.Join(p.Users, ",") != "alice" {
 		t.Fatalf("subjects: %+v", p)
 	}
-	if len(p.Rules) != 1 || p.Rules[0].Backend != "metrics" || strings.Join(p.Rules[0].DeniedLabels, ",") != "secret" {
+	if len(p.Rules) != 1 || p.Rules[0].Backend != "metrics" || strings.Join(p.Rules[0].DeniedLabels, ",") != "c,secret" ||
+		p.Rules[0].Redactions["c"] != (Redaction{Strategy: v1.RedactHash}) {
 		t.Fatalf("rules: %+v", p.Rules)
 	}
 

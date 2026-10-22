@@ -219,14 +219,15 @@ func (r *Redactor) Notice() string {
 	}
 	parts := make([]string, 0, len(r.hit))
 	for name := range r.hit {
-		parts = append(parts, name+" ("+describe(r.rules[name])+")")
+		parts = append(parts, name+" ("+Describe(r.rules[name])+")")
 	}
 	clear(r.hit)
 	slices.Sort(parts)
 	return NoticePrefix + "label values redacted by policy: " + strings.Join(parts, ", ")
 }
 
-func describe(red policy.Redaction) string {
+// Describe says in a few words what a redaction does to a value.
+func Describe(red policy.Redaction) string {
 	switch red.Strategy {
 	case v1.RedactRemove:
 		return "removed"
@@ -238,4 +239,17 @@ func describe(red policy.Redaction) string {
 		return "first " + strconv.Itoa(red.Octets) + " octets kept"
 	}
 	return "removed"
+}
+
+// Example shows the effect of a redaction on a typical value, for documentation and the dashboard.
+func Example(red policy.Redaction) (before, after string) {
+	switch red.Strategy {
+	case v1.RedactPlaceholder:
+		return "42", prefix + "1"
+	case v1.RedactHash:
+		return "42", prefix + "9f3a5c0e71d2b846"
+	case v1.RedactIPv4Prefix:
+		return "10.1.2.3", ipv4Prefix("10.1.2.3", red.Octets)
+	}
+	return "42", ""
 }
