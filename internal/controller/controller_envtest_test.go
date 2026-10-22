@@ -133,9 +133,11 @@ func TestSnapshotFollowsPolicies(t *testing.T) {
 	if err := direct.Get(ctx, client.ObjectKeyFromObject(p), p); err != nil {
 		t.Fatal(err)
 	}
+	// A merge patch carries no resourceVersion, so it cannot conflict with the status writer's update.
+	orig := p.DeepCopy()
 	p.Spec.Rules[0].Unrestricted = false
 	p.Spec.Rules[0].Matchers = []v1.Matcher{{Name: "namespace", Op: v1.MatchEqual, Value: "a"}}
-	if err := direct.Update(ctx, p); err != nil {
+	if err := direct.Patch(ctx, p, client.MergeFrom(orig)); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 5*time.Second, "update reflected", func() bool {

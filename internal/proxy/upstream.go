@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -12,19 +13,13 @@ import (
 	"github.com/querdian-dev/querdian/internal/policy"
 )
 
-// stripped are removed from every client request before it is forwarded (PLAN §9). Hop-by-hop headers and
-// X-Forwarded-*/Forwarded are additionally handled by net/http/httputil.
-var stripped = []string{
-	"Authorization", "Cookie", "X-Scope-OrgID", "Baggage", "Traceparent", "Tracestate",
-	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
-	"X-Real-Ip", "Proxy-Authorization", "Content-Length",
-}
-
 // TenantValue renders the tenant header value: a single tenant, or t1|t2|... for federation.
 func TenantValue(eff policy.Effective) string { return strings.Join(eff.Tenants, "|") }
 
 // prepare rewrites out (a copy of the client request) into the upstream request: target URL, parameters,
-// headers and body. Only the proxy sets the tenant header; trace context is propagated as W3C tracecontext only.
+// headers and body. Only the backend's forwardHeaders survive from the client (PLAN §9); config validation keeps
+// credentials, tenant, trace and hop-by-hop headers out of that list. Only the proxy sets the tenant header;
+// trace context is propagated as W3C tracecontext only.
 func prepare(out, in *http.Request, base *url.URL, upstreamPath string, params url.Values, b *config.Backend, eff policy.Effective) {
 	out.URL = &url.URL{
 		Scheme: base.Scheme,
@@ -33,8 +28,10 @@ func prepare(out, in *http.Request, base *url.URL, upstreamPath string, params u
 	}
 	out.Host = base.Host
 
-	for _, h := range stripped {
-		out.Header.Del(h)
+	for k := range out.Header {
+		if !slices.Contains(b.ForwardHeaders, http.CanonicalHeaderKey(k)) {
+			delete(out.Header, k)
+		}
 	}
 	if b.TenantHeader != "" {
 		out.Header.Del(b.TenantHeader)

@@ -129,6 +129,11 @@ func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t 
 			pr.SetXForwarded()
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			// Upgrade is never forwarded and tail uses ServeTail, so a protocol switch here would tunnel
+			// raw upstream bytes past every filter.
+			if resp.StatusCode == http.StatusSwitchingProtocols {
+				return errors.New("unexpected protocol switch")
+			}
 			resp.Header.Del(TraceHeader) // ours is authoritative
 			if t.ModifyResponse != nil {
 				if err := t.ModifyResponse(resp); err != nil {

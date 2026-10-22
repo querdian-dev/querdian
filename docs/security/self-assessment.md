@@ -74,7 +74,8 @@ Diagram and trust boundary: [threat model, section 2](threat-model.md#2-assets-a
 * Fail closed: errors in authentication, resolution, parsing, rewriting or merging produce a
   rejection, never an unenforced pass-through. If the exact union cannot be expressed, reject.
 * Queries are rewritten with parsers, never with regular expressions or string surgery.
-* Clients cannot choose a tenant: tenant and credential headers are stripped and set by Querdian.
+* Clients cannot choose a tenant: only allow-listed client headers are forwarded, and the tenant
+  header is set by Querdian.
 * Traceable decisions without logging personal data by default.
 * Supply-chain hygiene: license allowlist, DCO, pinned CI actions and base image, signed release
   artefacts (once released).
@@ -129,7 +130,7 @@ found and led to fixes for real defects before release, listed under
 |---|---|
 | Resource limits | `maxPolicyTerms`, `maxFanout`, `maxMergeBytes`, `upstreamTimeout`, selector-copy caps, 1 MiB form bodies, parser nesting limit, `ReadHeaderTimeout`. No rate limiting ([threat model, section 8](threat-model.md#8-resource-exhaustion)). |
 | Privacy defaults | Usernames and query text are not logged or traced unless `--tracing.record-user` / `--tracing.record-queries` are set. Tokens are never logged or forwarded. |
-| Header hygiene | `Authorization`, cookies, tenant headers, `Forwarded`, `baggage` etc. stripped; only W3C `traceparent` is propagated, fixed in code. |
+| Header hygiene | Client headers are allow-listed per backend (`forwardHeaders`, default `Accept`, `Accept-Encoding`, `User-Agent`, Loki's `X-Loki-Response-Encoding-Flags`); everything else is dropped, and credentials, tenant headers, `baggage`, `Upgrade` etc. cannot be allow-listed. Only W3C `traceparent` is propagated, fixed in code. A backend `101` on a non-WebSocket route fails closed. |
 | Observability for security | Metrics by decision and reason, `X-Trace-Id` on every response, Grafana dashboard ([dashboards](../dashboards.md)). Management port is unauthenticated (keep it cluster-internal). |
 | Least-privilege deployment | Chart: RBAC limited to `get/list/watch` on the CRDs and namespaces, `update/patch` on policy status, leases and events; distroless static non-root image (uid 65532), compatible with a read-only root filesystem; optional NetworkPolicies for the proxy and for backend protection (verified on kind, [TASKS.md](../../TASKS.md) T5.1). |
 | Supply-chain controls | License gate (`go-licenses`), `govulncheck` in CI, actions pinned by commit SHA, base image pinned by digest, Renovate configuration (requires the app to be installed), DCO, CodeQL, OpenSSF Scorecard workflow. |

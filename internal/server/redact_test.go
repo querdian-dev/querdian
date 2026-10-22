@@ -1,11 +1,13 @@
 package server
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
@@ -66,6 +68,48 @@ func TestPrometheusRedactionEndToEnd(t *testing.T) {
 	})
 	if resp, body = get(t, srv, "/prom/api/v1/query?query=up", tok); resp.StatusCode != 422 {
 		t.Errorf("upstream error: %d %s", resp.StatusCode, body)
+	}
+}
+
+// A backend that switches protocols on a query route must not tunnel unredacted bytes to the client: the
+// client's Upgrade is never forwarded, and a 101 fails closed.
+func TestRedactionSurvivesProtocolSwitch(t *testing.T) {
+	h := newHarness(t)
+	h.policies(clusterPolicy("redact", v1Subjects("g"), v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{eqm("namespace", "a")},
+		Labels: &v1.LabelFilter{Redact: []v1.RedactRule{{Name: "customer_id", Strategy: v1.RedactPlaceholder}}}}))
+	const result = `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"customer_id":"42"},"value":[1,"1"]}]}}`
+	var always atomic.Bool
+	h.metricsUp.setHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") == "" && !always.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, result)
+			return
+		}
+		c, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n" + result)
+		_ = buf.Flush()
+	})
+	srv := httptest.NewServer(h.server(allEnforcers).ProxyHandler())
+	defer srv.Close()
+	tok := h.issuer.token(t, "u", "g")
+	upgrade := []string{"Connection", "Upgrade", "Upgrade", "websocket"}
+
+	// The backend upgrades only when asked to; it never is.
+	resp, body := get(t, srv, "/prom/api/v1/query?query=up", tok, upgrade...)
+	if resp.StatusCode != 200 || strings.Contains(body, `"42"`) || !placeholderRe.MatchString(body) {
+		t.Errorf("client upgrade: %d %q", resp.StatusCode, body)
+	}
+	// The backend upgrades regardless.
+	always.Store(true)
+	for _, hdr := range [][]string{nil, upgrade} {
+		resp, body = get(t, srv, "/prom/api/v1/query?query=up", tok, hdr...)
+		if resp.StatusCode != 502 || strings.Contains(body, `"42"`) {
+			t.Errorf("forced 101 (client headers %v): %d %q", hdr, resp.StatusCode, body)
+		}
 	}
 }
 

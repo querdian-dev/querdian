@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -77,7 +78,38 @@ type Backend struct {
 	TenantHeader     string           `json:"tenantHeader"`
 	TenantFederation TenantFederation `json:"tenantFederation"`
 	TraceByID        TraceByID        `json:"traceByID"`
+	// ForwardHeaders lists the client headers passed to the backend, in canonical form; all others are
+	// dropped (PLAN §9). Absent means DefaultForwardHeaders for the type; an empty list forwards none.
+	ForwardHeaders []string `json:"forwardHeaders"`
 }
+
+// DefaultForwardHeaders returns the client headers forwarded when forwardHeaders is absent: content
+// negotiation and User-Agent, plus Loki's categorize-labels flag, whose encoding the merges and redaction
+// handle.
+func DefaultForwardHeaders(t BackendType) []string {
+	h := []string{"Accept", "Accept-Encoding", "User-Agent"}
+	if t == BackendLoki {
+		h = append(h, "X-Loki-Response-Encoding-Flags")
+	}
+	return h
+}
+
+// reservedHeaders may never be listed in forwardHeaders: credentials, tenant selection, headers the proxy
+// sets itself and hop-by-hop headers. The backend's own tenantHeader is rejected as well.
+var reservedHeaders = func() map[string]bool {
+	m := map[string]bool{}
+	for _, h := range []string{
+		"Authorization", "Proxy-Authorization", "Cookie",
+		"X-Scope-OrgID", "THANOS-TENANT",
+		"Traceparent", "Tracestate", "Baggage",
+		"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-IP",
+		"Connection", "Upgrade", "Keep-Alive", "Proxy-Connection", "TE", "Trailer", "Transfer-Encoding",
+		"Host", "Content-Type", "Content-Length",
+	} {
+		m[textproto.CanonicalMIMEHeaderKey(h)] = true
+	}
+	return m
+}()
 
 // Limits bounds per-request resource usage.
 type Limits struct {
@@ -164,6 +196,12 @@ func (c *Config) applyDefaults() {
 		if b.Type == BackendTempo && b.TraceByID == "" {
 			b.TraceByID = TraceByIDDeny
 		}
+		if b.ForwardHeaders == nil {
+			b.ForwardHeaders = DefaultForwardHeaders(b.Type)
+		}
+		for j, h := range b.ForwardHeaders {
+			b.ForwardHeaders[j] = textproto.CanonicalMIMEHeaderKey(h)
+		}
 	}
 }
 
@@ -231,6 +269,14 @@ func (c *Config) Validate() error {
 		} else if b.TraceByID != "" {
 			add("%s.traceByID is only valid on tempo backends", p)
 		}
+		for _, h := range b.ForwardHeaders {
+			switch {
+			case !validHeaderName(h):
+				add("%s.forwardHeaders: %q is not a valid header name", p, h)
+			case reservedHeaders[h] || (b.TenantHeader != "" && h == textproto.CanonicalMIMEHeaderKey(b.TenantHeader)):
+				add("%s.forwardHeaders: %q is a credential, tenant, proxy-set or hop-by-hop header", p, h)
+			}
+		}
 	}
 	// Prefixes must be unique and must not nest, otherwise routing would be ambiguous.
 	for i := range c.Backends {
@@ -242,6 +288,18 @@ func (c *Config) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validHeaderName reports whether s is an RFC 9110 token, the syntax of a header field name.
+func validHeaderName(s string) bool {
+	for _, c := range []byte(s) {
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 // Backend returns the backend with the given name.

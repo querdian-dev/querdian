@@ -84,6 +84,8 @@ type recordingUpstream struct {
 	body []string
 	// reply, when set, chooses the response; otherwise a fixed success body is returned.
 	reply func(r *http.Request) (status int, contentType, body string)
+	// handler, when set, takes precedence over reply and writes the response itself.
+	handler http.HandlerFunc
 }
 
 // setReply installs a custom response function.
@@ -91,6 +93,13 @@ func (u *recordingUpstream) setReply(f func(r *http.Request) (int, string, strin
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.reply = f
+}
+
+// setHandler installs a handler for responses reply cannot express (for example a hijacked connection).
+func (u *recordingUpstream) setHandler(f http.HandlerFunc) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.handler = f
 }
 
 func newUpstream(t testing.TB) *recordingUpstream {
@@ -104,9 +113,13 @@ func newUpstream(t testing.TB) *recordingUpstream {
 		u.body = append(u.body, string(b[:n]))
 		u.mu.Unlock()
 		u.mu.Lock()
-		reply := u.reply
+		reply, handler := u.reply, u.handler
 		u.mu.Unlock()
 		r.Body = io.NopCloser(bytes.NewReader(b[:n])) // let reply functions parse the form
+		if handler != nil {
+			handler(w, r)
+			return
+		}
 		if reply != nil {
 			status, ct, body := reply(r)
 			w.Header().Set("Content-Type", ct)
