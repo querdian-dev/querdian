@@ -2,7 +2,7 @@
 # Demo workload (busybox, tiny footprint). Simulates a small web service and continues the
 # backfilled history of hack/quickstart/demogen at the "now" end:
 #  * serves Prometheus metrics on :8080/metrics.txt (http_requests_total, the duration histogram,
-#    saturation gauges and the demo_requests_total{customer_id} series of the denied-label example),
+#    saturation gauges and the demo_requests_total{customer_id} series of the redacted-label example),
 #  * logs structured lines to stdout (JSON for order-service, logfmt otherwise); they are collected
 #    by the OTel Collector. Errors, slow requests and a fraction of the others carry a trace_id,
 #  * sends the matching multi-span traces as OTLP/JSON to the collector.
