@@ -24,6 +24,16 @@ tracing:
     protocol: http/protobuf
   sampler: parentbased_always_on
 
+# Read-only policy dashboard on http://localhost:8081. No authentication: the kind port mapping binds
+# it to 127.0.0.1 only. Never do this outside a laptop demo.
+ui:
+  enabled: true
+  auth: none
+  service:
+    enabled: true
+    type: NodePort
+    nodePort: 30081
+
 config:
   auth:
     # The issuer string must equal the `iss` claim of the tokens byte for byte. It resolves on the

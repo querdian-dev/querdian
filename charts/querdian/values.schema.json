@@ -539,6 +539,12 @@
               "items": {
                 "type": "object"
               }
+            },
+            "uiFrom": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
             }
           }
         },
@@ -720,6 +726,57 @@
           "type": "object",
           "additionalProperties": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "auth": {
+          "enum": [
+            "oidc",
+            "none"
+          ]
+        },
+        "adminGroup": {
+          "type": "string"
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "type": {
+              "enum": [
+                "ClusterIP",
+                "NodePort"
+              ]
+            },
+            "nodePort": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 30000,
+              "maximum": 32767
+            }
           }
         }
       }

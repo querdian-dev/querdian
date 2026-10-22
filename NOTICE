@@ -5,3 +5,6 @@ This product includes software developed by Grafana Labs (https://github.com/gra
 licensed under the Apache License, Version 2.0: the generated OpenTelemetry protobuf types in
 internal/tempopb (copied from pkg/tempopb). See internal/tempopb/SOURCE for the exact release and
 internal/tempopb/LICENSE_APACHE2 for the licence.
+
+The policy dashboard in internal/ui/web embeds the fonts Archivo and JetBrains Mono, licensed under the
+SIL Open Font License 1.1; the licence texts are next to the fonts in internal/ui/web/fonts.

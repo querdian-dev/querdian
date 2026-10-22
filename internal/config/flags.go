@@ -16,6 +16,9 @@ type Flags struct {
 	LogFormat        string
 	RecordUser       bool
 	RecordQueries    bool
+	UIListen         string
+	UIAuth           string
+	UIAdminGroup     string
 }
 
 // RegisterFlags defines all flags on fs, with PLAN §5.2 defaults, and returns the target struct.
@@ -27,6 +30,9 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 	fs.BoolVar(&f.LeaderElect, "leader-elect", true, "leader election for the status writer")
 	fs.StringVar(&f.LogLevel, "log-level", "info", "slog level (debug|info|warn|error)")
 	fs.StringVar(&f.LogFormat, "log-format", "json", "log format (json|text)")
+	fs.StringVar(&f.UIListen, "ui-listen", "", "listener for the read-only policy dashboard (empty: disabled)")
+	fs.StringVar(&f.UIAuth, "ui-auth", "oidc", "dashboard authentication (oidc|none); none must only be reachable from a trusted network")
+	fs.StringVar(&f.UIAdminGroup, "ui-admin-group", "", "with --ui-auth=oidc: group a token must carry to open the dashboard (empty: any valid token)")
 	fs.BoolVar(&f.RecordUser, "tracing.record-user", false, "add enduser.id to spans")
 	fs.BoolVar(&f.RecordQueries, "tracing.record-queries", false, "add original and rewritten query to spans")
 	return f
@@ -39,6 +45,14 @@ func (f *Flags) Validate() error {
 	}
 	if f.Listen == f.ManagementListen {
 		return fmt.Errorf("--listen and --management-listen must differ")
+	}
+	if f.UIListen != "" {
+		if f.UIListen == f.Listen || f.UIListen == f.ManagementListen {
+			return fmt.Errorf("--ui-listen must differ from --listen and --management-listen")
+		}
+		if f.UIAuth != "oidc" && f.UIAuth != "none" {
+			return fmt.Errorf("invalid --ui-auth %q (oidc|none)", f.UIAuth)
+		}
 	}
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(f.LogLevel)); err != nil {

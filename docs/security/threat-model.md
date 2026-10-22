@@ -307,6 +307,9 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
   is rejected rather than widened.
 * **Management port** (`/metrics`, `/healthz`, `/readyz`) is unauthenticated and exposes policy
   counts and request labels by endpoint and reason; keep it cluster-internal.
+* **Policy dashboard** (`--ui-listen`, off by default) discloses group names, tenants and matchers. It is
+  read-only and its query test bench is an in-memory dry run that never contacts a backend. Authenticate
+  it (`--ui-auth=oidc`) or keep it on a trusted network; see [dashboard.md](../dashboard.md).
 * **Privacy.** Usernames and query text are not written to logs or traces by default; the two
   tracing flags are opt-in. `querdian.policies` records policy names.
 * **Supply chain.** Dependencies are limited to Apache-2.0 and permissive licences (checked by

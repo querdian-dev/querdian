@@ -4,7 +4,7 @@
 # policies. DEMO ONLY (dev-mode Keycloak, plain HTTP, known passwords). See docs/quickstart.md.
 #
 #   hack/quickstart/up.sh
-#   CLUSTER=foo KEYCLOAK_PORT=8081 hack/quickstart/up.sh
+#   CLUSTER=foo KEYCLOAK_PORT=8082 hack/quickstart/up.sh
 #   SKIP_BUILD=1 hack/quickstart/up.sh            # reuse an already built image (IMAGE_TAG)
 #   QUICKSTART_NETWORKPOLICY=1 hack/quickstart/up.sh   # also enable NetworkPolicies
 #   CLEANUP_ON_FAILURE=1 hack/quickstart/up.sh    # delete the cluster if the script fails
@@ -93,6 +93,8 @@ nodes:
     extraPortMappings:
       # Keycloak: host port == in-cluster Service port, so the issuer URL is the same everywhere.
       - {containerPort: 30080, hostPort: $KEYCLOAK_PORT, listenAddress: "127.0.0.1", protocol: TCP}
+      # Querdian policy dashboard
+      - {containerPort: 30081, hostPort: $UI_PORT, listenAddress: "127.0.0.1", protocol: TCP}
       # Grafana
       - {containerPort: 30030, hostPort: $GRAFANA_PORT, listenAddress: "127.0.0.1", protocol: TCP}
 YAML
@@ -183,6 +185,7 @@ cat <<EOF
 
 === Querdian quickstart is up after $((SECONDS - T0))s
   Grafana   http://localhost:$GRAFANA_PORT      log in with Keycloak: alice / alice-demo, bob / bob-demo, carol / carol-demo
+  Querdian  http://localhost:$UI_PORT      read-only policy dashboard (policies, access, query test bench)
   Keycloak  http://$KC_HOST:$KEYCLOAK_PORT   admin / admin (demo only)
   Verify    hack/quickstart/verify.sh
   Remove    hack/quickstart/down.sh

@@ -48,7 +48,8 @@ read queries against Prometheus/Thanos (PromQL), Loki (LogQL) and Tempo (TraceQL
 - Compatibility with evoila/janus (config, API, code). It is credited as inspiration only.
 - Write paths (push / ingest / remote_write / OTLP ingest).
 - Ruler / alerting / admin APIs.
-- A UI.
+- A UI, with one exception: the optional, read-only policy dashboard (see docs/dashboard.md). It has no
+  write path, is off by default and never contacts a backend.
 - Running outside Kubernetes.
 
 ---

@@ -52,6 +52,13 @@ spec:
             - --log-format={{ .Values.logFormat }}
             - --tracing.record-user={{ .Values.tracing.recordUser }}
             - --tracing.record-queries={{ .Values.tracing.recordQueries }}
+            {{- if .Values.ui.enabled }}
+            - --ui-listen=:{{ .Values.ui.port }}
+            - --ui-auth={{ .Values.ui.auth }}
+            {{- with .Values.ui.adminGroup }}
+            - {{ printf "--ui-admin-group=%s" . | quote }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . | quote }}
             {{- end }}
@@ -105,6 +112,11 @@ spec:
             - name: management
               containerPort: {{ .Values.management.port }}
               protocol: TCP
+            {{- if .Values.ui.enabled }}
+            - name: ui
+              containerPort: {{ .Values.ui.port }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

@@ -46,7 +46,7 @@ promise to a user. Priorities will follow real feedback.
 ## Ideas, not planned
 
 These are open questions rather than tasks; the current non-goals in PLAN section 1 still stand
-(no write paths, no UI, Kubernetes only).
+(no write paths, no UI beyond the optional read-only policy dashboard, Kubernetes only).
 
 * Further read-only backends beyond Prometheus/Thanos, Loki and Tempo. Nothing is designed.
 * Tempo gRPC and streaming search (unsupported today, see limitations).

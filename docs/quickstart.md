@@ -26,7 +26,8 @@ hack/quickstart/down.sh     # removes the cluster and the built image
   2.6 GiB used and 3.3 GiB available (it was 2.3 / 3.6 GiB before the history existed; the extra
   0.3 GiB is mostly Tempo, about 360 MiB resident after the dashboards ran, and Loki). Keycloak is the
   largest part (JVM heap capped at 300 MiB, container limit 750 MiB).
-* Free host ports `8080` (Keycloak) and `3000` (Grafana). Change Keycloak's with `KEYCLOAK_PORT=8081`.
+* Free host ports `8080` (Keycloak), `3000` (Grafana) and `8081` (Querdian policy dashboard). Change
+  Keycloak's with `KEYCLOAK_PORT=8082`.
 * Internet access: the images are pulled from Docker Hub and quay.io by the kind node.
 * Querdian has no published image yet, so `up.sh` builds it from this checkout (`make docker-build`,
   in the background while the cluster starts) and loads it into kind.
@@ -215,6 +216,14 @@ http://keycloak.localtest.me:8080/realms/observability
 If your DNS filters answers pointing to 127.0.0.1 (some routers do), add
 `127.0.0.1 keycloak.localtest.me` to `/etc/hosts`. `verify.sh` uses `curl --resolve` and does not
 depend on it.
+
+## Try the policy dashboard
+
+The quickstart enables the read-only [policy dashboard](dashboard.md) on <http://localhost:8081> (bound to
+`127.0.0.1`, no authentication, laptop demo only). **Policies** lists the three example policies and their
+status. In **Access** and **Test bench** enter the group `order-team`, `payment-team` or `platform-admins`
+(policies match groups, not user names). Try `demo_requests_total` for `order-team` and for `platform-admins`,
+then `sum by (customer_id) (demo_requests_total)` for `order-team` to see the denial.
 
 ## Try it in Grafana (manual)
 
