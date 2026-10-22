@@ -12,7 +12,8 @@ import (
 // non-object bodies and a "data" member that is not an array of label sets are errors: the caller must then
 // fail the request and never forward the original body. A body that is an upstream error (no "data" and not
 // "status":"success") is returned unchanged. All other members of the envelope are preserved (member order may
-// change). Query results are deliberately not filtered anywhere.
+// change). Redacted labels are denied too and are therefore removed here as well; query results are rewritten
+// only for labels.redact (internal/enforce/redact).
 func FilterSeriesResponse(body []byte, denied []string, maxBytes int) ([]byte, error) {
 	if len(body) > maxBytes {
 		return nil, fmt.Errorf("series response exceeds %d bytes", maxBytes)

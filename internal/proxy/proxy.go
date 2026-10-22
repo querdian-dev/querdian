@@ -100,6 +100,10 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	if err := merge(w, r, resps); err != nil {
 		p.logger().WarnContext(ctx, "merge failed", "backend", t.Backend.Name, "route", t.Endpoint.Template,
 			"branches", len(resps), "error", err.Error())
+		if errors.Is(err, errFilterTooLarge) {
+			WriteError(w, r, http.StatusBadGateway, "merge_too_large", "merged response too large")
+			return
+		}
 		WriteError(w, r, http.StatusBadGateway, errorTypeUpstream, "cannot merge upstream responses")
 	}
 }
@@ -120,6 +124,7 @@ func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t 
 			prepare(pr.Out, pr.In, base, t.UpstreamPath, up.Query, t.Backend, t.Effective)
 			if filter != nil {
 				pr.Out.Header.Set("Accept-Encoding", "identity") // the filter needs the plain body
+				pr.Out.Header.Set("Accept", "application/json")  // and a format it can decode
 			}
 			pr.SetXForwarded()
 		},
@@ -173,6 +178,74 @@ func applyFilter(resp *http.Response, filter func([]byte) ([]byte, error), limit
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
 	resp.Header.Del("Etag")
 	return nil
+}
+
+// FilterMerger returns a merger that runs m into a buffer, passes a 2xx result through filter and writes the
+// filtered body. Like ResponseFilter it fails closed: an error of m or filter, or a merged body larger than
+// maxBytes, is returned before anything is written, so the unfiltered body never reaches the client. A nil
+// m stays nil.
+func FilterMerger(m Merger, filter func([]byte) ([]byte, error), maxBytes int64) Merger {
+	if m == nil {
+		return nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultFilterBytes
+	}
+	return func(w http.ResponseWriter, r *http.Request, resps []fanout.Response) error {
+		buf := &bufferedWriter{header: http.Header{}, limit: maxBytes}
+		if err := m(buf, r, resps); err != nil {
+			return err
+		}
+		if buf.overflow {
+			return errFilterTooLarge
+		}
+		body := buf.body.Bytes()
+		if buf.status == 0 {
+			buf.status = http.StatusOK
+		}
+		if buf.status >= 200 && buf.status <= 299 {
+			var err error
+			if body, err = filter(body); err != nil {
+				return err
+			}
+		}
+		for k, v := range buf.header {
+			w.Header()[k] = v
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Del("Etag")
+		w.WriteHeader(buf.status)
+		_, _ = w.Write(body)
+		return nil
+	}
+}
+
+// bufferedWriter collects a merger's response, up to limit bytes.
+type bufferedWriter struct {
+	header   http.Header
+	status   int
+	body     bytes.Buffer
+	limit    int64
+	overflow bool
+}
+
+func (b *bufferedWriter) Header() http.Header { return b.header }
+
+func (b *bufferedWriter) WriteHeader(code int) {
+	if b.status == 0 {
+		b.status = code
+	}
+}
+
+func (b *bufferedWriter) Write(p []byte) (int, error) {
+	if b.status == 0 {
+		b.status = http.StatusOK
+	}
+	if int64(b.body.Len()+len(p)) > b.limit {
+		b.overflow = true
+		return 0, errFilterTooLarge
+	}
+	return b.body.Write(p)
 }
 
 func writeFanoutError(w http.ResponseWriter, r *http.Request, err error) {

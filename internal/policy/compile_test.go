@@ -302,3 +302,64 @@ func TestCrossTenantUnionUnsupported(t *testing.T) {
 		t.Errorf("got %+v", r)
 	}
 }
+
+func i32(v int32) *int32 { return &v }
+
+func TestRedactCompiles(t *testing.T) {
+	cfg := testConfig(t)
+	c := Compile(Input{Config: cfg, ClusterPolicies: []v1.ClusterAccessPolicy{
+		capol("p", v1.Subjects{Users: []string{"u"}}, v1.ClusterRule{Backends: []string{"metrics"}, Unrestricted: true,
+			Labels: &v1.LabelFilter{Deny: []string{"d"}, Redact: []v1.RedactRule{
+				{Name: "c", Strategy: v1.RedactPlaceholder},
+				{Name: "ip", Strategy: v1.RedactIPv4Prefix, Octets: i32(2)},
+			}}}),
+	}})
+	if r := result(t, c, "ClusterAccessPolicy", "p"); !r.Ready {
+		t.Fatalf("not ready: %+v", r)
+	}
+	rs := c.ByUser["u"]
+	if len(rs) != 1 || strings.Join(rs[0].DeniedLabels, ",") != "c,d,ip" {
+		t.Fatalf("redacted names must be denied too: %+v", rs)
+	}
+	want := map[string]Redaction{"c": {Strategy: v1.RedactPlaceholder}, "ip": {Strategy: v1.RedactIPv4Prefix, Octets: 2}}
+	if len(rs[0].Redactions) != 2 || rs[0].Redactions["c"] != want["c"] || rs[0].Redactions["ip"] != want["ip"] {
+		t.Fatalf("redactions = %+v", rs[0].Redactions)
+	}
+}
+
+func TestRedactInvalid(t *testing.T) {
+	cfg := testConfig(t)
+	for name, rr := range map[string][]v1.RedactRule{
+		"bad name":            {{Name: "a-b", Strategy: v1.RedactRemove}},
+		"tenant label":        {{Name: TenantIDLabel, Strategy: v1.RedactRemove}},
+		"duplicate":           {{Name: "a", Strategy: v1.RedactRemove}, {Name: "a", Strategy: v1.RedactHash}},
+		"octets on remove":    {{Name: "a", Strategy: v1.RedactRemove, Octets: i32(1)}},
+		"ipv4 without octets": {{Name: "a", Strategy: v1.RedactIPv4Prefix}},
+		"ipv4 octets 4":       {{Name: "a", Strategy: v1.RedactIPv4Prefix, Octets: i32(4)}},
+		"ipv4 octets 0":       {{Name: "a", Strategy: v1.RedactIPv4Prefix, Octets: i32(0)}},
+		"unknown strategy":    {{Name: "a", Strategy: "Mask"}},
+	} {
+		c := Compile(Input{Config: cfg, ClusterPolicies: []v1.ClusterAccessPolicy{
+			capol("p", v1.Subjects{Users: []string{"u"}}, v1.ClusterRule{Backends: []string{"metrics"}, Unrestricted: true,
+				Labels: &v1.LabelFilter{Redact: rr}}),
+		}})
+		if r := result(t, c, "ClusterAccessPolicy", "p"); r.Ready || r.Reason != ReasonInvalidMatcher {
+			t.Errorf("%s: want InvalidMatcher, got %+v", name, r)
+		}
+	}
+}
+
+func TestStricter(t *testing.T) {
+	rm := Redaction{Strategy: v1.RedactRemove}
+	ph := Redaction{Strategy: v1.RedactPlaceholder}
+	h := Redaction{Strategy: v1.RedactHash}
+	ip1 := Redaction{Strategy: v1.RedactIPv4Prefix, Octets: 1}
+	ip3 := Redaction{Strategy: v1.RedactIPv4Prefix, Octets: 3}
+	for _, tc := range []struct{ a, b, want Redaction }{
+		{rm, ph, rm}, {ph, rm, rm}, {h, ph, ph}, {ph, h, ph}, {h, ip1, h}, {ip3, ip1, ip1}, {ip1, ip3, ip1}, {h, h, h},
+	} {
+		if got := Stricter(tc.a, tc.b); got != tc.want {
+			t.Errorf("Stricter(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

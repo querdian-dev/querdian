@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -80,6 +81,11 @@ func (f *fakeLoki) waitClosed(t *testing.T, n int) {
 // tailServer serves ServeTail for a plan with one request per query.
 func tailServer(t *testing.T, f *fakeLoki, queries ...string) *httptest.Server {
 	t.Helper()
+	return tailServerOpt(t, f, TailOptions{}, queries...)
+}
+
+func tailServerOpt(t *testing.T, f *fakeLoki, opt TailOptions, queries ...string) *httptest.Server {
+	t.Helper()
 	plan := enforce.Plan{Merge: enforce.MergeTailStreams, Strategy: "fanout"}
 	for i, q := range queries {
 		plan.Requests = append(plan.Requests, enforce.Upstream{Query: url.Values{"query": {q}}, Term: i})
@@ -91,7 +97,7 @@ func tailServer(t *testing.T, f *fakeLoki, queries ...string) *httptest.Server {
 		Effective:    policy.Effective{Tenants: []string{"t1"}},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		(&Proxy{}).ServeTail(w, r, tgt, plan, TailOptions{})
+		(&Proxy{}).ServeTail(w, r, tgt, plan, opt)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -221,4 +227,30 @@ func TestTailUpstreamDialFailure(t *testing.T) {
 		t.Fatalf("err=%v resp=%v", err, resp)
 	}
 	_ = resp.Body.Close()
+}
+
+func TestTailRewrite(t *testing.T) {
+	f := newFakeLoki(t, map[string]branch{`{a="1"}`: {frames: []string{frameA}}})
+	srv := tailServerOpt(t, f, TailOptions{Rewrite: func(b []byte) ([]byte, error) {
+		return []byte(strings.ReplaceAll(string(b), `"pod":"a"`, `"pod":"redacted-1"`)), nil
+	}}, `{a="1"}`)
+	c := dial(t, srv, nil)
+	if got := readText(t, c); strings.Contains(got, `"pod":"a"`) || !strings.Contains(got, `"pod":"redacted-1"`) {
+		t.Fatalf("frame = %s", got)
+	}
+	_ = c.Close(websocket.StatusNormalClosure, "")
+	f.waitClosed(t, 1)
+}
+
+func TestTailRewriteErrorFailsClosed(t *testing.T) {
+	f := newFakeLoki(t, map[string]branch{`{a="1"}`: {frames: []string{frameA}}})
+	srv := tailServerOpt(t, f, TailOptions{Rewrite: func([]byte) ([]byte, error) { return nil, errors.New("boom") }}, `{a="1"}`)
+	c := dial(t, srv, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, b, err := c.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusInternalError {
+		t.Fatalf("frame %s err = %v", b, err)
+	}
+	f.waitClosed(t, 1)
 }

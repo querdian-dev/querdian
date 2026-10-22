@@ -180,12 +180,24 @@ LogQL; any attribute token in TraceQL). Label listing endpoints omit denied name
 endpoints for denied labels answer 403. A label denied by any matched rule is denied for the whole
 request.
 
-**What this does not protect.** The values of a denied label are *still present in the label sets
-of results* (a query for `up` returns `customer_id`). Denied labels are a restriction of what
-users can do with labels, not a redaction mechanism; do not rely on them to hide data that the
-user's matchers admit. The one exception is trace by ID, which strips denied attributes. Other
-oracle channels that remain by design: result cardinality and timing of any query the user may
-run, and the Tempo trace-level intrinsics in section 6.
+**Redaction (opt-in).** `labels.redact` additionally rewrites the values of a label in query
+results (`Remove`, `Placeholder`, `Hash` with a per-request key, `IPv4Prefix`). A redacted name is
+always denied as well, so it cannot be used as a filter oracle, and the strictest strategy of all
+matched rules applies. Rewriting covers Prometheus query, range and exemplar results, Loki query
+results (stream labels and categorize-labels metadata) and tail frames, Tempo search and TraceQL
+metrics results, and trace by ID. Bodies that cannot be decoded, or that exceed
+`limits.maxMergeBytes`, are answered with 502 and never forwarded. Placeholder numbers are
+assigned in random order and hash keys are random per request, so neither reveals the sort order
+of values or links values across requests.
+
+**What this does not protect.** With `labels.deny` alone, the values of a denied label are *still
+present in the label sets of results* (a query for `up` returns `customer_id`): deny restricts what
+users can do with labels and is not a redaction mechanism. The one exception is trace by ID, which
+strips denied attributes. With `labels.redact`, the following channels remain: result cardinality,
+series order and timing of any query the user may run; under `Placeholder` and `Hash`, which entries
+of one response share a value; under `IPv4Prefix`, the kept octets; Loki log line content, and
+labels that parsers derive from it under a different name (`| json` flattening nested keys);
+values that ingestion copied into other labels; and the Tempo trace-level intrinsics in section 6.
 
 ## 6. Tempo metadata leaks and the root-span redaction rules
 
@@ -307,7 +319,8 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
    (section 1).
 2. Clean-room LogQL and TraceQL parsers may still diverge from the backends in unexplored corners;
    the differential suites cover only the tested backend versions (section 4).
-3. Denied labels do not redact results (section 5).
+3. Denied labels do not redact results unless `labels.redact` is used, and redaction does not cover
+   log lines or cardinality (section 5).
 4. Policies that cover only part of a trace rely on the root-intrinsic restriction (section 7).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).

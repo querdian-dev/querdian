@@ -306,10 +306,9 @@ invalid (`InvalidMatcher`).
 * **Query results keep their labels.** `up`, `{app="x"}` or a Tempo search return the complete
   label set / attributes of every series, stream or span. A denied label hides the *ability to
   filter, group or join on it*, not the data. If `customer_id` is denied, `up` still shows
-  `customer_id="42"` on the series it returns. Loki `series`, query results and Tempo search
-  results are not filtered either. Do not use `labels.deny` as redaction of values. To keep a value
-  from a user, do not put it in a label they can read, or constrain what they can read with
-  matchers.
+  `customer_id="42"` on the series it returns. Query results and Tempo search results are not
+  filtered. To hide the values as well, use [`labels.redact`](#redacting-values); otherwise do not
+  put the value in a label the user can read, or constrain what they can read with matchers.
 * It does not hide a label from the policy itself: a rule's own matchers may use a label that the
   same rule denies.
 * A LogQL log line that *contains* the value is returned as is. Parsers such as `| json` can turn
@@ -318,6 +317,47 @@ invalid (`InvalidMatcher`).
   label are denied altogether, independent of `labels.deny`.
 * The LogQL scan is intentionally broad and has false positives, see
   [limitations](limitations.md#denied-label-scan-false-positives).
+
+### Redacting values
+
+`labels.redact` is the opt-in that closes the gap above: it rewrites the values of a label in
+query results. Every redacted name is **also denied**, so everything in [What it does](#what-it-does)
+applies to it as well: without that, a user could filter on `customer_id="42"` and learn the value
+from whether data comes back.
+
+```yaml
+labels:
+  deny: [team_secret]
+  redact:
+    - {name: customer_id, strategy: Placeholder}
+    - {name: client_ip, strategy: IPv4Prefix, octets: 2}
+```
+
+| Strategy | `customer_id="42"`, `client_ip="10.1.2.3"` becomes | What the user can still learn |
+|---|---|---|
+| `Remove` | the label is dropped | how many series/streams were returned (duplicates are kept) |
+| `Placeholder` | `redacted-1`, `redacted-2`, ... per distinct value, numbered per response in random order | which entries of one response share a value |
+| `Hash` | `redacted-` + 16 hex digits, HMAC under a key that is random per request | as `Placeholder`; never comparable across requests |
+| `IPv4Prefix` (`octets`: 1–3) | `10.1.x.x`; a value that is not an IPv4 address becomes `redacted` | the kept octets |
+
+* **Where it applies**: Prometheus `query`, `query_range`, `query_exemplars`; Loki `query`,
+  `query_range` (stream labels and the `structuredMetadata` / `parsed` entry metadata of the
+  categorize-labels encoding) and `tail`; Tempo `search`, `metrics/query`, `metrics/query_range`
+  (their `promLabels` string is dropped) and trace by ID (`traceByID: filter`). The `series`,
+  label and index endpoints remove redacted names exactly like denied ones.
+* **Several rules**: like `deny`, a redaction from any matched rule applies to the whole request.
+  If rules disagree on the strategy for a label, the strictest one wins: `Remove`, then
+  `Placeholder`/`Hash`, then `IPv4Prefix` with fewer octets. A rule that only denies a label does
+  not weaken another rule's redaction of it.
+* **Fail closed**: a response that cannot be decoded, or that is larger than
+  `limits.maxMergeBytes`, is answered with `502` and never passed on. The upstream is asked for
+  JSON.
+* **Cost**: redacted responses are buffered in full before they are sent, instead of streamed.
+  Very large range queries can hit `limits.maxMergeBytes` (`502 merge_too_large`).
+* **What it does not redact**: Loki log *lines* (`| json` can make line content into labels, and
+  nested keys get other names, such as `ctx_customer_id`), values copied into other labels at
+  ingestion, the number and order of returned series, and the Tempo trace-level fields covered in
+  the [threat model](security/threat-model.md).
 
 ### Tempo: missing attributes
 

@@ -29,6 +29,10 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   atomic snapshot swap, leader-elected status writer.
 * `labels.deny` to hide labels or attributes from label endpoints and to reject queries referencing
   them.
+* `labels.redact` (opt-in, per rule) to rewrite the values of a label in query results with the
+  strategy `Remove`, `Placeholder`, `Hash` (per-request key) or `IPv4Prefix` (keep 1–3 octets).
+  A redacted label is also denied; the strictest strategy of all matched rules applies, and
+  responses that cannot be redacted fail closed with 502.
 
 #### Proxy
 

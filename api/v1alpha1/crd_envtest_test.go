@@ -58,6 +58,12 @@ func TestClusterAccessPolicyValidation(t *testing.T) {
 		{"unrestricted with matchers", caps("d", grp, v1.ClusterRule{Backends: []string{"metrics"}, Unrestricted: true, Matchers: []v1.Matcher{eq("a", "b")}}), "set either unrestricted or matchers"},
 		{"neither", caps("e", grp, v1.ClusterRule{Backends: []string{"metrics"}}), "set either unrestricted or matchers"},
 		{"invalid op", caps("f", grp, v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{{Name: "a", Op: "Like", Value: "b"}}}), "Unsupported value"},
+		{"redact", caps("g", grp, redactRule(v1.RedactRule{Name: "c", Strategy: v1.RedactPlaceholder}, v1.RedactRule{Name: "ip", Strategy: v1.RedactIPv4Prefix, Octets: octets(2)})), ""},
+		{"redact unknown strategy", caps("h", grp, redactRule(v1.RedactRule{Name: "c", Strategy: "Mask"})), "Unsupported value"},
+		{"redact ipv4 without octets", caps("i", grp, redactRule(v1.RedactRule{Name: "c", Strategy: v1.RedactIPv4Prefix})), "octets is required for IPv4Prefix"},
+		{"redact octets on hash", caps("j", grp, redactRule(v1.RedactRule{Name: "c", Strategy: v1.RedactHash, Octets: octets(1)})), "octets is required for IPv4Prefix"},
+		{"redact octets out of range", caps("k", grp, redactRule(v1.RedactRule{Name: "c", Strategy: v1.RedactIPv4Prefix, Octets: octets(4)})), "less than or equal to 3"},
+		{"redact duplicate name", caps("l", grp, redactRule(v1.RedactRule{Name: "c", Strategy: v1.RedactHash}, v1.RedactRule{Name: "c", Strategy: v1.RedactRemove})), "Duplicate value"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { check(t, k8s.Create(context.Background(), tc.obj), tc.wantErr) })
@@ -87,4 +93,10 @@ func check(t *testing.T, err error, want string) {
 	case want != "" && !strings.Contains(err.Error(), want):
 		t.Fatalf("expected %q in error, got %v", want, err)
 	}
+}
+
+func octets(n int32) *int32 { return &n }
+
+func redactRule(rs ...v1.RedactRule) v1.ClusterRule {
+	return v1.ClusterRule{Backends: []string{"metrics"}, Unrestricted: true, Labels: &v1.LabelFilter{Redact: rs}}
 }

@@ -272,10 +272,14 @@ an attribute from the policy checks.
 ## Denied labels
 
 * Denied labels hide the ability to filter, group or join on a label and remove it from
-  label/series listings. **They do not remove the label from query results** (except trace by ID).
-  See [policy-guide.md](policy-guide.md#denied-labels).
+  label/series listings. **`labels.deny` alone does not remove the label from query results**
+  (except trace by ID); `labels.redact` does. See
+  [policy-guide.md](policy-guide.md#denied-labels).
 * The union rule is conservative: a label denied by any matched rule is denied for all terms.
-* Loki `series` responses are not filtered (Prometheus `series` is).
+* Redaction (`labels.redact`) buffers the whole response, so it is bounded by
+  `limits.maxMergeBytes`. It rewrites label sets only: Loki log lines, values copied into other
+  labels, and the number and order of returned series are not hidden. Grafana may show several
+  series with the same legend under `Remove`.
 
 ### Denied-label scan false positives
 

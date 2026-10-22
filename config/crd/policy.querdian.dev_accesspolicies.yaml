@@ -68,6 +68,46 @@ spec:
                           items:
                             type: string
                           type: array
+                        redact:
+                          description: |-
+                            Redact lists labels/attributes whose values are rewritten in query results. A redacted name is
+                            also denied: queries referencing it are rejected and label endpoints hide it.
+                          items:
+                            description: RedactRule rewrites the values of one label
+                              in query results.
+                            properties:
+                              name:
+                                description: Name is a label (Prometheus/Loki) or
+                                  attribute (Tempo, e.g. span.client.address).
+                                minLength: 1
+                                type: string
+                              octets:
+                                description: Octets is the number of leading IPv4
+                                  octets kept (IPv4Prefix only).
+                                format: int32
+                                maximum: 3
+                                minimum: 1
+                                type: integer
+                              strategy:
+                                description: Strategy is how values are rewritten.
+                                enum:
+                                - Remove
+                                - Placeholder
+                                - Hash
+                                - IPv4Prefix
+                                type: string
+                            required:
+                            - name
+                            - strategy
+                            type: object
+                            x-kubernetes-validations:
+                            - message: octets is required for IPv4Prefix and not allowed
+                                otherwise
+                              rule: (self.strategy == 'IPv4Prefix') == has(self.octets)
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
                       type: object
                     matchers:
                       description: Matchers are ANDed with the implicit namespace

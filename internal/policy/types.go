@@ -74,8 +74,44 @@ type CompiledRule struct {
 	Unrestricted bool
 	// Matchers are ANDed. For AccessPolicy rules the implicit namespace matcher comes first.
 	Matchers []Matcher
-	// DeniedLabels is sorted and deduplicated.
+	// DeniedLabels is sorted and deduplicated. It includes the names of Redactions.
 	DeniedLabels []string
+	// Redactions maps a label name to how its values are rewritten in query results; nil if none.
+	Redactions map[string]Redaction
+}
+
+// Redaction is the compiled form of a redact rule.
+type Redaction struct {
+	Strategy v1.RedactStrategy
+	Octets   int // IPv4Prefix only: leading octets kept (1..3)
+}
+
+// strictness orders redactions: a higher value hides more. Placeholder and Hash leak the same (equality
+// within one response) and rank equal; ties are broken towards Placeholder by Stricter.
+func (r Redaction) strictness() int {
+	switch r.Strategy {
+	case v1.RedactRemove:
+		return 10
+	case v1.RedactPlaceholder, v1.RedactHash:
+		return 5
+	case v1.RedactIPv4Prefix:
+		return 4 - r.Octets // 1 octet hides more than 3
+	}
+	return 0
+}
+
+// Stricter returns the redaction that hides more of a and b.
+func Stricter(a, b Redaction) Redaction {
+	sa, sb := a.strictness(), b.strictness()
+	switch {
+	case sa > sb:
+		return a
+	case sb > sa:
+		return b
+	case a.Strategy == v1.RedactPlaceholder:
+		return a
+	}
+	return b
 }
 
 // Result is the per-object outcome used to write status conditions.
@@ -111,6 +147,8 @@ type Effective struct {
 	Tenants      []string // sorted, deduplicated; for the tenant header
 	Terms        []Term   // DNF: OR of Terms (empty iff Unrestricted)
 	Disjoint     bool     // all term pairs provably disjoint
-	DeniedLabels []string // union of labels.deny over matched rules
-	Policies     []string // names, for tracing and logging
+	DeniedLabels []string // union of labels.deny and labels.redact names over matched rules
+	// Redactions is the strictest redaction per label over matched rules; nil if none.
+	Redactions map[string]Redaction
+	Policies   []string // names, for tracing and logging
 }

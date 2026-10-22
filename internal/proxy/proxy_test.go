@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -303,4 +304,52 @@ func TestUnavailableAndWriteError(t *testing.T) {
 	if w.Header().Get(TraceHeader) != "" || !strings.Contains(w.Body.String(), `"traceId":""`) {
 		t.Fatalf("got %v %s", w.Header(), w.Body.String())
 	}
+}
+
+func TestFilterMerger(t *testing.T) {
+	up := httptest.NewServer((&recorder{}).handler(200, "SECRET"))
+	defer up.Close()
+	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
+	run := func(m Merger, limit int64) *httptest.ResponseRecorder {
+		p := newProxy()
+		w := httptest.NewRecorder()
+		p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""),
+			Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, fanPlan(2), FilterMerger(m, filterFn, limit))
+		return w
+	}
+	w := run(concat, 1<<20)
+	if w.Code != 200 || w.Body.String() != "redactedredacted" || w.Header().Get("Content-Length") != "16" {
+		t.Fatalf("got %d %q %v", w.Code, w.Body.String(), w.Header())
+	}
+	var body ErrorBody
+	w = run(concat, 8)
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if w.Code != 502 || body.ErrorType != "merge_too_large" || strings.Contains(w.Body.String(), "SECRET") {
+		t.Fatalf("too large: %d %s", w.Code, w.Body.String())
+	}
+	w = run(func(w http.ResponseWriter, _ *http.Request, _ []fanout.Response) error {
+		_, _ = w.Write([]byte("BAD"))
+		return nil
+	}, 1<<20)
+	if w.Code != 502 || strings.Contains(w.Body.String(), "BAD") {
+		t.Fatalf("filter error: %d %s", w.Code, w.Body.String())
+	}
+	w = run(func(w http.ResponseWriter, _ *http.Request, _ []fanout.Response) error {
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte("BAD"))
+		return nil
+	}, 1<<20)
+	if w.Code != http.StatusTeapot || w.Body.String() != "BAD" {
+		t.Fatalf("non-2xx results are not filtered: %d %s", w.Code, w.Body.String())
+	}
+	if FilterMerger(nil, filterFn, 1) != nil {
+		t.Fatal("nil merger must stay nil")
+	}
+}
+
+func filterFn(b []byte) ([]byte, error) {
+	if strings.Contains(string(b), "BAD") {
+		return nil, errors.New("cannot filter")
+	}
+	return []byte(strings.ReplaceAll(string(b), "SECRET", "redacted")), nil
 }
