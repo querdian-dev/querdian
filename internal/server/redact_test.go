@@ -62,12 +62,61 @@ func TestPrometheusRedactionEndToEnd(t *testing.T) {
 	if resp.StatusCode != 502 || strings.Contains(body, "42") {
 		t.Errorf("malformed body: %d %s", resp.StatusCode, body)
 	}
-	// Upstream errors are passed through.
-	h.metricsUp.setReply(func(*http.Request) (int, string, string) {
-		return 422, "application/json", `{"status":"error","errorType":"execution","error":"x"}`
-	})
-	if resp, body = get(t, srv, "/prom/api/v1/query?query=up", tok); resp.StatusCode != 422 {
+	// Upstream errors keep their status but not their text: Prometheus prints whole series in some of them,
+	// and no result rewriter sees an error body.
+	const upstreamErr = `{"status":"error","errorType":"execution","error":"found duplicate series for the match group {} on the right hand-side of the operation: [{customer_id=\"42\"}, {customer_id=\"43\"}]"}`
+	h.metricsUp.setReply(func(*http.Request) (int, string, string) { return 422, "application/json", upstreamErr })
+	resp, body = get(t, srv, "/prom/api/v1/query?query=up", tok)
+	if resp.StatusCode != 422 || strings.Contains(body, "customer_id") || !strings.Contains(body, "details withheld") {
 		t.Errorf("upstream error: %d %s", resp.StatusCode, body)
+	}
+	// Without redaction the upstream error text is passed through unchanged.
+	h.policies(clusterPolicy("plain", v1Subjects("g"), v1.ClusterRule{Backends: []string{"metrics"}, Matchers: []v1.Matcher{eqm("namespace", "a")}}))
+	if resp, body = get(t, srv, "/prom/api/v1/query?query=up", tok); resp.StatusCode != 422 || body != upstreamErr {
+		t.Errorf("upstream error without redaction: %d %s", resp.StatusCode, body)
+	}
+}
+
+// Loki errors of redacted requests are withheld too ("pipeline error ... for series" lists the series): a
+// streamed request keeps the status, a fanned-out one drops the snippet of the failed branch.
+func TestLokiRedactionWithholdsUpstreamErrors(t *testing.T) {
+	h := newHarness(t)
+	red := &v1.LabelFilter{Redact: []v1.RedactRule{{Name: "customer_id", Strategy: v1.RedactRemove}}}
+	byNS := clusterPolicy("by-ns", v1Subjects("g"), v1.ClusterRule{Backends: []string{"logs"}, Tenants: []string{"t1"}, Matchers: []v1.Matcher{eqm("k8s_namespace_name", "a")}, Labels: red})
+	byApp := clusterPolicy("by-app", v1Subjects("g"), v1.ClusterRule{Backends: []string{"logs"}, Tenants: []string{"t1"}, Matchers: []v1.Matcher{eqm("app", "x")}})
+	const upstreamErr = `pipeline error: 'JSONParserErr' for series: '{app="x", customer_id="c1"}'.`
+	h.logsUp.setReply(func(*http.Request) (int, string, string) { return 400, "text/plain; charset=utf-8", upstreamErr })
+	srv := httptest.NewServer(h.server(allEnforcers).ProxyHandler())
+	defer srv.Close()
+	tok := h.issuer.token(t, "u", "g")
+	path := "/loki/loki/api/v1/query_range?query=" + url.QueryEscape(`{job="j"}`)
+
+	tests := []struct {
+		name     string
+		policies []v1.ClusterAccessPolicy
+		status   int
+		withheld bool
+	}{
+		{"streamed", []v1.ClusterAccessPolicy{byNS}, 400, true},
+		{"fanned out", []v1.ClusterAccessPolicy{byNS, byApp}, 502, true},
+		{"no redaction", []v1.ClusterAccessPolicy{byApp}, 400, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h.policies(tt.policies...)
+			resp, body := get(t, srv, path, tok)
+			if resp.StatusCode != tt.status {
+				t.Fatalf("status %d, want %d: %s", resp.StatusCode, tt.status, body)
+			}
+			if tt.withheld {
+				if strings.Contains(body, "customer_id") || !strings.Contains(body, "details withheld") ||
+					resp.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("%s: %s", resp.Header.Get("Content-Type"), body)
+				}
+			} else if body != upstreamErr {
+				t.Errorf("without redaction the upstream text is passed through: %s", body)
+			}
+		})
 	}
 }
 

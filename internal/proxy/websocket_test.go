@@ -86,15 +86,22 @@ func tailServer(t *testing.T, f *fakeLoki, queries ...string) *httptest.Server {
 
 func tailServerOpt(t *testing.T, f *fakeLoki, opt TailOptions, queries ...string) *httptest.Server {
 	t.Helper()
+	return tailServerHide(t, f, opt, false, queries...)
+}
+
+// tailServerHide is tailServerOpt with Target.HideUpstreamErrors set to hide.
+func tailServerHide(t *testing.T, f *fakeLoki, opt TailOptions, hide bool, queries ...string) *httptest.Server {
+	t.Helper()
 	plan := enforce.Plan{Merge: enforce.MergeTailStreams, Strategy: "fanout"}
 	for i, q := range queries {
 		plan.Requests = append(plan.Requests, enforce.Upstream{Query: url.Values{"query": {q}}, Term: i})
 	}
 	tgt := Target{
-		Backend:      &config.Backend{URL: f.srv.URL, TenantHeader: "X-Scope-OrgID"},
-		Endpoint:     routes.Endpoint{Websocket: true},
-		UpstreamPath: "/loki/api/v1/tail",
-		Effective:    policy.Effective{Tenants: []string{"t1"}},
+		Backend:            &config.Backend{URL: f.srv.URL, TenantHeader: "X-Scope-OrgID"},
+		Endpoint:           routes.Endpoint{Websocket: true},
+		UpstreamPath:       "/loki/api/v1/tail",
+		Effective:          policy.Effective{Tenants: []string{"t1"}},
+		HideUpstreamErrors: hide,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		(&Proxy{}).ServeTail(w, r, tgt, plan, opt)
@@ -201,6 +208,22 @@ func TestTailUpstreamCloseClosesClientWithReason(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	f.waitClosed(t, 1) // the surviving upstream is closed as well
+}
+
+// With redaction the upstream's close reason is withheld: it is upstream text that no rewriter sees.
+func TestTailUpstreamCloseReasonHidden(t *testing.T) {
+	f := newFakeLoki(t, map[string]branch{
+		`{a="1"}`: {closeWith: &websocket.CloseError{Code: websocket.StatusInternalError, Reason: `failed for series {customer_id="42"}`}},
+	})
+	srv := tailServerHide(t, f, TailOptions{}, true, `{a="1"}`)
+	c := dial(t, srv, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := c.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusInternalError || strings.Contains(err.Error(), "customer_id") ||
+		!strings.Contains(err.Error(), "upstream closed") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestTailInvalidFrameFailsClosed(t *testing.T) {

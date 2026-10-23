@@ -204,7 +204,9 @@ acquires the lease. With a single replica or for local runs you may use `--leade
 | parser nesting (fixed) | 100 levels | LogQL or TraceQL nesting deeper | `400 bad_data` | deny / `parse_error` |
 
 An upstream failure of **any** branch of a fan-out fails the whole request with `502` (the
-upstream status and the first 256 bytes of its error body are included in the message).
+upstream status and the first 256 bytes of its error body are included in the message, unless the
+caller's policy redacts labels: then the body is withheld, see the
+[threat model](security/threat-model.md#3-header-and-request-handling)).
 
 ## Observability
 

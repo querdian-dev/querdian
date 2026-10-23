@@ -164,7 +164,10 @@ func TestMatchExpandUnrestrictedAndEmptyTerm(t *testing.T) {
 
 func TestMatchExpandErrors(t *testing.T) {
 	denied := one()
-	denied.DeniedLabels = []string{"secret"}
+	denied.DeniedLabels = []string{"customer_id", "secret"}
+	valuesOf := func(name string) routes.Endpoint {
+		return routes.Endpoint{Template: "/api/v1/label/:name/values", Param: "match[]", PathParam: name}
+	}
 	tests := []struct {
 		name   string
 		ep     routes.Endpoint
@@ -177,7 +180,10 @@ func TestMatchExpandErrors(t *testing.T) {
 		{"no terms", seriesEP, url.Values{"match[]": {`up`}}, policy.Effective{}, enforce.ErrUnsupported},
 		{"denied in user match", seriesEP, url.Values{"match[]": {`up{secret="x"}`}}, denied, enforce.ErrDeniedLabel},
 		{"denied in second match", labelsEP, url.Values{"match[]": {`up`, `{secret=~".+"}`}}, denied, enforce.ErrDeniedLabel},
-		{"denied label values", routes.Endpoint{Template: "/api/v1/label/:name/values", Param: "match[]", PathParam: "secret"}, url.Values{}, denied, enforce.ErrDeniedLabel},
+		{"denied label values", valuesOf("secret"), url.Values{}, denied, enforce.ErrDeniedLabel},
+		// Prometheus 3 decodes U__ names on label/:name/values (U__customer__id is customer_id).
+		{"denied label values, U__ escaped", valuesOf("U__secret"), url.Values{}, denied, enforce.ErrDeniedLabel},
+		{"denied label values, U__ escaped underscore", valuesOf("U__customer__id"), url.Values{}, denied, enforce.ErrDeniedLabel},
 		{"too many", seriesEP, url.Values{"match[]": manySelectors(100)}, three(), enforce.ErrTooComplex},
 	}
 	for _, tt := range tests {
@@ -190,6 +196,11 @@ func TestMatchExpandErrors(t *testing.T) {
 	// Non-denied lookalikes pass.
 	if _, err := metaPlan(t, labelsEP, url.Values{"match[]": {`up{secrets="x"}`}}, denied); err != nil {
 		t.Error(err)
+	}
+	for _, name := range []string{"U__job", "U__secret_2e_x", "U__customer_id"} {
+		if _, err := metaPlan(t, valuesOf(name), url.Values{}, denied); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
