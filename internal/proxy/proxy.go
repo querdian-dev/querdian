@@ -3,7 +3,9 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,7 +51,16 @@ type Target struct {
 	// ModifyResponse optionally rewrites the streamed response of a single-request plan (for example the
 	// trace-by-ID filter). An error fails the request closed (502); the original body is never sent.
 	ModifyResponse func(*http.Response) error
+	// HideUpstreamErrors withholds what a failed upstream says: the body of a non-2xx response is replaced by
+	// the proxy's own error document (the status is kept), a failed fan-out branch is reported without its
+	// body, and a tail is closed without the upstream's close reason. Set when label values are redacted:
+	// backends print whole series label sets in some query errors (Prometheus "found duplicate series",
+	// Loki "pipeline error ... for series"), and the result rewriters only see successful responses.
+	HideUpstreamErrors bool
 }
+
+// withheldDetail replaces the upstream error text when Target.HideUpstreamErrors is set.
+const withheldDetail = "details withheld because the policy redacts label values"
 
 // Execute runs the plan. Single-request plans are streamed through a ReverseProxy; plans with several requests
 // are fanned out, buffered and passed to merge. Errors are written as JSON; Execute never returns after
@@ -94,7 +105,7 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	})
 	if err != nil {
 		p.logger().WarnContext(ctx, "fan-out failed", "backend", t.Backend.Name, "route", t.Endpoint.Template, "error", err.Error())
-		writeFanoutError(w, r, err)
+		writeFanoutError(w, r, err, t.HideUpstreamErrors)
 		return
 	}
 	if err := merge(w, r, resps); err != nil {
@@ -135,6 +146,9 @@ func (p *Proxy) stream(w http.ResponseWriter, r *http.Request, base *url.URL, t 
 				return errors.New("unexpected protocol switch")
 			}
 			resp.Header.Del(TraceHeader) // ours is authoritative
+			if t.HideUpstreamErrors && (resp.StatusCode < 200 || resp.StatusCode > 299) {
+				hideErrorBody(resp)
+			}
 			if t.ModifyResponse != nil {
 				if err := t.ModifyResponse(resp); err != nil {
 					return err
@@ -183,6 +197,25 @@ func applyFilter(resp *http.Response, filter func([]byte) ([]byte, error), limit
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
 	resp.Header.Del("Etag")
 	return nil
+}
+
+// hideErrorBody replaces the body of a failed upstream response with the proxy's error document, keeping the
+// status code. Nothing of the upstream body, its encoding or its trailers reaches the client.
+func hideErrorBody(resp *http.Response) {
+	_ = resp.Body.Close()
+	tid := ""
+	if resp.Request != nil {
+		tid = TraceID(resp.Request.Context())
+	}
+	body, _ := json.Marshal(ErrorBody{Status: "error", ErrorType: errorTypeUpstream, Error: "upstream error; " + withheldDetail, TraceID: tid})
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	resp.Trailer = nil
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	resp.Header.Set("Content-Type", "application/json")
+	resp.Header.Set("X-Content-Type-Options", "nosniff")
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Etag")
 }
 
 // FilterMerger returns a merger that runs m into a buffer, passes a 2xx result through filter and writes the
@@ -253,11 +286,16 @@ func (b *bufferedWriter) Write(p []byte) (int, error) {
 	return b.body.Write(p)
 }
 
-func writeFanoutError(w http.ResponseWriter, r *http.Request, err error) {
+// writeFanoutError reports a failed fan-out. With hide, a branch that failed with a status is reported without
+// the snippet of its body (see Target.HideUpstreamErrors).
+func writeFanoutError(w http.ResponseWriter, r *http.Request, err error, hide bool) {
 	var ue *fanout.UpstreamError
 	switch {
 	case errors.Is(err, fanout.ErrMergeTooLarge):
 		WriteError(w, r, http.StatusBadGateway, "merge_too_large", "merged response too large")
+	case errors.As(err, &ue) && hide && ue.Status != 0:
+		WriteError(w, r, http.StatusBadGateway, errorTypeUpstream,
+			fmt.Sprintf("upstream request %d failed: status %d; %s", ue.Index, ue.Status, withheldDetail))
 	case errors.As(err, &ue):
 		WriteError(w, r, http.StatusBadGateway, errorTypeUpstream, ue.Error())
 	default:

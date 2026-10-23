@@ -223,7 +223,9 @@ Snapshot rebuilds (controller root spans):
    of a fan-out (or the filter buffer) exceeded `limits.maxMergeBytes` or the fixed 16 MiB of the
    Prometheus labels/series filter; narrow the query time range or selector.
    `errorType: "upstream"` with a message `upstream request N failed: status 500: ...` names the
-   failing branch and shows the first 256 bytes of the backend's error. `upstream request failed`
+   failing branch and shows the first 256 bytes of the backend's error. For a caller whose policy
+   redacts labels the backend's text is withheld (`details withheld because the policy redacts label
+   values`); find the backend error in Querdian's warning log or in the backend. `upstream request failed`
    without detail is a transport error or timeout.
 2. **Timeout?** Requests are cut after `limits.upstreamTimeout` (default 5 minutes). Compare with
    the `upstream` span duration and `querdian_upstream_duration_seconds`.

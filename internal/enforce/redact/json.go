@@ -13,7 +13,9 @@ var ErrResponse = errors.New("redact: unexpected response")
 type object = map[string]json.RawMessage
 
 // envelope decodes a Prometheus-style {"status", "data", ...} body. ok is false for an upstream error
-// body (no data and not "status":"success"), which carries no labels and is passed through unchanged.
+// body (no data and not "status":"success"), which is returned unchanged. Error bodies can carry label sets
+// (Prometheus and Loki print series in some query errors); the proxy withholds non-2xx bodies of redacted
+// requests itself (proxy.Target.HideUpstreamErrors), so only 2xx bodies reach the rewriters.
 func envelope(body []byte) (env object, ok bool, err error) {
 	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, false, fmt.Errorf("%w: not a JSON object: %w", ErrResponse, err)

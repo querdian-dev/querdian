@@ -201,8 +201,9 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 	}
 	s.d.Privacy.SetQueries(span, strings.Join(params[ep.Param], " "), strings.Join(plan.Requests[0].Query[ep.Param], " "))
 
-	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff}
 	red := redact.New(eff.Redactions)
+	// Upstream errors can echo series label sets that no result rewriter sees, so redaction withholds them.
+	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff, HideUpstreamErrors: red != nil}
 	if ep.Websocket {
 		var opt proxy.TailOptions
 		if red != nil {

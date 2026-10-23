@@ -74,7 +74,7 @@ func (p *Proxy) ServeTail(w http.ResponseWriter, r *http.Request, t Target, plan
 		closeAll(nil, 0, "", ups)
 		return
 	}
-	runTail(r.Context(), client, ups, opt)
+	runTail(r.Context(), client, ups, opt, t.HideUpstreamErrors)
 }
 
 func (o TailOptions) withDefaults() TailOptions {
@@ -129,8 +129,9 @@ func (p *Proxy) dialAll(r *http.Request, base *url.URL, t Target, plan enforce.P
 	return conns, nil
 }
 
-// runTail pumps frames until the tail ends, then closes every socket and waits for all goroutines.
-func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Conn, opt TailOptions) {
+// runTail pumps frames until the tail ends, then closes every socket and waits for all goroutines. With
+// hideReason the client is not told the upstream's close reason (see Target.HideUpstreamErrors).
+func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Conn, opt TailOptions, hideReason bool) {
 	// The I/O context is only cancelled after the close handshakes: cancelling a coder/websocket read
 	// context aborts the connection, which would lose the close reason.
 	ioCtx, cancelIO := context.WithCancel(parent)
@@ -161,7 +162,7 @@ func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Co
 				_, data, err := u.Read(ioCtx)
 				if err != nil {
 					if ioCtx.Err() == nil {
-						failWith(closeFor(err))
+						failWith(closeFor(err, hideReason))
 					}
 					return
 				}
@@ -229,8 +230,9 @@ func closeAll(client *websocket.Conn, code websocket.StatusCode, reason string, 
 	wg.Wait()
 }
 
-// closeFor maps an upstream read error to the close code and reason sent to the client.
-func closeFor(err error) (websocket.StatusCode, string) {
+// closeFor maps an upstream read error to the close code and reason sent to the client. With hideReason the
+// upstream's own reason is left out.
+func closeFor(err error, hideReason bool) (websocket.StatusCode, string) {
 	var ce websocket.CloseError
 	if !errors.As(err, &ce) {
 		return websocket.StatusInternalError, "upstream connection failed"
@@ -242,7 +244,7 @@ func closeFor(err error) (websocket.StatusCode, string) {
 		c = websocket.StatusInternalError
 	}
 	why := "upstream closed"
-	if ce.Reason != "" {
+	if ce.Reason != "" && !hideReason {
 		why += ": " + ce.Reason
 	}
 	return c, why

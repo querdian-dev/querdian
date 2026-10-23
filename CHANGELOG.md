@@ -112,6 +112,10 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   `THANOS-TENANT`), `Upgrade` and backend controls such as `X-Loki-Query-Limits` no longer reach
   backends; credentials, tenant, trace, forwarding and hop-by-hop headers cannot be allow-listed. A `101 Switching Protocols` from a backend on a non-WebSocket route fails
   with `502` instead of tunnelling unfiltered bytes past the response filters.
+* `labels.redact` no longer leaks through upstream errors: Prometheus and Loki print whole series
+  label sets in some query errors, which reached the client unredacted. For requests with redactions
+  the error body of a backend is withheld (the status is kept), a failed fan-out branch is reported
+  without its body, and a tail closes without the upstream's close reason.
 * Prometheus `label/:name/values` checks denied and redacted labels against the name Prometheus 3
   looks up: a `U__`-escaped name (`U__customer__id`) is decoded first, so it can no longer read
   the values of a denied label.

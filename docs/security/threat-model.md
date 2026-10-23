@@ -112,6 +112,9 @@ user's policies cannot be expressed for a request, it is rejected with a reason.
   response fail with `502` for any representation they cannot parse.
 * **Errors.** Error bodies contain a generic message plus parser or rewriter detail for the
   caller's own query. Fan-out failures include the first 256 bytes of the backend's error body.
+  When the request has redactions (section 5) no upstream error text reaches the client: backend
+  error bodies are replaced (the status is kept), fan-out failures omit the body, and tails close
+  without the upstream's reason, because backends print series label sets in some query errors.
   Authentication errors never contain token content.
 
 ## 4. Query injection and parser divergence
@@ -201,7 +204,8 @@ always denied as well, so it cannot be used as a filter oracle, and the strictes
 matched rules applies. Rewriting covers Prometheus query, range and exemplar results, Loki query
 results (stream labels and categorize-labels metadata) and tail frames, Tempo search and TraceQL
 metrics results, and trace by ID. Bodies that cannot be decoded, or that exceed
-`limits.maxMergeBytes`, are answered with 502 and never forwarded. Placeholder numbers are
+`limits.maxMergeBytes`, are answered with 502 and never forwarded; upstream error bodies are
+withheld (section 3). Placeholder numbers are
 assigned in random order and hash keys are random per request, so neither reveals the sort order
 of values or links values across requests.
 
