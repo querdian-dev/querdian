@@ -191,7 +191,8 @@ making the backend echo it in a listing.
 (`by`/`without`/`on`/`ignoring`/`group_*`, matchers, `label_replace`, `label_join`, `count_values`
 in PromQL; any identifier or keyword token, `label_replace` string arguments, and templates in
 LogQL; any attribute token in TraceQL). Label listing endpoints omit denied names and value
-endpoints for denied labels answer 403. A label denied by any matched rule is denied for the whole
+endpoints for denied labels answer 403, also for the `U__`-escaped form of the name that Prometheus 3
+decodes (`U__customer__id`). A label denied by any matched rule is denied for the whole
 request.
 
 **Redaction (opt-in).** `labels.redact` additionally rewrites the values of a label in query

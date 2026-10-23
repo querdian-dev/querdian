@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
@@ -41,7 +42,7 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 	isValues := ep.PathParam != "" || strings.HasSuffix(ep.Template, "/values")
 	isSeries := !isValues && (ep.Template == "series" || strings.HasSuffix(ep.Template, "/series"))
 	isLabels := !isValues && (ep.Template == "labels" || strings.HasSuffix(ep.Template, "/labels"))
-	if isValues && slices.Contains(eff.DeniedLabels, ep.PathParam) {
+	if isValues && (slices.Contains(eff.DeniedLabels, ep.PathParam) || slices.Contains(eff.DeniedLabels, backendLabelName(ep.PathParam))) {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrDeniedLabel, "label %s denied by policy", ep.PathParam)
 	}
 
@@ -119,6 +120,17 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 		plan.ResponseFilterMaxBytes = MaxLabelsResponseBytes
 	}
 	return plan, nil
+}
+
+// backendLabelName returns the label name Prometheus 3 looks up for the path segment of label/:name/values:
+// a name starting with "U__" is decoded with the values escaping scheme first (U__customer__id is
+// customer_id), so the deny check must see the decoded name too. Backends without this decoding use the raw
+// segment, which planMetadata checks as well.
+func backendLabelName(name string) string {
+	if strings.HasPrefix(name, "U__") {
+		return model.UnescapeName(name, model.ValueEncodingEscaping)
+	}
+	return name
 }
 
 // renderSelector renders ms as a series selector and verifies that it parses again. A selector must
