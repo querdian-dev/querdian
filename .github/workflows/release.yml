@@ -74,8 +74,9 @@ jobs:
           set -euo pipefail
           checksums="$(ls dist/*_checksums.txt)"
           echo "checksums=${checksums}" >> "$GITHUB_OUTPUT"
-          # Digest of the pushed multi-arch manifest list.
-          digest="$(jq -r '[.[] | select(.type == "Docker Manifest" or .type == "Docker Image V2") | .extra.digest // empty][0] // empty' dist/artifacts.json)"
+          # Digest of the pushed multi-arch manifest list. GoReleaser writes dockers_v2 images
+          # as type "Docker Image" with the digest under extra.Digest (capital D).
+          digest="$(jq -r '[.[] | select(.type == "Docker Image" or .type == "Docker Manifest") | .extra.Digest // empty][0] // empty' dist/artifacts.json)"
           if [ -z "$digest" ]; then
             echo "::error::no image digest found in dist/artifacts.json"
             exit 1
