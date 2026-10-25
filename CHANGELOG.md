@@ -82,6 +82,10 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 * Multi-arch distroless image (non-root, read-only root filesystem compatible), GoReleaser
   configuration, and a release workflow with cosign keyless signing, SBOMs, GitHub build-provenance
   attestations and an OCI Helm chart. The pipeline has not run yet.
+* Artifact Hub metadata for the chart: static annotations (category, license, links, CRDs and
+  examples, icon), per-release annotations written by `hack/chartmeta` (changelog from this file,
+  pre-release and security-update flags, image list) and the repository metadata
+  `charts/artifacthub-repo.yml`, pushed with oras by the release workflow.
 * Kind quickstart with Keycloak, Grafana, Prometheus, Loki, Tempo and two demo teams, with a
   150-assertion verification script.
 * Quickstart demo data: 24 hours (`DEMO_HISTORY_HOURS`) of deterministic, backfilled metrics, JSON and
