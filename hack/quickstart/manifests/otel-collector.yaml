@@ -125,7 +125,7 @@ spec:
       serviceAccountName: otel-collector
       containers:
         - name: collector
-          image: docker.io/otel/opentelemetry-collector-contrib:0.137.0
+          image: docker.io/otel/opentelemetry-collector-contrib:0.163.2
           args: [--config=/etc/otelcol/config.yaml]
           ports: [{containerPort: 4318}]
           securityContext: {runAsUser: 0}  # reads root-owned container log files

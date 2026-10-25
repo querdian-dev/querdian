@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: docker.io/library/busybox:1.37
+          image: docker.io/library/busybox:1.38
           command: [sh, /scripts/workload.sh]
           env:
             - {name: SERVICE_NAME, value: order-service}
@@ -43,7 +43,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: docker.io/library/busybox:1.37
+          image: docker.io/library/busybox:1.38
           command: [sh, /scripts/workload.sh]
           env:
             - {name: SERVICE_NAME, value: payment-service}
