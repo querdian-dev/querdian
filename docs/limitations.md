@@ -267,6 +267,7 @@ an attribute from the policy checks.
   `deny`.
 * Tag endpoints: `api/v2/search/tags` lists tags of spans that satisfy the injected policy; denied
   tags are filtered out. Tag *values* are computed over policy-matching spans and returned as is.
+  The tag name of a values lookup must be unquoted (`span.x`, `.x`); `span."x"` is `400`.
 * Only the HTTP API is proxied; gRPC and streaming search are out of scope.
 
 ## Denied labels

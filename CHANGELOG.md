@@ -122,6 +122,9 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 * Every single-valued request parameter (every name not ending in `[]`) given more than once is
   `400 bad_request`, not only `query` and `q`: the enforcers and mergers read the first value of
   parameters such as `targetLabels`, `delay_for` and `limit`, and backends disagree on which wins.
+* Tempo `search/tag/<name>/values` rejects quoted attribute names (`span."x"`) with `400`. The deny
+  check compares the name as plain text; Tempo 2.9.0 does not decode the quoting there, and the
+  proxy no longer relies on that.
 
 ### Known limitations
 
