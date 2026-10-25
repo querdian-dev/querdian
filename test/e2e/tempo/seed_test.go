@@ -23,7 +23,7 @@ import (
 )
 
 // Pinned upstream image (T0.5 research used the same version).
-const tempoImage = "docker.io/grafana/tempo:2.9.0"
+const tempoImage = "docker.io/grafana/tempo:2.10.10"
 
 // tempoConfig is a single-binary Tempo with multitenancy, local storage, OTLP/HTTP ingest and the
 // local-blocks processor that TraceQL metrics queries need. Short idle periods make traces searchable
