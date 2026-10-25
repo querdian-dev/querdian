@@ -14,7 +14,7 @@ What a tag push `v*` does, by reading the workflow and [.goreleaser.yaml](../.go
    pre-release part is marked as pre-release; `latest` is only tagged for non-pre-release versions).
 3. GoReleaser builds the multi-arch image `ghcr.io/querdian-dev/querdian:<version>` from the already
    built binaries (image SBOM enabled) and signs the manifest with cosign (keyless).
-4. cosign signs the checksums file (`.sig` and `.pem` uploaded to the release).
+4. cosign signs the checksums file (a Sigstore bundle `.sigstore.json` uploaded to the release).
 5. GitHub build-provenance attestations are created for the archives (via the checksums file) and
    for the image digest (pushed to the registry).
 6. The `chart` job packages `charts/querdian` with `--version` and `--app-version` set to the tag
@@ -190,7 +190,7 @@ Then:
 
 ## 5. Post-release verification
 
-Replace `VERSION` (without `v`). Needs `cosign` v2+, `gh`, `helm`, `docker`. The certificate identity
+Replace `VERSION` (without `v`). Needs `cosign` v3+ (bundle format), `gh`, `helm`, `docker`. The certificate identity
 is the release workflow at a tag ref, exactly as in the GoReleaser footer.
 
 ```sh
@@ -217,8 +217,7 @@ Pin the digest from `imagetools inspect` (or `docker manifest inspect`) in the v
 mkdir verify-$VERSION && cd verify-$VERSION
 gh release download v$VERSION --repo querdian-dev/querdian
 cosign verify-blob querdian_${VERSION}_checksums.txt \
-  --certificate querdian_${VERSION}_checksums.txt.pem \
-  --signature querdian_${VERSION}_checksums.txt.sig \
+  --bundle querdian_${VERSION}_checksums.txt.sigstore.json \
   --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
 sha256sum --check --ignore-missing querdian_${VERSION}_checksums.txt
 gh attestation verify querdian_${VERSION}_linux_amd64.tar.gz --repo querdian-dev/querdian
