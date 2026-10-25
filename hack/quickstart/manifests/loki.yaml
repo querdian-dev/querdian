@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
         - name: loki
-          image: docker.io/grafana/loki:3.5.0
+          image: docker.io/grafana/loki:3.7.9
           args: [-config.file=/etc/loki/loki.yaml]
           ports: [{containerPort: 3100}]
           readinessProbe: {httpGet: {path: /ready, port: 3100}, periodSeconds: 5, initialDelaySeconds: 10}
