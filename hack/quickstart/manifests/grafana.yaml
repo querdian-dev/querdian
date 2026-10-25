@@ -104,7 +104,7 @@ spec:
       securityContext: {fsGroup: 472}
       containers:
         - name: grafana
-          image: docker.io/grafana/grafana:12.4.13
+          image: docker.io/grafana/grafana:13.2.4
           env:
             - {name: GF_SECURITY_ADMIN_USER, value: admin}
             - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
