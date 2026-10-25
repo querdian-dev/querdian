@@ -74,19 +74,37 @@ func NewTempoSearchMerger(rootCovered bool) TempoMerger {
 
 // NewTempoTagsMerger returns the merger for the tag endpoints. For api/v2/search/tags pass valuesFor == "";
 // for api/v2/search/tag/:name/values pass the path parameter name. denied are the effective DeniedLabels.
+// Several responses (a per-term lookup, enforce.MergeTempoTags) are united first (UnionTempoTags,
+// UnionTempoTagValues); a single response is filtered as is.
 func NewTempoTagsMerger(denied []string, valuesFor string) TempoMerger {
 	return func(w http.ResponseWriter, _ *http.Request, resps []Response) error {
-		if len(resps) != 1 {
-			return fmt.Errorf("%w: %d responses for a single request", ErrTempoResponse, len(resps))
+		if len(resps) == 0 {
+			return fmt.Errorf("%w: no responses", ErrTempoResponse)
+		}
+		body := resps[0].Body
+		if len(resps) > 1 {
+			bodies := make([][]byte, len(resps))
+			for i, r := range resps {
+				bodies[i] = r.Body
+			}
+			var err error
+			if valuesFor == "" {
+				body, err = UnionTempoTags(bodies)
+			} else {
+				body, err = UnionTempoTagValues(bodies)
+			}
+			if err != nil {
+				return err
+			}
 		}
 		var (
 			out []byte
 			err error
 		)
 		if valuesFor == "" {
-			out, err = FilterTempoTags(resps[0].Body, denied)
+			out, err = FilterTempoTags(body, denied)
 		} else {
-			out, err = FilterTempoTagValues(resps[0].Body, valuesFor, denied)
+			out, err = FilterTempoTagValues(body, valuesFor, denied)
 		}
 		if err != nil {
 			return err
@@ -283,10 +301,94 @@ func FilterTempoTags(body []byte, denied []string) ([]byte, error) {
 	return json.Marshal(top)
 }
 
+// UnionTempoTags unites api/v2/search/tags bodies. The result has only "scopes" (tags per scope name, in
+// first-seen order, each tag once) and, when an input has it, "tagNames"; other fields are dropped.
+func UnionTempoTags(bodies [][]byte) ([]byte, error) {
+	type scope struct {
+		Name string   `json:"name"`
+		Tags []string `json:"tags"`
+	}
+	var (
+		scopes   []*scope
+		byName   = map[string]*scope{}
+		seenTag  = map[[2]string]bool{}
+		names    []string
+		seenName = map[string]bool{}
+		hasNames bool
+	)
+	for _, b := range bodies {
+		var in struct {
+			Scopes   []scope  `json:"scopes"`
+			TagNames []string `json:"tagNames"`
+		}
+		if err := json.Unmarshal(b, &in); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrTempoResponse, err)
+		}
+		for _, sc := range in.Scopes {
+			s := byName[sc.Name]
+			if s == nil {
+				s = &scope{Name: sc.Name, Tags: []string{}}
+				byName[sc.Name] = s
+				scopes = append(scopes, s)
+			}
+			for _, t := range sc.Tags {
+				if k := [2]string{sc.Name, t}; !seenTag[k] {
+					seenTag[k] = true
+					s.Tags = append(s.Tags, t)
+				}
+			}
+		}
+		if in.TagNames != nil {
+			hasNames = true
+		}
+		for _, n := range in.TagNames {
+			if !seenName[n] {
+				seenName[n] = true
+				names = append(names, n)
+			}
+		}
+	}
+	out := map[string]any{"scopes": scopes}
+	if scopes == nil {
+		out["scopes"] = []*scope{}
+	}
+	if hasNames {
+		out["tagNames"] = names
+	}
+	return json.Marshal(out)
+}
+
+// UnionTempoTagValues unites api/v2/search/tag/:name/values bodies. The result has only "tagValues", each
+// (type, value) pair once in first-seen order; other fields (metrics) are dropped.
+func UnionTempoTagValues(bodies [][]byte) ([]byte, error) {
+	type tagValue struct {
+		Type  string `json:"type"`
+		Value string `json:"value"`
+	}
+	values := []tagValue{}
+	seen := map[tagValue]bool{}
+	for _, b := range bodies {
+		var in struct {
+			TagValues []tagValue `json:"tagValues"`
+		}
+		if err := json.Unmarshal(b, &in); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrTempoResponse, err)
+		}
+		for _, v := range in.TagValues {
+			if !seen[v] {
+				seen[v] = true
+				values = append(values, v)
+			}
+		}
+	}
+	return json.Marshal(map[string]any{"tagValues": values})
+}
+
 // FilterTempoTagValues validates an api/v2/search/tag/:name/values JSON body for the attribute name (the
 // path parameter, possibly scoped such as resource.service.name). The enforcer already answers 403 for a
 // denied name; this is the second line of defence and fails when name is denied. Values of permitted
-// attributes are returned unchanged: they are computed over spans that satisfy the injected policy.
+// attributes are returned unchanged: the enforcer plans restricted lookups only in a q shape Tempo
+// evaluates on this endpoint (internal/enforce/traceql, tags.go), so they come from policy-matching spans.
 func FilterTempoTagValues(body []byte, name string, denied []string) ([]byte, error) {
 	scope, n := traceql.SplitAttr(name)
 	if deniedTag(denied, scope, n) {

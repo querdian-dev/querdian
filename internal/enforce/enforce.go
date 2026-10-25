@@ -21,6 +21,7 @@ const (
 	MergeSumCounts                    // index/stats, volume, patterns
 	MergeTailStreams                  // websocket tail
 	MergeTempoSearch                  // search results with metadata redaction
+	MergeTempoTags                    // Tempo tag names / values: union of per-term lookups
 )
 
 // Upstream is one request to send to the backend.

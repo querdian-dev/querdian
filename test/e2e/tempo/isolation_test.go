@@ -331,6 +331,14 @@ func testTags(t *testing.T, f *fixture) {
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
 			a := f.as(sc)
+			if sc.noTagLookups {
+				for _, r := range []*framework.Response{a.tags(""), a.tagValues(nsKey, "")} {
+					if r.Status != 400 || !strings.Contains(string(r.Body), "tag lookups do not support") {
+						t.Errorf("tag lookup not refused: %d %s", r.Status, r.Body)
+					}
+				}
+				return
+			}
 			want := f.grantedAttrNames(sc)
 			for _, d := range sc.deny {
 				scope, n, _ := strings.Cut(d, ".")

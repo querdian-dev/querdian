@@ -280,20 +280,23 @@ func approximateFromRequest(r *http.Request) bool {
 }
 
 // merger picks the response merger for a plan. Policy-dependent mergers are built per request. Tempo tag
-// endpoints are single-request MergeNone plans; they are switched to a buffered merge only when labels are
-// denied, so the tag list can be filtered.
+// endpoints are MergeTempoTags plans when they are fanned out per policy term, and single-request
+// MergeNone plans otherwise; the latter are switched to a buffered merge only when labels are denied, so
+// the tag list can be filtered.
 func (s *Server) merger(b *config.Backend, ep routes.Endpoint, plan *enforce.Plan, eff policy.Effective) proxy.Merger {
 	if b.Type == config.BackendTempo {
+		valuesFor := ""
+		if ep.Template == "/api/v2/search/tag/:name/values" {
+			valuesFor = ep.PathParam
+		}
 		switch {
 		case plan.Merge == enforce.MergeTempoSearch:
 			return fanout.NewTempoSearchMerger(traceql.RootCovered(eff))
+		case plan.Merge == enforce.MergeTempoTags:
+			return fanout.NewTempoTagsMerger(eff.DeniedLabels, valuesFor)
 		case plan.Merge == enforce.MergeNone && len(eff.DeniedLabels) > 0 &&
 			(ep.Template == "/api/v2/search/tags" || ep.Template == "/api/v2/search/tag/:name/values"):
 			plan.Merge = enforce.MergeStringSet
-			valuesFor := ""
-			if ep.Template == "/api/v2/search/tag/:name/values" {
-				valuesFor = ep.PathParam
-			}
 			return fanout.NewTempoTagsMerger(eff.DeniedLabels, valuesFor)
 		}
 	}

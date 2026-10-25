@@ -11,6 +11,16 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+### Security
+
+* **Tempo tag lookups could list names and values of spans outside the policy**
+  ([GHSA-jcqw-3c3f-xrmj](https://github.com/querdian-dev/querdian/security/advisories/GHSA-jcqw-3c3f-xrmj)).
+  Tempo answers `api/v2/search/tags` and `api/v2/search/tag/<name>/values` unfiltered for some `q`
+  shapes, which dropped the injected policy. Restricted tag lookups are now planned per policy term
+  in a shape Tempo evaluates; policies with `!=`, `!~` or open regexes get `400` on these two
+  endpoints, and a user `q` outside that shape is ignored. See
+  [docs/limitations.md](docs/limitations.md#traceql-and-tempo).
+
 ## [0.1.0] - 2026-10-25
 
 The first release: a signed multi-arch image `ghcr.io/querdian-dev/querdian:0.1.0` and the Helm chart

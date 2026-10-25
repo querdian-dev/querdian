@@ -19,7 +19,9 @@
 //     whether or not q is present: they are evaluated outside TraceQL and cannot carry the
 //     policy.
 //   - q is optional on the tag endpoints and on search. When it is absent (or empty) a
-//     restricted user gets q={ dnf }, never a pass-through; an unrestricted user gets no q. The
+//     restricted user gets q={ dnf } on search, never a pass-through; an unrestricted user gets no q.
+//     Restricted tag lookups do not inject the DNF: they are planned per term in a shape Tempo is
+//     known to evaluate there (tags.go, GHSA-jcqw-3c3f-xrmj). The
 //     metrics endpoints require q (ErrUnsupported otherwise) because a policy-only filter is not
 //     a metrics query.
 //   - A query without any spanset filter (`count() > 10`, which Tempo runs as `{ } | count() > 10`)
@@ -64,7 +66,8 @@ type enforcer struct{ opt Options }
 // New returns the TraceQL enforcer for Tempo backends with trace-by-ID denied (see NewWithOptions).
 func New() enforce.Enforcer { return enforcer{} }
 
-// Plan implements enforce.Enforcer. It returns a single upstream request: search uses
+// Plan implements enforce.Enforcer. It returns a single upstream request, except for restricted tag
+// lookups with several terms (enforce.MergeTempoTags, strategy "fanout", see tags.go): search uses
 // enforce.MergeTempoSearch (response redaction, T4.4), every other endpoint enforce.MergeNone.
 // Strategy is "inject", or "passthrough" for unrestricted users (denied attributes are still
 // checked).
@@ -151,6 +154,9 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 		dnf, all, err := policyDNF(eff)
 		if err != nil {
 			return enforce.Plan{}, err
+		}
+		if !all && (ep.Template == tmplTags || ep.Template == tmplTagValues) {
+			return planTagLookup(ep.Param, out, parsed, eff)
 		}
 		if !all {
 			strategy = "inject"
