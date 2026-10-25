@@ -139,7 +139,7 @@ components:
 
 **Creative North Star: "The Accreditation Pass"**
 
-Access control is shown as a pass, not a policy file. A lanyard card hangs from a peg rail, names a team, and lists three zones the holder may enter; the page around it is cool paper and ink, with hairline and heavy ink rules like printed credential stock. The surface is flat, legible and slightly stern, which fits a security proxy that fails closed and says plainly that it is pre-alpha.
+Access control is shown as a pass, not a policy file. A lanyard card hangs from a peg rail, names a team, and lists three zones the holder may enter; the page around it is cool paper and ink, with hairline and heavy ink rules like printed credential stock. The surface is flat, legible and slightly stern, which fits a security proxy that fails closed and says plainly that it is alpha.
 
 Three zone colours carry fixed meaning everywhere on the site: orange is metrics, blue is logs, lime is traces. Hatched ink means denied. Nothing else on the site is allowed to use those three hues for decoration, so a colour is always a statement about scope. Archivo, wide and heavy, does the lettering of passes and headings; JetBrains Mono appears only where the content is a query, YAML or a reason code.
 
@@ -255,7 +255,7 @@ An 8px three-segment orange/blue/lime strip above the header.
 - **Do** build structure from ink rules: 1px hairline for rows, 3px solid for section and table heads.
 - **Do** keep controls as 2.5px ink-bordered pills at 44px or larger, with the paper-halo focus ring.
 - **Do** keep motion to the pass settling and the stamp on matchers, and honour `prefers-reduced-motion`.
-- **Do** state pre-alpha status plainly wherever the product is described.
+- **Do** state alpha status plainly wherever the product is described.
 
 ### Don't:
 - **Don't** use zone colours as decoration, link colour or syntax highlighting.

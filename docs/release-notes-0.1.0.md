@@ -1,13 +1,10 @@
-# Querdian v0.1.0 release notes (DRAFT)
-
-> **Draft.** Nothing has been released. Re-check every statement against the tagged commit before
-> publishing (see [releasing.md](releasing.md)). Remove this block when final.
+# Querdian v0.1.0 release notes
 
 Querdian is an Apache-2.0, Kubernetes-native reverse proxy that enforces label-based access control
 on read queries against Prometheus/Thanos (PromQL), Loki (LogQL) and Tempo (TraceQL). Policies are
 Kubernetes CRDs, queries are rewritten with parsers, and every error fails closed.
 
-This is the first release. It is an early, `v1alpha1` release: the CRD API may change
+This is the first release. It is an alpha release with a `v1alpha1` API: the CRDs may change
 incompatibly, and the project has no production adopters yet. Treat it as something to evaluate and
 give feedback on, not as a drop-in security boundary you have not tested in your own environment.
 
@@ -20,13 +17,23 @@ give feedback on, not as a drop-in security boundary you have not tested in your
 * PromQL, LogQL and TraceQL enforcement, including multi-tenant (`X-Scope-OrgID`) backends and
   Loki `tail`. The LogQL and TraceQL parsers are clean-room implementations from the public
   documentation (`pkg/logql`, `pkg/traceql`).
+* `labels.deny` hides labels; the opt-in `labels.redact` also rewrites their values in query results.
 * Tempo search responses are redacted and trace-by-ID can be filtered by policy.
+* An optional, read-only policy dashboard with a query test bench (off by default).
 * Helm chart (with optional NetworkPolicies protecting the backends), distroless multi-arch image,
   Grafana dashboard, metrics, tracing and a kind quickstart.
 * Release artefacts are signed with cosign (keyless) and carry SBOMs and GitHub build-provenance
   attestations; see "Verify" below.
 
 Full list: [CHANGELOG.md](../CHANGELOG.md).
+
+## Artefacts
+
+| | |
+|---|---|
+| Container image | `ghcr.io/querdian-dev/querdian:0.1.0` (`linux/amd64`, `linux/arm64`; distroless, non-root) |
+| Helm chart | `oci://ghcr.io/querdian-dev/charts/querdian`, version `0.1.0`, also on [Artifact Hub](https://artifacthub.io/packages/helm/querdian/querdian) |
+| Binaries | `querdian_0.1.0_linux_{amd64,arm64}.tar.gz` with SPDX SBOMs, on the [GitHub release](https://github.com/querdian-dev/querdian/releases/tag/v0.1.0) |
 
 ## Install
 
@@ -37,12 +44,25 @@ helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.0
 
 You must set `config.auth` and `config.backends`. Start with the [quickstart](quickstart.md) and the
 [policy guide](policy-guide.md). Helm installs the CRDs on first install only; apply `crds/` yourself
-on upgrades.
+on upgrades. To pin the image by digest, set `image.digest` (it takes precedence over `image.tag`).
 
 ## Verify
 
-See [releasing.md](releasing.md#5-post-release-verification) for `cosign verify`,
-`cosign verify-blob` and `gh attestation verify` commands.
+The image, the chart and the checksums file are signed by the release workflow of this repository:
+
+```sh
+IDENTITY='^https://github.com/querdian-dev/querdian/\.github/workflows/release\.yml@refs/tags/'
+ISSUER=https://token.actions.githubusercontent.com
+
+cosign verify ghcr.io/querdian-dev/querdian:0.1.0 \
+  --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+cosign verify ghcr.io/querdian-dev/charts/querdian:0.1.0 \
+  --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+gh attestation verify oci://ghcr.io/querdian-dev/querdian:0.1.0 --repo querdian-dev/querdian
+```
+
+The checksums file is signed as a Sigstore bundle (`cosign verify-blob --bundle`, cosign v3 or later).
+All commands, including the archives, are in [releasing.md](releasing.md#5-post-release-verification).
 
 ## Read this before you depend on it
 
@@ -79,19 +99,22 @@ The complete list is [limitations.md](limitations.md); the attacker model is in 
 * **Operations.** No rate limiting or quotas, no TLS termination (use an ingress or mesh), the
   management port is unauthenticated. Memory scales with concurrent merged responses
   (`limits.maxMergeBytes` each).
-* **Tested versions.** The differential and equivalence suites ran against specific backend versions
-  (Prometheus, Loki 3.5.0, Tempo 2.9.0). Other versions may diverge in corners the parsers do not
-  model. Mimir and Thanos federation behaviour is based on research notes, not on end-to-end tests.
-* **Scope.** Read paths only. No UI, no write/ingest/ruler/alert paths, Kubernetes only, HTTP API
-  only (no gRPC or streaming search).
-* **Supply chain.** First release: the signing and attestation pipeline is verified by the rc dry-run
-  described in [releasing.md](releasing.md). No third-party security audit has been performed.
+* **Tested versions.** The differential and equivalence suites ran against Prometheus v3.5.0,
+  Loki 3.5.0 and Tempo 2.9.0. Other versions may diverge in corners the parsers do not model. Mimir
+  and Thanos federation behaviour is based on research notes, not on end-to-end tests.
+* **Scope.** Read paths only: no write, ingest, ruler or alert paths. Kubernetes only, HTTP API only
+  (no gRPC or streaming search). The policy dashboard is read-only and meant for administrators
+  ([dashboard.md](dashboard.md)).
+* **Supply chain.** The signing, SBOM and attestation pipeline was exercised end to end by two release
+  candidates (`v0.1.0-rc.1`, `v0.1.0-rc.2`) and verified as described in [releasing.md](releasing.md).
+  No third-party security audit has been performed.
 * **Project.** Single maintainer; not a CNCF project.
 
 ## Security
 
-No vulnerability is known to be fixed in this release (maintainer: confirm that no advisory is open before publishing). Report vulnerabilities as
-described in [SECURITY.md](../SECURITY.md).
+No released version was ever affected by a known vulnerability: this is the first release, and the
+security-relevant fixes in the [CHANGELOG](../CHANGELOG.md) were found before it. Report
+vulnerabilities as described in [SECURITY.md](../SECURITY.md).
 
 ## Upgrading
 

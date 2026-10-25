@@ -7,22 +7,34 @@ label-based access control on read queries against Prometheus/Thanos (PromQL), L
 Tempo (TraceQL). Policies are Kubernetes CRDs, queries are rewritten with real parsers, and
 everything fails closed: unknown endpoints, unknown users and unparseable queries are rejected.
 
-<!--
-  Badges: ACTIVATE AFTER REGISTRATION. Do not uncomment before the project exists on
-  bestpractices.dev (replace <ID> with the numeric project ID) and the Scorecard workflow has
-  published a result for the public repository, otherwise the images 404. See
-  docs/openssf-best-practices.md (items H5 and H8).
-
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<ID>/badge)](https://www.bestpractices.dev/projects/<ID>)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15762/badge)](https://www.bestpractices.dev/projects/15762)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/querdian-dev/querdian/badge)](https://scorecard.dev/viewer/?uri=github.com/querdian-dev/querdian)
--->
+[![Artifact Hub](https://artifacthub.io/badge/repository/querdian)](https://artifacthub.io/packages/helm/querdian/querdian)
 
-**Status: pre-alpha, not released.** Nothing here is ready for production use. There is no tagged
-release yet. The proxy, the policy CRDs and the PromQL, LogQL and TraceQL enforcers are implemented
-and covered by unit, fuzz, envtest and container-based differential/equivalence suites (`make e2e`)
-against real Prometheus, Loki and Tempo. A Helm chart, a Dockerfile, a release pipeline and a kind
-quickstart are in the repository; the release pipeline has not run yet, so no image or chart is
-published. See [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md).
+**Status: alpha, [v0.1.0](https://github.com/querdian-dev/querdian/releases/tag/v0.1.0) is the first
+release.** It is not ready for production use: the policy API is `v1alpha1` and may change
+incompatibly, and there are no production adopters yet. The proxy, the policy CRDs and the PromQL,
+LogQL and TraceQL enforcers are covered by unit, fuzz, envtest and container-based
+differential/equivalence suites (`make e2e`) against real Prometheus, Loki and Tempo. Read the
+[release notes](docs/release-notes-0.1.0.md) and the [known limitations](docs/limitations.md) before
+you evaluate it. See also [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md).
+
+## Install
+
+```sh
+helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.0 \
+  --namespace querdian --create-namespace -f my-values.yaml
+```
+
+* Helm chart: `oci://ghcr.io/querdian-dev/charts/querdian`, also on
+  [Artifact Hub](https://artifacthub.io/packages/helm/querdian/querdian); values in the
+  [chart README](charts/querdian/README.md).
+* Container image: `ghcr.io/querdian-dev/querdian:0.1.0` (`linux/amd64`, `linux/arm64`).
+* Binaries, checksums and SBOMs: the [GitHub release](https://github.com/querdian-dev/querdian/releases/tag/v0.1.0).
+* Everything is signed with cosign (keyless) and has build-provenance attestations; see
+  [Verify](docs/release-notes-0.1.0.md#verify).
+
+To see it working first, run the [quickstart](docs/quickstart.md).
 
 Inspired by [evoila/janus](https://github.com/evoila/janus).
 

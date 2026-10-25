@@ -6,12 +6,13 @@ documented limitation or an unfinished task in this repository ([TASKS.md](TASKS
 [docs/limitations.md](docs/limitations.md), [docs/research/](docs/research/)); nothing here is a
 promise to a user. Priorities will follow real feedback.
 
-## Now: 0.1.0
+## Now: after 0.1.0
 
-* Finish the release: kind quickstart verified against the published artefacts, signed image,
-  chart and provenance verified, release notes (T5.6, T5.7;
-  [docs/releasing.md](docs/releasing.md)).
-* OpenSSF Best Practices "passing" badge application and a TAG Security self-assessment review
+* 0.1.0 is the first release: signed multi-arch image and Helm chart, SBOMs and build provenance,
+  chart on Artifact Hub ([release notes](docs/release-notes-0.1.0.md)). Feedback from evaluations
+  decides what comes next.
+* OpenSSF Best Practices "passing" badge (registered, questionnaire in progress) and a TAG Security
+  self-assessment review
   ([docs/openssf-best-practices.md](docs/openssf-best-practices.md),
   [docs/security/self-assessment.md](docs/security/self-assessment.md)).
 

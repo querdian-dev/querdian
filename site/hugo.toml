@@ -24,6 +24,9 @@ enableGitInfo = false
   repo = "querdian-dev/querdian"
   # Set to true when the repository is public: enables the GitHub links on the site.
   repoPublic = true
+  # Latest release, shown on the landing page and in the footer (update with every release,
+  # see docs/releasing.md).
+  version = "0.1.0"
 
 [outputs]
   home = ["HTML", "SearchIndex"]

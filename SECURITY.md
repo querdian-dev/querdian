@@ -11,7 +11,8 @@ reports within 3 working days and to agree on a disclosure timeline with the rep
 
 ## Supported versions
 
-The project is pre-alpha; only the latest `main` is supported.
+The project is alpha. Security fixes are made on `main` and released for the latest minor release
+line only (currently 0.1.x); older releases are not patched.
 
 ## Scope
 

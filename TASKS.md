@@ -461,15 +461,20 @@ picking up any task — section references (§) point there.
         port, `ingress.from` admits only the listed namespace, and querdian stays Ready under its own
         egress policy. Not covered: real proxy traffic to real backends, as the backends are dummies.)
 
-### [ ] T5.2 — Image and release pipeline ∥
+### [x] T5.2 — Image and release pipeline ∥
 - **Depends on:** T1.11
 - **Files:** `Dockerfile`, `.goreleaser.yaml`, `.github/workflows/release.yml`
 - **Acceptance:**
-  - [ ] Multi-arch distroless image, non-root, read-only root fs compatible.
-        (Verified locally on arm64: runs with `--read-only --user 65532`, no shell, 51.9 MB.
-        Not ticked: the amd64/arm64 manifest list is only produced by the release workflow.)
-  - [ ] Tag push → GitHub release with binaries, signed image (cosign keyless), SBOM, SLSA
+  - [x] Multi-arch distroless image, non-root, read-only root fs compatible.
+        (`v0.1.0-rc.2`: the index lists `linux/amd64` and `linux/arm64`; the published image runs
+        as `65532:65532` with `--read-only --cap-drop ALL --security-opt no-new-privileges`, has no
+        `/bin/sh`, 52 MB.)
+  - [x] Tag push → GitHub release with binaries, signed image (cosign keyless), SBOM, SLSA
         provenance; chart published to OCI registry.
+        (`v0.1.0-rc.2`, run 40188933704, verified anonymously per docs/releasing.md §5: release with
+        archives, SPDX SBOMs and the checksums bundle (`cosign verify-blob --bundle` OK); image and
+        chart `cosign verify` OK; SLSA v1 provenance for the archives and the image. `rc.1` failed
+        in the chart job and led to #8; #7 fixed two bugs found before tagging.)
 
 ### [~] T5.3 — Quickstart on kind ∥
 - **Depends on:** T5.1, T2.4, T3.8, T4.6
@@ -527,9 +532,10 @@ picking up any task — section references (§) point there.
 - **Files:** `docs/security/self-assessment.md`, badge in README
 - **Acceptance:**
   - [ ] OpenSSF Best Practices "passing" criteria satisfied (badge application submitted `HUMAN`).
-        (Checklist: `docs/openssf-best-practices.md`: 41 Met / 15 Unmet / 11 N/A on repository
-        evidence. Open: repository public, private vulnerability reporting, first release, the
-        bestpractices.dev registration. README badges are prepared as comments.)
+        (Checklist: `docs/openssf-best-practices.md`. Registered on bestpractices.dev as project
+        15762, status "in progress"; the questionnaire is not complete. Repository public, private
+        vulnerability reporting and the first release (0.1.0) are done; the checklist rows for the
+        GitHub settings have not been re-checked since. README badges are active.)
   - [x] TAG Security self-assessment draft complete (`docs/security/self-assessment.md`; gaps listed
         in it; not reviewed by anyone outside the project).
 
@@ -538,6 +544,9 @@ picking up any task — section references (§) point there.
 - **Acceptance:**
   - [ ] CHANGELOG, release notes, tag `v0.1.0`, release pipeline green, quickstart verified
         against the released artefacts.
+        (CHANGELOG `[0.1.0]` and final release notes in the release pull request. Pipeline and
+        quickstart verified on `v0.1.0-rc.2`: `verify.sh` 153 passed against the published image and
+        chart. Open: tag `v0.1.0` and repeat docs/releasing.md §5 and §7 against it.)
 
 ---
 

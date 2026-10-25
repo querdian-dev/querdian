@@ -1,10 +1,20 @@
 # Releasing
 
-The exact procedure for cutting a Querdian release. It is written for the maintainer and for
-task T5.7 (release 0.1.0). **Nothing here has been run**: no tag exists, the release workflow
-([.github/workflows/release.yml](../.github/workflows/release.yml)) has never executed, and
-several statements below (marked "unverified") describe what the configuration should do. The
-dry-run with a release candidate exists precisely to turn them into facts.
+The exact procedure for cutting a Querdian release. It is written for the maintainer and was first
+followed for 0.1.0 (task T5.7). The release workflow
+([.github/workflows/release.yml](../.github/workflows/release.yml)) was exercised by two release
+candidates on 2026-10-25:
+
+* Before tagging, reading the pinned GoReleaser and cosign sources found two bugs that would have
+  failed every release: the image digest lookup in the attestation step and checksum signing with
+  cosign v3, which needs `--bundle` (pull request #7).
+* `v0.1.0-rc.1` confirmed both fixes and failed in the chart job, because cosign had no registry
+  login there (fixed in #8).
+* `v0.1.0-rc.2` passed every check in [section 5](#5-post-release-verification), including the
+  quickstart against the published image and chart (after #10 fixed a stale assertion in
+  `verify.sh`).
+
+Statements still marked "unverified" below were not covered by those runs.
 
 What a tag push `v*` does, by reading the workflow and [.goreleaser.yaml](../.goreleaser.yaml):
 
@@ -195,37 +205,46 @@ Documents to update in the release commit (a pull request, like any change):
   the date, fill the compare links; keep an empty `[Unreleased]`. The entries of the version also
   become the Artifact Hub changelog (see [Artifact Hub](#artifact-hub)), so keep them readable as
   one-paragraph changes.
-* [release-notes-0.1.0.md](release-notes-0.1.0.md): re-read every limitation against
-  [limitations.md](limitations.md); strike "draft".
-* [README.md](../README.md): the status paragraph, and uncomment the badges only if H5 and H8 are done.
-* [SECURITY.md](../SECURITY.md): "Supported versions" still says "pre-alpha; only the latest `main`
-  is supported". Replace it with the supported release line (for example "the latest 0.x minor").
-* [TASKS.md](../TASKS.md): tick T5.2 (only after the dry-run proved the multi-arch image, signatures
-  and chart publication) and T5.7 (only when every acceptance item below is done).
+* Release notes `docs/release-notes-<version>.md` (start from
+  [release-notes-0.1.0.md](release-notes-0.1.0.md)): re-read every limitation against
+  [limitations.md](limitations.md).
+* The version number wherever users copy it from. For 0.1.0 these were:
+  * [README.md](../README.md): status paragraph and "Install" section;
+  * [charts/querdian/README.md](../charts/querdian/README.md): install and verify commands (this
+    README is packaged with the chart and shown on Artifact Hub);
+  * [docs/quickstart.md](quickstart.md): the "published image" instructions;
+  * [docs/operations.md](operations.md): the "latest" release in the introduction;
+  * `site/hugo.toml`: `params.version` (landing page and footer), and `site/data/nav.yaml`: the
+    release notes page;
+  * [SECURITY.md](../SECURITY.md): the supported release line, when the minor version changes.
+
+  `git grep -n -F '<previous version>'` finds them.
+* [TASKS.md](../TASKS.md): tick the release task only when every acceptance item below is done.
 * `Chart.yaml` stays at `0.0.0-dev`; the pipeline sets version and appVersion.
-* [docs/quickstart.md](quickstart.md) and the chart README still say "no published image yet";
-  adjust once a release exists.
 
 ## 3. Dry-run with a release candidate
 
-Strongly recommended before `v0.1.0`: the pipeline has never run, and a bad `v0.1.0` cannot be
-cleanly retracted (see rollback).
+Strongly recommended before every minor release and after any change to the release workflow,
+`.goreleaser.yaml`, `hack/chartmeta` or the pinned tool versions: a bad release cannot be cleanly
+retracted (see rollback). For 0.1.0 the candidates found a failing chart job and a stale quickstart
+assertion.
 
 ```sh
 git switch main && git pull --ff-only
-git tag -s v0.0.0-rc.1 -m "Querdian v0.0.0-rc.1 (release pipeline dry-run)"   # or -a if you do not sign tags
-git push origin v0.0.0-rc.1
+git tag -s v0.2.0-rc.1 -m "Querdian v0.2.0-rc.1 (release pipeline dry-run)"   # or -a if you do not sign tags
+git push origin v0.2.0-rc.1
 ```
 
-(`v0.1.0-rc.1` is equally valid and reads better on the releases page; either is a pre-release and
-does not move `latest`. The suggested version string `0.0.0-rc.1` keeps the dry-run visibly outside
-the 0.1.x line.)
+A tag with a pre-release part (`-rc.N`) becomes a GitHub pre-release, does not move `latest`, and is
+marked `artifacthub.io/prerelease` on Artifact Hub. Its changelog comes from the `[X.Y.Z]` section of the
+release version, or from `[Unreleased]` while that section has no entries.
 
-Watch the `Release` workflow, then perform **every verification of section 5** against
-`0.0.0-rc.1`. Record what failed in the pull request that fixes it. Typical first-run problems
-(all unverified guesses): package visibility or write access for ghcr, an action blocked by the
-allowlist, cosign identity regexp not matching, the chart push digest parsing in the workflow.
-Fix, delete the rc release and tag (section 6), tag `v0.0.0-rc.2`.
+Watch the `Release` workflow, then perform **every verification of section 5** against the rc
+version. Record what failed in the pull request that fixes it, then tag the next rc number; never
+reuse one. A failed rc can stay as a pre-release (0.1.0 kept `v0.1.0-rc.1`, whose chart is
+unsigned) or be deleted (section 6). Problems seen on the first run: an action blocked by the
+allowlist (none were), cosign without a registry login, tool behaviour that changed with a version
+bump (cosign v3 bundles, GoReleaser's `artifacts.json` shape).
 
 ## 4. The release
 
@@ -338,7 +357,7 @@ Signatures are written to the public Rekor log and cannot be withdrawn; tags and
 public. The rule is therefore **never move or reuse a tag or a chart version**.
 
 * **Release candidate that failed:** delete the GitHub release and tag
-  (`gh release delete v0.0.0-rc.1 --cleanup-tag --yes`), delete the image tag and chart version in
+  (`gh release delete v0.2.0-rc.1 --cleanup-tag --yes`), delete the image tag and chart version in
   the package settings (or `gh api -X DELETE /orgs/querdian-dev/packages/container/<name>/versions/<id>`),
   and use the next rc number. A tag that was never published can be deleted locally and on `origin`.
 * **A bad `v0.1.0`:** do not delete and re-push. Mark the GitHub release as a pre-release or edit the
