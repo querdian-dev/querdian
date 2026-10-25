@@ -7,6 +7,7 @@ version: 0.0.0-dev
 appVersion: "0.0.0-dev"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/querdian-dev/querdian
+icon: https://querdian.dev/favicon.svg
 sources:
   - https://github.com/querdian-dev/querdian
 keywords: [prometheus, loki, tempo, multi-tenancy, proxy, access-control]
@@ -14,4 +15,53 @@ maintainers:
   - name: geilername
     email: maximilian.marschall@3xm.at
 annotations:
-  category: Observability
+  # Artifact Hub, https://artifacthub.io/docs/topics/annotations/helm/. The release workflow adds
+  # the per-version ones (artifacthub.io/changes from CHANGELOG.md, containsSecurityUpdates,
+  # prerelease, helm.sh/images) with hack/chartmeta; see docs/releasing.md.
+  artifacthub.io/category: security
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://querdian.dev/docs/
+    - name: Quickstart
+      url: https://querdian.dev/docs/quickstart/
+    - name: Security policy
+      url: https://github.com/querdian-dev/querdian/blob/main/SECURITY.md
+  artifacthub.io/crds: |
+    - kind: ClusterAccessPolicy
+      version: v1alpha1
+      name: clusteraccesspolicies.policy.querdian.dev
+      displayName: ClusterAccessPolicy
+      description: Grants users or groups read access to metrics, logs and traces across namespaces, per backend and tenant.
+    - kind: AccessPolicy
+      version: v1alpha1
+      name: accesspolicies.policy.querdian.dev
+      displayName: AccessPolicy
+      description: Grants users or groups read access to the metrics, logs and traces of the policy's own namespace.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: policy.querdian.dev/v1alpha1
+      kind: ClusterAccessPolicy
+      metadata:
+        name: platform-admins
+      spec:
+        subjects:
+          groups: [platform-admins]
+        rules:
+          - backends: [metrics, logs, traces]
+            tenants: [demo]
+            unrestricted: true
+    - apiVersion: policy.querdian.dev/v1alpha1
+      kind: AccessPolicy
+      metadata:
+        name: order-team
+        namespace: order-service
+      spec:
+        subjects:
+          groups: [order-team]
+        rules:
+          - backends: [metrics]
+            labels:
+              redact:
+                - name: customer_id
+                  strategy: Placeholder
+          - backends: [logs, traces]

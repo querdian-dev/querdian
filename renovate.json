@@ -79,7 +79,8 @@
       ],
       "matchStrings": [
         "go run (?<depName>golang\\.org/x/vuln)/cmd/govulncheck@(?<currentValue>v[0-9][^\\s]*)",
-        "go run (?<depName>github\\.com/gohugoio/hugo)@(?<currentValue>v[0-9][^\\s]*)"
+        "go run (?<depName>github\\.com/gohugoio/hugo)@(?<currentValue>v[0-9][^\\s]*)",
+        "go run (?<depName>oras\\.land/oras)/cmd/oras@(?<currentValue>v[0-9][^\\s]*)"
       ],
       "datasourceTemplate": "go"
     },

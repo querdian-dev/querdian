@@ -8,7 +8,8 @@ dry-run with a release candidate exists precisely to turn them into facts.
 
 What a tag push `v*` does, by reading the workflow and [.goreleaser.yaml](../.goreleaser.yaml):
 
-1. Rejects tags that are not `vMAJOR.MINOR.PATCH[-pre]`.
+1. Rejects tags that are not `vMAJOR.MINOR.PATCH[-pre]`, and versions without CHANGELOG entries
+   (see [Artifact Hub](#artifact-hub)).
 2. GoReleaser builds `linux/amd64` and `linux/arm64` binaries, `tar.gz` archives, a SHA-256
    checksums file and an SPDX SBOM per archive (syft), and creates the GitHub release (a tag with a
    pre-release part is marked as pre-release; `latest` is only tagged for non-pre-release versions).
@@ -17,9 +18,15 @@ What a tag push `v*` does, by reading the workflow and [.goreleaser.yaml](../.go
 4. cosign signs the checksums file (a Sigstore bundle `.sigstore.json` uploaded to the release).
 5. GitHub build-provenance attestations are created for the archives (via the checksums file) and
    for the image digest (pushed to the registry).
-6. The `chart` job packages `charts/querdian` with `--version` and `--app-version` set to the tag
-   without `v`, pushes it to `oci://ghcr.io/querdian-dev/charts` and signs the chart digest with
-   cosign (keyless). The chart is **not** covered by a GitHub attestation.
+6. The `chart` job writes the per-version Artifact Hub annotations into `Chart.yaml`
+   (`hack/chartmeta`: the changelog of the version from CHANGELOG.md, `prerelease`,
+   `containsSecurityUpdates`, `helm.sh/images`), packages `charts/querdian` with `--version` and
+   `--app-version` set to the tag without `v`, pushes it to `oci://ghcr.io/querdian-dev/charts` and
+   signs the chart digest with cosign (keyless). The chart is **not** covered by a GitHub
+   attestation.
+7. The `chart` job pushes [charts/artifacthub-repo.yml](../charts/artifacthub-repo.yml) to
+   `ghcr.io/querdian-dev/charts/querdian:artifacthub.io` with oras (see
+   [Artifact Hub](#artifact-hub)).
 
 ## 1. One-time GitHub settings
 
@@ -110,6 +117,55 @@ packages default to private. After the first push (the release candidate):
 * Package settings > Change visibility > **Public**, for both packages. Otherwise `helm pull` and
   `docker pull` from the quickstart fail for users.
 
+### Artifact Hub
+
+The chart is listed on [Artifact Hub](https://artifacthub.io) straight from the OCI registry; there
+is no separate Helm repository. What Artifact Hub shows comes from three places:
+
+* Static annotations in [Chart.yaml](../charts/querdian/Chart.yaml) (category, license, links,
+  CRDs and CRD examples). `charts/querdian/artifacthub_test.go` checks them against `crds/` and the
+  API types.
+* Per-version annotations written by the release job with `go run ./hack/chartmeta -version
+  <version>`. `artifacthub.io/changes` is the **changelog** Artifact Hub displays: the entries under
+  Added, Changed, Deprecated, Removed, Fixed and Security of the `## [<version>]` section of
+  [CHANGELOG.md](../CHANGELOG.md) (one change per top-level bullet; `####` sub-headings and other
+  `###` sections such as "Known limitations" are left out). A pre-release uses the section of its
+  release version or, failing that, `[Unreleased]`. **A release without entries in its own
+  section fails the release workflow** in its first step, before anything is published; check with
+  `go run ./hack/chartmeta -version <version> -out -` in the pre-flight. `containsSecurityUpdates` is
+  `true` when the section has a Security entry, `prerelease` when the version has a pre-release
+  part. Artifact Hub does not re-index an OCI chart version, so what a version was pushed with
+  stays.
+* The repository metadata [charts/artifacthub-repo.yml](../charts/artifacthub-repo.yml), pushed by
+  the release job to the tag `artifacthub.io` of the chart repository: owners (ownership claim),
+  `repositoryID` (verified publisher) and, if needed, ignored versions.
+
+One-time setup, after the first chart version is public on ghcr.io (Artifact Hub cannot read
+private packages):
+
+Done on 2026-10-25: the repository is registered in the Artifact Hub organization `querdian-dev`
+(repository ID in `charts/artifacthub-repo.yml`). The steps, for reference or a re-registration:
+
+1. Sign in to <https://artifacthub.io> with the account whose email is listed under `owners` in
+   `charts/artifacthub-repo.yml`, in the organization `querdian-dev`.
+2. Control panel > Repositories > Add: kind **Helm charts**, name `querdian`, URL
+   `oci://ghcr.io/querdian-dev/charts/querdian`.
+3. Copy the repository ID from the repository card into `repositoryID` in
+   `charts/artifacthub-repo.yml` (pull request). The metadata is pushed with the next release;
+   to apply it earlier, push it by hand after `docker login ghcr.io`:
+
+   ```sh
+   cd charts && go run oras.land/oras/cmd/oras@v1.3.4 push \
+     ghcr.io/querdian-dev/charts/querdian:artifacthub.io \
+     --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+     artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+   ```
+
+   Artifact Hub sets the verified-publisher badge the next time it processes the repository.
+
+The `artifacthub.io` tag shows up among the versions of the `charts/querdian` package on ghcr.io.
+It is an OCI artifact, not a chart: `helm` and Artifact Hub ignore it as a chart version.
+
 ## 2. Pre-flight checklist
 
 On a clean checkout of the commit to be tagged (`main`, up to date, CI green):
@@ -124,6 +180,8 @@ make lint test-race envtest e2e licenses chart-lint release-check
   a while (the target timeout is 20 minutes).
 * `release-check` runs `goreleaser check` through the module proxy (needs network).
 * `chart-lint` needs `helm`.
+* `go run ./hack/chartmeta -version $VERSION -out -` must succeed and show the expected
+  `artifacthub.io/changes`; it fails if the CHANGELOG section of the version has no entries.
 * Run the quickstart against the commit: `hack/quickstart/up.sh && hack/quickstart/verify.sh &&
   hack/quickstart/down.sh` (needs kind; builds the image from source).
 * Optionally `make fuzz FUZZTIME=2m` and `go run golang.org/x/vuln/cmd/govulncheck@<pinned> ./...`
@@ -134,7 +192,9 @@ make lint test-race envtest e2e licenses chart-lint release-check
 Documents to update in the release commit (a pull request, like any change):
 
 * [CHANGELOG.md](../CHANGELOG.md): move the entries from `[Unreleased]` into the new version, set
-  the date, fill the compare links; keep an empty `[Unreleased]`.
+  the date, fill the compare links; keep an empty `[Unreleased]`. The entries of the version also
+  become the Artifact Hub changelog (see [Artifact Hub](#artifact-hub)), so keep them readable as
+  one-paragraph changes.
 * [release-notes-0.1.0.md](release-notes-0.1.0.md): re-read every limitation against
   [limitations.md](limitations.md); strike "draft".
 * [README.md](../README.md): the status paragraph, and uncomment the badges only if H5 and H8 are done.
@@ -237,7 +297,19 @@ cosign verify ghcr.io/querdian-dev/charts/querdian:$VERSION \
 ```
 
 Both `version` and `appVersion` must equal `$VERSION`, and the chart must pull the image of the same
-version by default.
+version by default. `helm show chart` must also list `artifacthub.io/changes`, `artifacthub.io/prerelease`
+and `helm.sh/images` with the image of `$VERSION`.
+
+**Artifact Hub** (after the one-time setup in [Artifact Hub](#artifact-hub))
+
+```sh
+go run oras.land/oras/cmd/oras@v1.3.4 manifest fetch ghcr.io/querdian-dev/charts/querdian:artifacthub.io
+```
+
+Then open <https://artifacthub.io/packages/helm/querdian/querdian> (the path depends on the
+repository name chosen there) once Artifact Hub has processed the repository (it polls, which can
+take up to an hour): the version, the changelog modal, the CRDs and, after the scan, the image
+security report must be there.
 
 **Quickstart against the released artefacts**
 
@@ -290,3 +362,4 @@ Tick T5.7 in [TASKS.md](../TASKS.md) when all of this is true:
 * [ ] Section 5 verification passed for image, archives and chart.
 * [ ] The quickstart ran against the released artefacts and `verify.sh` passed.
 * [ ] Both ghcr.io packages are public.
+* [ ] The chart is listed on Artifact Hub with the 0.1.0 changelog.

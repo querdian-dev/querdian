@@ -52,6 +52,12 @@ jobs:
             exit 1
           fi
           echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # The chart job needs CHANGELOG entries for the Artifact Hub changelog; fail before anything
+      # is published rather than after the release and image exist.
+      - name: Check CHANGELOG entries of the version
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: go run ./hack/chartmeta -version "$VERSION" -out /dev/null
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -98,7 +104,7 @@ jobs:
     name: publish chart
     needs: release
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write # push the chart to ghcr.io
@@ -107,6 +113,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # cosign reads Docker's credential store, not Helm's registry config; without this
@@ -116,6 +125,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Artifact Hub changelog and per-version flags. Fails a release whose CHANGELOG.md section
+      # has no entries (docs/releasing.md, "Artifact Hub").
+      - name: Add Artifact Hub release annotations
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: go run ./hack/chartmeta -version "$VERSION"
       - name: Package chart
         env:
           VERSION: ${{ needs.release.outputs.version }}
@@ -134,3 +149,13 @@ jobs:
           digest="$(sed -n 's/^Digest: //p' push.log)"
           test -n "$digest"
           cosign sign --yes "ghcr.io/querdian-dev/charts/querdian@${digest}"
+      # Repository metadata for Artifact Hub (ownership claim, verified publisher, ignored
+      # versions), read from the special tag "artifacthub.io". oras is pinned by module version
+      # and verified against sum.golang.org; it uses the docker login above.
+      - name: Push Artifact Hub repository metadata
+        working-directory: charts
+        run: |
+          go run oras.land/oras/cmd/oras@v1.3.4 push \
+            ghcr.io/querdian-dev/charts/querdian:artifacthub.io \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml

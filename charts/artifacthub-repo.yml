@@ -1,0 +1,19 @@
+# Artifact Hub repository metadata for oci://ghcr.io/querdian-dev/charts/querdian.
+# https://github.com/artifacthub/hub/blob/master/docs/metadata/artifacthub-repo.yml
+#
+# The release workflow pushes this file to the chart repository under the tag "artifacthub.io"
+# (oras, media type application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml). It is not
+# part of the chart package. See docs/releasing.md, section "Artifact Hub".
+
+# ID of the repository in the Artifact Hub control panel (organization querdian-dev). It makes
+# the repository a verified publisher.
+repositoryID: 88185cf5-f2ee-41c2-bde6-162d5c72d3c1
+
+# Users who may claim ownership of the repository in Artifact Hub. The email must be the one of
+# the Artifact Hub account.
+owners:
+  - name: geilername
+    email: maximilian.marschall@3xm.at
+
+# Versions Artifact Hub should not index, e.g. "- name: querdian / version: -rc\." to hide
+# release candidates. Not set: pre-releases are listed and marked by artifacthub.io/prerelease.
