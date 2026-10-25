@@ -8,5 +8,5 @@ COPY go.mod ./
 COPY demogen ./hack/quickstart/demogen
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/demogen ./hack/quickstart/demogen
 
-FROM docker.io/prom/prometheus:v3.5.0
+FROM docker.io/prom/prometheus:v3.15.1
 COPY --from=build /out/demogen /bin/demogen
