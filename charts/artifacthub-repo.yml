@@ -5,9 +5,9 @@
 # (oras, media type application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml). It is not
 # part of the chart package. See docs/releasing.md, section "Artifact Hub".
 
-# ID of the repository in the Artifact Hub control panel (shown on the repository card once the
-# repository has been added). Setting it makes the repository a verified publisher.
-# repositoryID: 00000000-0000-0000-0000-000000000000
+# ID of the repository in the Artifact Hub control panel (organization querdian-dev). It makes
+# the repository a verified publisher.
+repositoryID: 88185cf5-f2ee-41c2-bde6-162d5c72d3c1
 
 # Users who may claim ownership of the repository in Artifact Hub. The email must be the one of
 # the Artifact Hub account.
@@ -15,7 +15,5 @@ owners:
   - name: geilername
     email: maximilian.marschall@3xm.at
 
-# Release candidates are pipeline dry-runs (docs/releasing.md, section 3), not releases for users.
-ignore:
-  - name: querdian
-    version: -rc\.
+# Versions Artifact Hub should not index, e.g. "- name: querdian / version: -rc\." to hide
+# release candidates. Not set: pre-releases are listed and marked by artifacthub.io/prerelease.

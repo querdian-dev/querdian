@@ -138,14 +138,16 @@ is no separate Helm repository. What Artifact Hub shows comes from three places:
   stays.
 * The repository metadata [charts/artifacthub-repo.yml](../charts/artifacthub-repo.yml), pushed by
   the release job to the tag `artifacthub.io` of the chart repository: owners (ownership claim),
-  `repositoryID` (verified publisher) and ignored versions (release candidates, `-rc.`).
+  `repositoryID` (verified publisher) and, if needed, ignored versions.
 
 One-time setup, after the first chart version is public on ghcr.io (Artifact Hub cannot read
 private packages):
 
+Done on 2026-10-25: the repository is registered in the Artifact Hub organization `querdian-dev`
+(repository ID in `charts/artifacthub-repo.yml`). The steps, for reference or a re-registration:
+
 1. Sign in to <https://artifacthub.io> with the account whose email is listed under `owners` in
-   `charts/artifacthub-repo.yml`. Optionally create an organization `querdian-dev` and add the
-   repository there.
+   `charts/artifacthub-repo.yml`, in the organization `querdian-dev`.
 2. Control panel > Repositories > Add: kind **Helm charts**, name `querdian`, URL
    `oci://ghcr.io/querdian-dev/charts/querdian`.
 3. Copy the repository ID from the repository card into `repositoryID` in
