@@ -4,7 +4,7 @@ Deploys [Querdian](https://github.com/querdian-dev/querdian), the multi-tenant a
 Prometheus/Thanos, Loki and Tempo. The chart is alpha; the CRD API is `policy.querdian.dev/v1alpha1`.
 
 ```sh
-helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.0 \
+helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.1 \
   --namespace querdian --create-namespace -f my-values.yaml
 ```
 
@@ -14,7 +14,7 @@ The chart and the image it deploys (`ghcr.io/querdian-dev/querdian`, tag = the c
 are signed with cosign by the release workflow. Verify before installing:
 
 ```sh
-cosign verify ghcr.io/querdian-dev/charts/querdian:0.1.0 \
+cosign verify ghcr.io/querdian-dev/charts/querdian:0.1.1 \
   --certificate-identity-regexp '^https://github.com/querdian-dev/querdian/\.github/workflows/release\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

@@ -1,5 +1,9 @@
 # Querdian v0.1.0 release notes
 
+> **Superseded by [0.1.1](release-notes-0.1.1.md)**, a security release: 0.1.0 is affected by
+> [GHSA-jcqw-3c3f-xrmj](https://github.com/querdian-dev/querdian/security/advisories/GHSA-jcqw-3c3f-xrmj)
+> (Tempo tag lookups). Upgrade if you proxy Tempo.
+
 Querdian is an Apache-2.0, Kubernetes-native reverse proxy that enforces label-based access control
 on read queries against Prometheus/Thanos (PromQL), Loki (LogQL) and Tempo (TraceQL). Policies are
 Kubernetes CRDs, queries are rewritten with parsers, and every error fails closed.
