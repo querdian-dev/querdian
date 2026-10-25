@@ -30,7 +30,7 @@ FROM binary-${BINARY_SOURCE} AS binary
 
 # distroless static (Debian 13), nonroot variant, pinned by index digest (multi-arch).
 # No shell, no package manager, CA certificates and tzdata included.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 COPY --from=binary --chmod=0555 /querdian /usr/local/bin/querdian
 # 65532 is the distroless "nonroot" uid/gid; numeric so Kubernetes can verify runAsNonRoot.
 USER 65532:65532
