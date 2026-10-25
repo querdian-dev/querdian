@@ -15,13 +15,9 @@ data:
         otlp:
           protocols:
             http: {endpoint: "0.0.0.0:4318"}
-    ingester:
+    # Tempo 3 monolithic: the live-store replaces the ingester and needs no Kafka.
+    live_store:
       max_block_duration: 2m
-      lifecycler:
-        ring: {replication_factor: 1}
-    compactor:
-      compaction:
-        block_retention: @@RETENTION_HOURS@@h
     storage:
       trace:
         backend: local
@@ -30,6 +26,12 @@ data:
           ingestion_time_range_slack: @@RETENTION_HOURS@@h
         blocklist_poll: 30s
         local: {path: /var/tempo/blocks}
+    # Retention moved from the compactor to the backend scheduler and worker; the per-tenant
+    # override takes precedence over their global default (336h).
+    overrides:
+      defaults:
+        compaction:
+          block_retention: @@RETENTION_HOURS@@h
 ---
 apiVersion: v1
 kind: Service
@@ -55,7 +57,7 @@ spec:
         - name: tempo
           image: docker.io/grafana/tempo:3.1.1
           args: [-config.file=/etc/tempo/tempo.yaml]
-          # The 24 h history makes searches and the compactor touch more data; keep the Go heap
+          # The 24 h history makes searches and compaction touch more data; keep the Go heap
           # below the container limit so that the GC works before the kernel's OOM killer does.
           env: [{name: GOMEMLIMIT, value: 500MiB}]
           ports: [{containerPort: 3200}, {containerPort: 4318}]

@@ -22,11 +22,11 @@ import (
 	"github.com/querdian-dev/querdian/test/e2e/framework"
 )
 
-// Pinned upstream image (T0.5 research used the same version).
+// Pinned upstream image (the T0.5 research used Tempo 2.9.0).
 const tempoImage = "docker.io/grafana/tempo:3.1.1"
 
-// tempoConfig is a single-binary Tempo with multitenancy, local storage, OTLP/HTTP ingest and the
-// local-blocks processor that TraceQL metrics queries need. Short idle periods make traces searchable
+// tempoConfig is a monolithic Tempo 3 (no Kafka) with multitenancy, local storage and OTLP/HTTP ingest.
+// The live-store serves recent data, TraceQL metrics included; short idle periods make traces searchable
 // within seconds.
 const tempoConfig = `stream_over_http_enabled: true
 multitenancy_enabled: true
@@ -38,26 +38,9 @@ distributor:
       protocols:
         http:
           endpoint: 0.0.0.0:4318
-ingester:
-  trace_idle_period: 2s
+live_store:
+  max_trace_idle: 2s
   max_block_duration: 10s
-  lifecycler:
-    ring:
-      replication_factor: 1
-compactor:
-  compaction:
-    block_retention: 1h
-metrics_generator:
-  registry:
-    external_labels: {}
-  storage:
-    path: /var/tempo/generator/wal
-  traces_storage:
-    path: /var/tempo/generator/traces
-  processor:
-    local_blocks:
-      filter_server_spans: false
-      flush_to_storage: true
 storage:
   trace:
     backend: local
@@ -67,8 +50,8 @@ storage:
       path: /var/tempo/blocks
 overrides:
   defaults:
-    metrics_generator:
-      processors: [local-blocks]
+    compaction:
+      block_retention: 1h
 `
 
 // OTLP status codes and span kinds.
