@@ -1,10 +1,12 @@
 # Operations
 
 How to configure, run and observe Querdian. This documents the binary as it exists in this
-repository. There is **no published release, container image or Helm chart yet** (they belong to
-the packaging tasks of the plan); the sections on deployment therefore describe what the binary
-needs rather than a packaged install. See [policy-guide.md](policy-guide.md) for the policy
-resources and [troubleshooting.md](troubleshooting.md) for diagnosing denials.
+repository. Releases are published as a signed multi-arch image `ghcr.io/querdian-dev/querdian`
+and a Helm chart `oci://ghcr.io/querdian-dev/charts/querdian` (latest: 0.1.0, see the
+[release notes](release-notes-0.1.0.md)); the [chart README](../charts/querdian/README.md) covers
+the packaged install and its values. The sections below describe what the binary needs, whichever
+way it is deployed. See [policy-guide.md](policy-guide.md) for the policy resources and
+[troubleshooting.md](troubleshooting.md) for diagnosing denials.
 
 ## Process model
 

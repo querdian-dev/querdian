@@ -1,14 +1,26 @@
 # querdian Helm chart
 
 Deploys [Querdian](https://github.com/querdian-dev/querdian), the multi-tenant access proxy for
-Prometheus/Thanos, Loki and Tempo. The chart is pre-alpha; the CRD API is `policy.querdian.dev/v1alpha1`.
+Prometheus/Thanos, Loki and Tempo. The chart is alpha; the CRD API is `policy.querdian.dev/v1alpha1`.
 
 ```sh
-helm install querdian oci://ghcr.io/querdian-dev/charts/querdian \
+helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.0 \
   --namespace querdian --create-namespace -f my-values.yaml
 ```
 
 From a checkout: `helm install querdian charts/querdian -n querdian --create-namespace -f my-values.yaml`.
+
+The chart and the image it deploys (`ghcr.io/querdian-dev/querdian`, tag = the chart's appVersion)
+are signed with cosign by the release workflow. Verify before installing:
+
+```sh
+cosign verify ghcr.io/querdian-dev/charts/querdian:0.1.0 \
+  --certificate-identity-regexp '^https://github.com/querdian-dev/querdian/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Release notes and all versions: [GitHub releases](https://github.com/querdian-dev/querdian/releases),
+[Artifact Hub](https://artifacthub.io/packages/helm/querdian/querdian).
 
 Requirements: Kubernetes >= 1.27. The `ServiceMonitor` needs the Prometheus Operator CRDs, the
 NetworkPolicies need a CNI that enforces them.

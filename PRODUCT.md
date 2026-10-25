@@ -12,8 +12,9 @@ label matchers that are injected into every query before it reaches the backend,
 read its own namespace's metrics, logs and traces.
 
 ## Status (must be stated plainly on every public surface)
-Pre-alpha, not released, no published image or chart. Repository is public. No adopters, no
-benchmarks, no production claims. Known limits are documented in docs/limitations.md.
+Alpha. v0.1.0 is the first release (signed image and Helm chart on ghcr.io, chart on Artifact Hub);
+the policy API is v1alpha1. Repository is public. No adopters, no benchmarks, no production claims.
+Known limits are documented in docs/limitations.md.
 
 ## Audience
 Broad cloud-native / CNCF audience evaluating multi-tenant observability: platform and SRE engineers

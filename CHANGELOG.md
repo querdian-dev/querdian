@@ -6,11 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The API group
 `policy.querdian.dev/v1alpha1` may change incompatibly before it is promoted.
 
-Nothing has been released yet. The `[Unreleased]` section summarises what is on `main` and goes
-into 0.1.0; it is derived from the git history and [TASKS.md](TASKS.md). Details and the known
-limitations are in [docs/limitations.md](docs/limitations.md).
+0.1.0 is the first release; its entries are derived from the git history and [TASKS.md](TASKS.md).
+Details and the known limitations are in [docs/limitations.md](docs/limitations.md).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-10-25
+
+The first release: a signed multi-arch image `ghcr.io/querdian-dev/querdian:0.1.0` and the Helm chart
+`oci://ghcr.io/querdian-dev/charts/querdian` version 0.1.0. See the
+[release notes](docs/release-notes-0.1.0.md).
 
 ### Added
 
@@ -80,14 +85,15 @@ limitations are in [docs/limitations.md](docs/limitations.md).
   PodDisruptionBudget, optional ServiceMonitor, NetworkPolicies (proxy ingress/egress and backend
   protection), `values.schema.json`, tracing values mapped to `OTEL_*`.
 * Multi-arch distroless image (non-root, read-only root filesystem compatible), GoReleaser
-  configuration, and a release workflow with cosign keyless signing, SBOMs, GitHub build-provenance
-  attestations and an OCI Helm chart. The pipeline has not run yet.
+  configuration, and a release workflow with cosign keyless signing (image, chart, and the checksums
+  file as a Sigstore bundle), SBOMs, GitHub build-provenance attestations and an OCI Helm chart,
+  exercised end to end by the release candidates 0.1.0-rc.1 and 0.1.0-rc.2.
 * Artifact Hub metadata for the chart: static annotations (category, license, links, CRDs and
   examples, icon), per-release annotations written by `hack/chartmeta` (changelog from this file,
   pre-release and security-update flags, image list) and the repository metadata
   `charts/artifacthub-repo.yml`, pushed with oras by the release workflow.
 * Kind quickstart with Keycloak, Grafana, Prometheus, Loki, Tempo and two demo teams, with a
-  150-assertion verification script.
+  153-assertion verification script.
 * Quickstart demo data: 24 hours (`DEMO_HISTORY_HOURS`) of deterministic, backfilled metrics, JSON and
   logfmt logs and multi-span traces with incidents, produced by `hack/quickstart/demogen` (Prometheus
   via `promtool` blocks in an init container, Loki and Tempo via a Job pushing OTLP), live workloads
@@ -140,10 +146,5 @@ tenant-bound policies are unreliable (empty or incomplete, never wider than the 
 labels do not redact query results; bearer tokens are valid until expiry; there is no built-in rate
 limiting.
 
-## [0.1.0] - unreleased
-
-_Stub. Fill in when releasing: move the relevant entries from `[Unreleased]` here, add the date and
-the compare link. See [docs/releasing.md](docs/releasing.md)._
-
-[Unreleased]: https://github.com/querdian-dev/querdian/commits/main
+[Unreleased]: https://github.com/querdian-dev/querdian/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/querdian-dev/querdian/releases/tag/v0.1.0

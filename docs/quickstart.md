@@ -9,11 +9,11 @@ realistic, deterministic history** (metrics, logs and traces, with incidents) an
 
 > **Demo only.** Keycloak runs in dev mode over plain HTTP with well-known passwords, the demo
 > OAuth client allows the password grant (used by `verify.sh`), and nothing is persistent. Do not
-> reuse any of it in production. Querdian is pre-alpha.
+> reuse any of it in production. Querdian is alpha.
 
 ```sh
 hack/quickstart/up.sh       # cluster + everything, ends with the URLs
-hack/quickstart/verify.sh   # automatic assertions (150 checks)
+hack/quickstart/verify.sh   # automatic assertions (153 checks)
 hack/quickstart/down.sh     # removes the cluster and the built image
 ```
 
@@ -29,8 +29,19 @@ hack/quickstart/down.sh     # removes the cluster and the built image
 * Free host ports `8080` (Keycloak), `3000` (Grafana) and `8081` (Querdian policy dashboard). Change
   Keycloak's with `KEYCLOAK_PORT=8082`.
 * Internet access: the images are pulled from Docker Hub and quay.io by the kind node.
-* Querdian has no published image yet, so `up.sh` builds it from this checkout (`make docker-build`,
-  in the background while the cluster starts) and loads it into kind.
+* By default `up.sh` builds Querdian from this checkout (`make docker-build`, in the background while
+  the cluster starts) and loads it into kind. To run the published v0.1.0 image instead, check out
+  the tag, pull the image and skip the build; the chart is still installed from the checkout:
+
+  ```sh
+  git switch --detach v0.1.0
+  docker pull ghcr.io/querdian-dev/querdian:0.1.0
+  SKIP_BUILD=1 IMAGE_TAG=0.1.0 hack/quickstart/up.sh
+  ```
+
+  `down.sh` removes that image again unless you set `KEEP_IMAGE=1`. To use the published chart as
+  well, see [releasing.md](releasing.md#5-post-release-verification) (`helm upgrade` from
+  `oci://ghcr.io/querdian-dev/charts/querdian`).
 
 Options (environment variables): `CLUSTER` (default `querdian-demo`), `KEYCLOAK_PORT`,
 `IMAGE_TAG` (default `quickstart`), `SKIP_BUILD=1`, `QUICKSTART_NETWORKPOLICY=1`,
@@ -329,7 +340,7 @@ v1.37.0), warm image cache for the Querdian build and cold node image pulls:
 | Image build (cached Docker layers, in parallel with the cluster start) and load into kind | included in the next line |
 | `up.sh` in total: all images pulled by the node, Keycloak realm imported and every pod Ready, Querdian installed, policies `Ready`, history and telemetry flowing | **2 min 40 s** (3 min 37 s before the history was added; the difference is registry speed, not a speed-up) |
 | of which the history: generator image build (12 s, in parallel with the cluster start), Prometheus init container (about 10 s), Loki and Tempo Job (37 s, while Keycloak is still starting) | no measurable addition to the critical path |
-| `verify.sh` (150 assertions incl. the headless Grafana login and 129 dashboard queries) | 23 s |
+| `verify.sh` (153 assertions incl. the headless Grafana login and 132 dashboard queries) | 24 s |
 
 A cold start also has to compile the Go binary in the image build (not measured separately; it runs
 in parallel with the cluster creation and the first pulls) and download the node image, so plan for

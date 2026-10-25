@@ -62,15 +62,15 @@ The remaining Unmet rows are SHOULD or SUGGESTED.
 | `repo_track` | M | Met | git history with author, date and message per change. |
 | `repo_interim` | M | Met | git history contains the intermediate work (task branches and merges), not only releases. |
 | `repo_distributed` | U | Met | git. |
-| `version_unique` | M | Unmet | No release, no tag yet. [release.yml](../.github/workflows/release.yml) only accepts tags matching `vMAJOR.MINOR.PATCH[-pre]`. Closed by T5.7 (the first tag). |
-| `version_semver` | U | Unmet | Same: SemVer is the stated scheme (PLAN section 14) and enforced by the release workflow, but nothing has been released yet. |
-| `version_tags` | U | Unmet | `git tag` is empty. Closed by T5.7. |
+| `version_unique` | M | Met | Every release has a unique tag, starting with `v0.1.0`; [release.yml](../.github/workflows/release.yml) only accepts tags matching `vMAJOR.MINOR.PATCH[-pre]`, and the `protect-release-tags` ruleset blocks moving or deleting `v*` tags for everyone but admins. |
+| `version_semver` | U | Met | SemVer (PLAN section 14, [CHANGELOG.md](../CHANGELOG.md)), enforced by the release workflow; first release `0.1.0`. |
+| `version_tags` | U | Met | Releases are git tags (`v0.1.0`; release candidates `v0.1.0-rc.N`). |
 
 ## Change control and reporting
 
 | ID | Level | Status | Evidence / what is missing |
 |---|---|---|---|
-| `release_notes` | M | Unmet | Nothing released. Prepared: [CHANGELOG.md](../CHANGELOG.md) and [release-notes-0.1.0.md](release-notes-0.1.0.md) (drafts); GoReleaser also generates a changelog from commit messages ([.goreleaser.yaml](../.goreleaser.yaml)). Closed by T5.7. |
+| `release_notes` | M | Met | [CHANGELOG.md](../CHANGELOG.md) per version and [release-notes-0.1.0.md](release-notes-0.1.0.md), pasted into the GitHub release; GoReleaser also generates a changelog from commit messages ([.goreleaser.yaml](../.goreleaser.yaml)). |
 | `release_notes_vulns` | M | N/A | The release notes must identify fixed publicly known vulnerabilities. There are none to report; state "no known vulnerabilities fixed" in the notes and keep this up to date. |
 | `report_process` | M | Met | README "Contributing and reporting" and [CONTRIBUTING.md](../CONTRIBUTING.md) point to the GitHub issue tracker; [SECURITY.md](../SECURITY.md) covers vulnerabilities. There are no issue templates (`.github/ISSUE_TEMPLATE` does not exist); optional. |
 | `report_tracker` | S | Unmet | GitHub issues, once the repository is public with issues enabled (H1). |
@@ -114,7 +114,7 @@ The remaining Unmet rows are SHOULD or SUGGESTED.
 | `crypto_pfs` | S | N/A | Querdian does not terminate TLS (documented in [operations.md](operations.md)). |
 | `crypto_password_storage` | M | N/A | No passwords are stored or verified. |
 | `crypto_random` | M | N/A | No cryptographic keys or nonces are generated outside tests. |
-| `delivery_mitm` | M | Unmet | Nothing is delivered yet. The pipeline is built for it: HTTPS GitHub releases and ghcr.io, cosign keyless signatures, GitHub build-provenance attestations ([release.yml](../.github/workflows/release.yml)). Closed by T5.7 and verification per [releasing.md](releasing.md). |
+| `delivery_mitm` | M | Met | Delivered over HTTPS only (GitHub releases, ghcr.io), with cosign keyless signatures on the image, the chart and the checksums, and GitHub build-provenance attestations ([release.yml](../.github/workflows/release.yml)); verification commands in [releasing.md](releasing.md#5-post-release-verification). |
 | `delivery_unsigned` | S | Met | No hash or key is fetched over plain HTTP in the Makefile, workflows, Dockerfile (images pinned by digest) or quickstart. |
 | `vulnerabilities_fixed_60_days` | M | Met | No known unpatched vulnerability; `govulncheck` is a CI job and Renovate is configured ([renovate.json](../renovate.json)). Renovate only runs if the app is installed (H11). Confirm no open alert (H4). |
 | `vulnerabilities_critical_fixed` | M | Met | Same evidence. |
@@ -147,20 +147,19 @@ These cannot be done by a commit. Do them in this order.
 | H2 | Settings > Code security: enable **Private vulnerability reporting**. | `vulnerability_report_private` |
 | H3 | Settings > Rules: create the `main` ruleset: require pull request, require the status checks listed in [releasing.md](releasing.md#1-one-time-github-settings), block force pushes and deletions, require linear history if desired. With one maintainer, do **not** require an approving review (it would block merging); the review rule in GOVERNANCE.md cannot be technically enforced until there is a second maintainer. | Scorecard `Branch-Protection`, GOVERNANCE.md |
 | H4 | Settings > Code security: enable Dependabot alerts (security updates only, Renovate does version updates), secret scanning and push protection, code scanning. Then confirm: all workflows green on `main`, no open CodeQL or Dependabot alerts, no open `govulncheck` finding. | `static_analysis_fixed`, `warnings_fixed`, `vulnerabilities_*`, `no_leaked_credentials` |
-| H5 | Register the project at <https://www.bestpractices.dev>, answer the questionnaire against this checklist, keep the answers truthful (Unmet stays Unmet), and note the numeric project ID. Then activate the commented badges in the README. | the badge |
+| H5 | Register the project at <https://www.bestpractices.dev>, answer the questionnaire against this checklist, keep the answers truthful (Unmet stays Unmet), and note the numeric project ID. Then activate the commented badges in the README. **Registered as project 15762 (in progress); badges active.** | the badge |
 | H6 | Org and repository Actions policy (T0.0): only GitHub-owned and verified-creator actions, plus the allowlist entries listed in [releasing.md](releasing.md#1-one-time-github-settings). Org: 2FA required. | supply-chain posture, T0.0 |
-| H7 | Cut `v0.0.0-rc.1`, then `v0.1.0` ([releasing.md](releasing.md)); set the ghcr.io packages to public. | `version_*`, `release_notes`, `delivery_mitm` |
-| H8 | Confirm the Scorecard workflow publishes results (needs the public repo) and read the first report at <https://scorecard.dev/viewer/?uri=github.com/querdian-dev/querdian>. | Scorecard badge |
+| H7 | Cut a release candidate, then `v0.1.0` ([releasing.md](releasing.md)); set the ghcr.io packages to public. **Done: `v0.1.0-rc.1`, `v0.1.0-rc.2`, `v0.1.0`; packages public.** | `version_*`, `release_notes`, `delivery_mitm` |
+| H8 | Confirm the Scorecard workflow publishes results (needs the public repo) and read the first report at <https://scorecard.dev/viewer/?uri=github.com/querdian-dev/querdian>. | Scorecard badge. **Done: first result 2026-10-25 (7.6).** |
 | H9 | Maintainer self-attestation for `know_secure_design` and `know_common_errors`. | those two criteria |
 | H10 | Recruit a second maintainer (GOVERNANCE.md assumes reviews by a maintainer other than the author). Not required for the badge. | bus factor, Scorecard `Code-Review` |
 | H11 | Install the Renovate GitHub app (or run Renovate self-hosted) for the organization; `renovate.json` alone does nothing. | dependency updates |
 
 ## Badges
 
-The README carries **commented-out** badge markup. Uncomment it only after H5 (the numeric ID) and
-after H8 (the Scorecard publishes). Patterns:
+The README shows both badges (H5: project 15762; H8: Scorecard publishes since 2026-10-25). Patterns:
 
 ```markdown
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<ID>/badge)](https://www.bestpractices.dev/projects/<ID>)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15762/badge)](https://www.bestpractices.dev/projects/15762)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/querdian-dev/querdian/badge)](https://scorecard.dev/viewer/?uri=github.com/querdian-dev/querdian)
 ```

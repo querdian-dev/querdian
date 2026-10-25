@@ -8,7 +8,7 @@
       <a class="btn btn-primary" href="/docs/quickstart/">Run the quickstart</a>
       <a class="btn" href="/docs/">Read the docs</a>
     </p>
-    <p class="status">Pre-alpha, not released. Apache-2.0.</p>
+    <p class="status">Alpha. <a href="https://github.com/{{ site.Params.repo }}/releases/tag/v{{ site.Params.version }}">v{{ site.Params.version }}</a> is the first release. Apache-2.0.</p>
   </div>
 
   <div class="hero-pass">
@@ -152,17 +152,30 @@
   </div>
   <div class="try-grid">
     <pre class="cmd" tabindex="0"><code>hack/quickstart/up.sh       <span class="c"># cluster and everything, prints the URLs</span>
-hack/quickstart/verify.sh   <span class="c"># 150 automatic checks</span>
+hack/quickstart/verify.sh   <span class="c"># 153 automatic checks</span>
 hack/quickstart/down.sh</code></pre>
-    <p class="try-note">Needs kind, kubectl, helm, make, curl, jq, and Docker or Podman with about 3 GiB of free memory. There is no published image yet, so the script builds Querdian from the repository.</p>
+    <p class="try-note">Needs kind, kubectl, helm, make, curl, jq, and Docker or Podman with about 3 GiB of free memory. The script builds Querdian from the repository; the quickstart guide shows how to run the published v{{ site.Params.version }} image instead.</p>
   </div>
   <p class="more"><a href="/docs/quickstart/">Quickstart guide</a></p>
 </section>
 
+<section class="section try" aria-labelledby="h-install">
+  <div class="section-head">
+    <h2 id="h-install">Install v{{ site.Params.version }}</h2>
+    <p>The Helm chart installs the CRDs, the proxy with two replicas and optional NetworkPolicies that keep everyone but Querdian away from the backends. You configure your OIDC issuer and backends in the values.</p>
+  </div>
+  <div class="try-grid">
+    <pre class="cmd" tabindex="0"><code>helm install querdian oci://ghcr.io/querdian-dev/charts/querdian \
+  --version {{ site.Params.version }} -n querdian --create-namespace -f my-values.yaml</code></pre>
+    <p class="try-note">Image <code>ghcr.io/querdian-dev/querdian:{{ site.Params.version }}</code> for linux/amd64 and linux/arm64. The image, the chart and the release checksums are signed with cosign and carry build-provenance attestations.</p>
+  </div>
+  <p class="more"><a href="https://github.com/{{ site.Params.repo }}/releases/tag/v{{ site.Params.version }}">Release v{{ site.Params.version }}</a> · <a href="https://artifacthub.io/packages/helm/querdian/querdian">Chart on Artifact Hub</a> · <a href="/docs/operations/">Operations</a></p>
+</section>
+
 <section class="section status-section" aria-labelledby="h-status">
   <div class="section-head">
-    <h2 id="h-status">Pre-alpha, and what that means</h2>
-    <p>Nothing here is ready for production. There is no release, no published image or chart, and no adopters. The proxy, the policy objects and the three enforcers are implemented and tested:</p>
+    <h2 id="h-status">Alpha, and what that means</h2>
+    <p>Nothing here is ready for production yet. v{{ site.Params.version }} is the first release, the policy API is <code>v1alpha1</code> and may still change, and there are no adopters. The proxy, the policy objects and the three enforcers are implemented and tested:</p>
   </div>
   <ul class="facts">
     <li>Unit, fuzz and envtest suites, plus differential suites that run the same queries against real Prometheus, Loki and Tempo and compare the results.</li>

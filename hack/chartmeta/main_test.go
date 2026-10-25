@@ -81,17 +81,29 @@ func TestReleaseChanges(t *testing.T) {
 	}
 }
 
-// The real CHANGELOG must stay parseable: a pre-release always takes [Unreleased] or its
-// release section, and every entry has a kind and a description.
+// The real CHANGELOG must stay parseable: the newest release section has entries (a release
+// without them fails in the workflow), [Unreleased] may be empty, and every entry of both has a
+// kind and a description.
 func TestRepositoryChangelog(t *testing.T) {
 	b, err := os.ReadFile("../../CHANGELOG.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changes, err := releaseChanges(string(b), "0.0.0-rc.0")
+	newest := ""
+	for _, l := range strings.Split(string(b), "\n") {
+		if m := sectionRe.FindStringSubmatch(l); m != nil && m[1] != "Unreleased" {
+			newest = m[1]
+			break
+		}
+	}
+	if newest == "" {
+		t.Fatal("CHANGELOG.md has no release section")
+	}
+	changes, err := releaseChanges(string(b), newest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	changes = append(changes, parseChanges(splitSections(string(b))["Unreleased"])...)
 	for _, c := range changes {
 		if kinds[c.Kind] == "" || c.Description == "" || strings.ContainsAny(c.Description, "`\n") {
 			t.Errorf("bad change %+v", c)
