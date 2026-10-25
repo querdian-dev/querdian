@@ -265,9 +265,24 @@ an attribute from the policy checks.
   evaluates string attributes of the span and its resource; unknown protobuf fields of the wrapper
   `Trace` message are dropped; the buffered body is capped at `maxMergeBytes`. The default mode is
   `deny`.
-* Tag endpoints: `api/v2/search/tags` lists tags of spans that satisfy the injected policy; denied
-  tags are filtered out. Tag *values* are computed over policy-matching spans and returned as is.
-  The tag name of a values lookup must be unquoted (`span.x`, `.x`); `span."x"` is `400`.
+* **Tag endpoints** (`api/v2/search/tags`, `api/v2/search/tag/<name>/values`). Tempo does not
+  evaluate every `q` there: for a filter shape it cannot use on these endpoints it answers
+  **unfiltered** (black-box: Tempo 2.9.0 and 2.10.10 for terms joined by `||`, Tempo 3.1.1 for
+  `=~`), which would also drop an injected policy (GHSA-jcqw-3c3f-xrmj). For restricted users the
+  policy is therefore not injected as a DNF but planned **per term**, each request with one filter
+  of `attribute = "string"` conditions joined by `&&`, and the answers are united (one upstream
+  request per term, capped by `maxFanout`):
+  * a policy regex is expanded into equalities when it matches a fixed set of values (several `=`
+    matchers on one attribute, which the policy model merges into a regex, or `ns-(a|c)`);
+  * a policy with `!=`, `!~` or an open regex (`ns-.*`) cannot be expressed: tag lookups are
+    `400 unsupported` for such users (Grafana's autocomplete then offers no values). Search, trace by
+    ID and metrics are not affected;
+  * a user `q` is kept only when it is one filter of `span.x = "v"`, `resource.x = "v"` or
+    `status = error|ok|unset` conditions joined by `&&`; any other `q` is **ignored**, so the answer
+    lists the tags (values) of all granted spans rather than of those matching `q`.
+
+  Denied tags are filtered out. The tag name of a values lookup must be unquoted (`span.x`, `.x`);
+  `span."x"` is `400`.
 * Only the HTTP API is proxied; gRPC and streaming search are out of scope.
 
 ## Denied labels

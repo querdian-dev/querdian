@@ -408,7 +408,8 @@ For an overview of how the effective terms are applied (details in
 | Loki: `series` | `match_expand` | `match_expand` (one request) |
 | Loki: `index/stats`, `index/volume*`, `patterns` | inject | one request per term, counters summed; an estimate unless the terms are disjoint |
 | Loki: `tail` | one upstream WebSocket | one WebSocket per term, frames merged and deduplicated |
-| Tempo: `search`, tags, tag values, `metrics/*` | the policy is injected into every spanset filter | same: a parenthesised DNF `(a && b) \|\| (c && d)` is injected; no fan-out |
+| Tempo: `search`, `metrics/*` | the policy is injected into every spanset filter | same: a parenthesised DNF `(a && b) \|\| (c && d)` is injected; no fan-out |
+| Tempo: tags, tag values | one filter `{ a = "x" && b = "y" }`; `!=`, `!~` and open regexes are `400` | one request per term (regexes with a fixed value set expanded), union of names or values (`fanout`); see [limitations](limitations.md#traceql-and-tempo) |
 | Tempo: trace by ID | response filter | response filter |
 
 An unrestricted user (or a user with a term without matchers) with no denied labels is forwarded

@@ -247,7 +247,9 @@ whole trace) and `startTimeUnixNano` (earliest start of any span in the trace).
    because the injected filter constrains the *matched* spans only and the spans of one trace may
    carry different resource attributes; proving the root's attributes would need extra queries.
 5. Tag listings (`api/v2/search/tags`) are filtered for denied tags; tag values endpoints answer
-   403 for a denied tag and are otherwise computed from policy-matching spans.
+   403 for a denied tag. Tempo answers both unfiltered for `q` shapes it does not evaluate there, which
+   would drop an injected policy (GHSA-jcqw-3c3f-xrmj), so restricted lookups are sent per policy term as
+   a conjunction of `=` conditions only and united; policies that cannot be written that way are refused.
 6. Trace by ID (`traceByID: filter`): the trace is fetched and spans are dropped unless a policy
    term matches the span's attributes and its resource's attributes (a missing attribute never
    satisfies any operator, matching TraceQL), empty groups are pruned, denied attributes are removed
