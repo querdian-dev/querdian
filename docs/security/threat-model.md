@@ -165,7 +165,11 @@ policy. This is the central risk of any rewriting proxy.
    (`FuzzInject` in `pkg/logql`, `pkg/traceql`, `internal/enforce/promql`; `FuzzOrLift`; generated
    queries must re-parse and every selector or filter must carry a policy term), for DNF
    normalisation (`FuzzNormaliseEquivalence`) and for the Prometheus labels response filter. Run
-   them with `make fuzz`.
+   them with `make fuzz`. The end-to-end suites pin the token boundaries the injectors depend on
+   against the real backends (`parser-boundaries` in `test/e2e/loki` and `test/e2e/tempo`): Loki ends
+   a `#` comment at LF only and `#` inside a string starts none; Tempo treats `\"` and `\\` as escapes
+   in strings and quoted attribute names. A backend version that changes them fails there first. The
+   LogQL rewrite is rendered from the proxy's tokens, so comment text never reaches Loki.
 
 **Residual risk.**
 

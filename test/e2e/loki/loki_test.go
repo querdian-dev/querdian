@@ -20,6 +20,8 @@ func TestLokiE2E(t *testing.T) {
 	t.Run("metadata", func(t *testing.T) { testMetadata(t, f) })
 	t.Run("tenants", func(t *testing.T) { testTenants(t, f) })
 	t.Run("denied-labels", func(t *testing.T) { testDenied(t, f) })
+	t.Run("redaction", func(t *testing.T) { testRedaction(t, f) })
+	t.Run("parser-boundaries", func(t *testing.T) { testParserBoundaries(t, f) })
 	t.Run("endpoints-and-auth", func(t *testing.T) { testEndpoints(t, f) })
 	t.Run("differential", func(t *testing.T) { testDifferential(t, f, 250) })
 	// Last: it pushes new lines (to the main instance for every stream, to the reference for the granted ones only).

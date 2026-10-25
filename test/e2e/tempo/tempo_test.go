@@ -338,6 +338,7 @@ func TestTempoE2E(t *testing.T) {
 	t.Run("trace-by-id", func(t *testing.T) { testTraceByID(t, f) })
 	t.Run("tags", func(t *testing.T) { testTags(t, f) })
 	t.Run("denied-attributes", func(t *testing.T) { testDenied(t, f) })
+	t.Run("parser-boundaries", func(t *testing.T) { testParserBoundaries(t, f) })
 	t.Run("root-oracle", func(t *testing.T) { testRootOracle(t, f) })
 	t.Run("equivalence", func(t *testing.T) { testCorpus(t, f, false) })
 	t.Run("differential", func(t *testing.T) { testCorpus(t, f, true) })

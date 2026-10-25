@@ -76,6 +76,9 @@ func newFixture(t *testing.T) *fixture {
 	for _, set := range termSets {
 		cluster = append(cluster, framework.ClusterPolicy(set.name, framework.Group(set.group), set.rules()...))
 	}
+	// Redaction (testRedaction): pod values of ns-a are numbered placeholders.
+	cluster = append(cluster, framework.ClusterPolicy("redact-pod", framework.Group("redact-pod"),
+		framework.Redact(framework.WithTenants(framework.Rule(backend, framework.Eq(nsLabel, "ns-a")), "t1"), v1.RedactPlaceholder, "pod")))
 	nsLabels := map[string]map[string]string{}
 	for _, ns := range []string{"ns-a", "ns-b", "ns-c", "ns-d"} {
 		nsLabels[ns] = map[string]string{policy.TenantLabel: "t1"}

@@ -94,6 +94,9 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 
 * Unit, fuzz, envtest and container-based end-to-end suites (differential, isolation, semantic
   equivalence) against Prometheus, Loki and Tempo.
+* End-to-end coverage of `labels.redact` against the real backends (results, upstream errors, `U__`
+  names) and of the token boundaries the injectors rely on: where Loki ends a `#` comment, that `#`
+  inside strings is no comment, and how Tempo ends strings and quoted attribute names (`\"`, `\\`).
 * CI: lint, race tests, envtest, fuzz, govulncheck, license gate, generate drift, DCO, CodeQL,
   OpenSSF Scorecard; Renovate configuration.
 * Documentation: policy guide, operations, troubleshooting, limitations, threat model, endpoint

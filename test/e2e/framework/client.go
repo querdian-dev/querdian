@@ -161,6 +161,15 @@ func Deny(r v1.ClusterRule, labels ...string) v1.ClusterRule {
 	return r
 }
 
+// Redact returns r with labels.redact set: every label with the same strategy (not IPv4Prefix).
+func Redact(r v1.ClusterRule, strategy v1.RedactStrategy, labels ...string) v1.ClusterRule {
+	r.Labels = &v1.LabelFilter{}
+	for _, l := range labels {
+		r.Labels.Redact = append(r.Labels.Redact, v1.RedactRule{Name: l, Strategy: strategy})
+	}
+	return r
+}
+
 // NamespacedPolicy builds an AccessPolicy with one rule per backend list entry.
 func NamespacedPolicy(namespace, name string, subj v1.Subjects, rules ...v1.Rule) v1.AccessPolicy {
 	p := v1.AccessPolicy{Spec: v1.AccessPolicySpec{Subjects: subj, Rules: rules}}
