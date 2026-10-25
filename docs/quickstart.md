@@ -30,13 +30,13 @@ hack/quickstart/down.sh     # removes the cluster and the built image
   Keycloak's with `KEYCLOAK_PORT=8082`.
 * Internet access: the images are pulled from Docker Hub and quay.io by the kind node.
 * By default `up.sh` builds Querdian from this checkout (`make docker-build`, in the background while
-  the cluster starts) and loads it into kind. To run the published v0.1.0 image instead, check out
+  the cluster starts) and loads it into kind. To run the published v0.1.1 image instead, check out
   the tag, pull the image and skip the build; the chart is still installed from the checkout:
 
   ```sh
-  git switch --detach v0.1.0
-  docker pull ghcr.io/querdian-dev/querdian:0.1.0
-  SKIP_BUILD=1 IMAGE_TAG=0.1.0 hack/quickstart/up.sh
+  git switch --detach v0.1.1
+  docker pull ghcr.io/querdian-dev/querdian:0.1.1
+  SKIP_BUILD=1 IMAGE_TAG=0.1.1 hack/quickstart/up.sh
   ```
 
   `down.sh` removes that image again unless you set `KEEP_IMAGE=1`. To use the published chart as

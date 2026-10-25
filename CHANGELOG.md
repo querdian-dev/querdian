@@ -11,6 +11,10 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-25
+
+A security release. See the [release notes](docs/release-notes-0.1.1.md).
+
 ### Security
 
 * **Tempo tag lookups could list names and values of spans outside the policy**
@@ -20,6 +24,17 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   in a shape Tempo evaluates; policies with `!=`, `!~` or open regexes get `400` on these two
   endpoints, and a user `q` outside that shape is ignored. See
   [docs/limitations.md](docs/limitations.md#traceql-and-tempo).
+
+### Changed
+
+* The end-to-end suites run against Prometheus v3.15.1, Loki 3.7.9 and Tempo 3.1.1 (0.1.0: v3.5.0,
+  3.5.0 and 2.9.0); the Tempo tag-lookup fix was also verified against Tempo 2.9.0 and 2.10.10.
+* Quickstart: Tempo 3.1.1 in monolithic mode (live-store, no Kafka), Loki 3.7.9, Prometheus v3.15.1,
+  Grafana 13.2.4, Keycloak 26.8.1 and OpenTelemetry Collector 0.163.2. The demo data generator no
+  longer calls Tempo's `/flush`, which Tempo 3 does not have.
+* Dependency updates: the distroless base image, Go modules (`prometheus/common` v0.72.1,
+  `prometheus/prometheus` v0.315.1), GoReleaser v2.19.0, oras v1.3.6 and GitHub Actions. Renovate now
+  also tracks the end-to-end and quickstart images.
 
 ## [0.1.0] - 2026-10-25
 
@@ -156,5 +171,6 @@ tenant-bound policies are unreliable (empty or incomplete, never wider than the 
 labels do not redact query results; bearer tokens are valid until expiry; there is no built-in rate
 limiting.
 
-[Unreleased]: https://github.com/querdian-dev/querdian/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/querdian-dev/querdian/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/querdian-dev/querdian/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/querdian-dev/querdian/releases/tag/v0.1.0
