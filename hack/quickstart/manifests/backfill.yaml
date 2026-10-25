@@ -2,7 +2,7 @@
 # see prometheus.yaml). The generator pushes OTLP/JSON with timestamps up to @@DEMO_HISTORY_HOURS@@
 # hours in the past, straight to the backends and as tenant "demo" (like the OTel Collector does);
 # it runs before Querdian and any NetworkPolicy exist. Deterministic: the same seed always gives
-# the same data. Tempo is flushed afterwards so that the blocks are searchable immediately.
+# the same data. Tempo needs no flush: its live-store cuts a block every 2 minutes.
 apiVersion: batch/v1
 kind: Job
 metadata: {name: demo-backfill, namespace: observability}
@@ -21,8 +21,7 @@ spec:
             - |
               set -e
               demogen loki -hours @@DEMO_HISTORY_HOURS@@ -tenant demo -url http://loki.observability:3100
-              demogen tempo -hours @@DEMO_HISTORY_HOURS@@ -tenant demo -url http://tempo.observability:4318 \
-                -flush http://tempo.observability:3200/flush
+              demogen tempo -hours @@DEMO_HISTORY_HOURS@@ -tenant demo -url http://tempo.observability:4318
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}

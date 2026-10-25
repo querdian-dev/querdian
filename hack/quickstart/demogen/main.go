@@ -27,7 +27,6 @@ type options struct {
 	url    string
 	tenant string
 	batch  int
-	flush  string
 }
 
 func main() {
@@ -45,7 +44,6 @@ func main() {
 	fs.StringVar(&o.url, "url", "", "push URL (loki: base URL, tempo: OTLP/HTTP base URL)")
 	fs.StringVar(&o.tenant, "tenant", "demo", "tenant (X-Scope-OrgID)")
 	fs.IntVar(&o.batch, "batch", 0, "records or traces per request (default 1500 logs, 100 traces)")
-	fs.StringVar(&o.flush, "flush", "", "tempo: URL of the ingester /flush endpoint, POSTed after the push so that the blocks are searchable at once")
 	_ = fs.Parse(os.Args[2:])
 	if o.hours < 1 || o.hours > 24*30 {
 		fmt.Fprintln(os.Stderr, "demogen: -hours must be between 1 and 720")
@@ -93,9 +91,6 @@ func run(ctx context.Context, cmd string, o *options, end time.Time) error {
 		o.batch = defaultInt(o.batch, 100)
 		n, err := pushTraces(ctx, newPusher(o.url+"/v1/traces", o.tenant), evs, o.batch, 300*time.Millisecond)
 		fmt.Printf("pushed %d traces to %s\n", n, o.url)
-		if err == nil && o.flush != "" {
-			err = flushTempo(ctx, o.flush)
-		}
 		return err
 	case "stats":
 		end = end.Truncate(o.step)

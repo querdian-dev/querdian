@@ -1,7 +1,7 @@
 //go:build e2e
 
-// Package tempo holds the Tempo end-to-end suite (T4.6): a real Tempo 2.9.0 container (single binary,
-// multitenancy, local storage) seeded over OTLP/HTTP with traces of three namespaces and two tenants, a
+// Package tempo holds the Tempo end-to-end suite (T4.6): a real Tempo container (tempoImage, monolithic,
+// multitenancy, local storage) seeded over OTLP/HTTP with traces of three namespaces and three tenants, a
 // second "reference" Tempo seeded with only the spans each policy grants, the real proxy handler chain
 // in-process and a test OIDC issuer.
 //

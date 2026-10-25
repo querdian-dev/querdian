@@ -51,11 +51,11 @@ Options (environment variables): `CLUSTER` (default `querdian-demo`), `KEYCLOAK_
 
 | Namespace | Component | Notes |
 |---|---|---|
-| `keycloak` | Keycloak 26.4.0 (dev mode) | realm `observability` imported from `hack/quickstart/realm-observability.json` |
-| `observability` | Prometheus v3.5.0, Loki 3.5.0, Tempo 2.9.0 | single instances; Loki and Tempo multi-tenant, tenant `demo`; pre-filled with 24 h of history (see below) |
+| `keycloak` | Keycloak 26.8.1 (dev mode) | realm `observability` imported from `hack/quickstart/realm-observability.json` |
+| `observability` | Prometheus v3.15.1, Loki 3.7.9, Tempo 3.1.1 (monolithic, no Kafka) | single instances; Loki and Tempo multi-tenant, tenant `demo`; pre-filled with 24 h of history (see below) |
 | `observability` | Job `demo-backfill`, image `localhost/querdian-demogen` | pushes the log and trace history, then completes |
-| `observability` | OpenTelemetry Collector contrib 0.137.0 (DaemonSet) | filelog for container logs, OTLP receiver for traces |
-| `observability` | Grafana 12.2.0 | Keycloak login, data sources point at Querdian, four provisioned dashboards |
+| `observability` | OpenTelemetry Collector contrib 0.163.2 (DaemonSet) | filelog for container logs, OTLP receiver for traces |
+| `observability` | Grafana 13.2.4 | Keycloak login, data sources point at Querdian, four provisioned dashboards |
 | `querdian` | Querdian (chart `charts/querdian`, 2 replicas) | `http://querdian.querdian:8080/{prom,loki,tempo}` |
 | `order-service`, `payment-service` | busybox 1.37 (awk simulation) | emits metrics, JSON/logfmt logs and multi-span traces; both namespaces carry `policy.querdian.dev/tenant: demo` |
 
@@ -126,14 +126,14 @@ Each backend takes old data a different way, so `up.sh` uses three:
   chronologically, in batches of 1500 lines, paced below Loki's default rate limit. Each service's
   history is a different pod (a stream of its own), so it never interferes with the live stream.
 * **Tempo** is the delicate one. Spans can be pushed with old timestamps over OTLP, and are found by
-  `trace ID` at once, but time-ranged searches select blocks by the block's time range, and the
-  ingester has a setting `ingestion_time_range_slack` (default 2 minutes) for how far a span may be
-  from the ingestion time. The demo raises it to history + 24 h (we verified that the block's start
-  time is then the oldest span, 24 h back; we did not run the default setting to observe the clamping
-  itself, so that part follows the Tempo documentation), and the Job flushes the ingester afterwards
-  (`POST :3200/flush`) so that the new block is searchable at once instead of after the 2-minute block
-  duration plus the blocklist poll. Search by real time then works (the block's start time is the
-  oldest span, verified by `verify.sh`).
+  `trace ID` at once, but time-ranged searches select blocks by the block's time range, and Tempo 3's
+  live-store has its own setting `live_store.wal.ingestion_time_range_slack` (default 2 minutes; the
+  `storage.trace.wal` one does not apply to it) for how far a span may be from the ingestion time. The
+  demo raises it to history + 24 h. Black-box against Tempo 3.1.1: with the default, a span 6 hours old
+  is not found by a search over its own time range; with the raised slack it is, within 30 seconds.
+  Tempo 3 has no `/flush` endpoint; the live-store cuts a block every 2 minutes
+  (`max_block_duration`), so the history is searchable shortly after the Job. Search by real time is
+  verified by `verify.sh`.
 
 The Job pushes straight to Loki and Tempo, as tenant `demo`, **before** Querdian is installed and
 before any NetworkPolicy exists; Querdian never sees ingest traffic and its allow-lists are untouched.
