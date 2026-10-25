@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/querdian-dev/querdian/internal/routes"
@@ -48,9 +49,11 @@ func UpstreamPath(r *http.Request, pathPrefix string) (string, error) {
 }
 
 // Normalise merges the URL query and the form body the way Prometheus does, then validates the result against
-// the endpoint: the method must be allowed, POST bodies must be form-encoded, the single-valued enforcement
-// parameter must occur at most once, and only allow-listed parameters may be present. Unknown parameters are
-// rejected rather than dropped so that a client never silently gets different semantics than it asked for.
+// the endpoint: the method must be allowed, POST bodies must be form-encoded, single-valued parameters (every
+// name not ending in "[]") must occur at most once, and only allow-listed parameters may be present. Unknown and
+// repeated parameters are rejected rather than dropped so that a client never silently gets different semantics
+// than it asked for: the enforcers and mergers read the first value of a parameter (query, q, targetLabels,
+// limit, delay_for, direction), and backends do not agree on which value wins.
 func Normalise(r *http.Request, ep routes.Endpoint, maxFormBytes int64) (url.Values, error) {
 	if !ep.AllowsMethod(r.Method) {
 		return nil, badRequest("method %s not allowed", r.Method)
@@ -83,8 +86,15 @@ func Normalise(r *http.Request, ep routes.Endpoint, maxFormBytes int64) (url.Val
 		}
 	}
 
-	if ep.Param != "" && !strings.HasSuffix(ep.Param, "[]") && len(params[ep.Param]) > 1 {
-		return nil, badRequest("parameter %q must be given at most once", ep.Param)
+	var repeated []string
+	for k, v := range params {
+		if len(v) > 1 && !strings.HasSuffix(k, "[]") {
+			repeated = append(repeated, strconv.Quote(k))
+		}
+	}
+	if len(repeated) > 0 {
+		sort.Strings(repeated)
+		return nil, badRequest("parameter %s must be given at most once", strings.Join(repeated, ", "))
 	}
 	var unknown []string
 	for k := range params {

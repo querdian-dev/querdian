@@ -102,12 +102,13 @@ user's policies cannot be expressed for a request, it is rejected with a reason.
   `%00`, residual `%`, `.`/`..`, empty segments, trailing slashes, control characters and invalid
   UTF-8 are rejected, so no encoding can make a request alias a different route. Lookup is
   literal-over-parameter-over-wildcard on whole segments; the method is part of the match.
-* **Parameter pollution.** URL query and form body are merged the way Prometheus does; a
-  single-valued enforcement parameter (`query`, `q`) appearing more than once is rejected, because
-  backends disagree about which value wins (Loki prefers the form value). The upstream request is
-  rebuilt from the parsed parameters: `GET` carries only a URL query, `POST` only a form body.
-  Unknown parameters are rejected rather than dropped (for example Thanos `storeMatch[]`, which
-  could select stores, and Tempo `q` on trace by ID).
+* **Parameter pollution.** URL query and form body are merged the way Prometheus does; any
+  single-valued parameter (every name not ending in `[]`, not only `query` and `q`) appearing more
+  than once is rejected, because backends disagree about which value wins (Loki prefers the form
+  value) and the enforcers read the first one (`targetLabels`, `delay_for`, ...). The upstream
+  request is rebuilt from the parsed parameters: `GET` carries only a URL query, `POST` only a
+  form body. Unknown parameters are rejected rather than dropped (for example Thanos
+  `storeMatch[]`, which could select stores, and Tempo `q` on trace by ID).
 * **Content negotiation.** Merged plans force `Accept: application/json`. Filters that rewrite a
   response fail with `502` for any representation they cannot parse.
 * **Errors.** Error bodies contain a generic message plus parser or rewriter detail for the

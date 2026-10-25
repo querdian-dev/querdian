@@ -29,9 +29,9 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 * **Parameters are allow-listed per route and unknown ones are rejected (`400 bad_request`)**, not
   silently dropped. Notably `storeMatch[]` (Thanos) is never forwarded. Allowed Thanos extras:
   `dedup`, `partial_response`, `replicaLabels`, `replicaLabels[]`, `max_source_resolution`.
-* A single-valued enforcement parameter (`query`, `q`) given more than once, in URL and form body
-  together or repeated, is `400 bad_request`. Backends disagree about which value wins; Querdian
-  refuses to guess.
+* A single-valued parameter (every name not ending in `[]`, such as `query`, `q`, `limit` or
+  `targetLabels`) given more than once, in URL and form body together or repeated, is
+  `400 bad_request`. Backends disagree about which value wins; Querdian refuses to guess.
 * `POST` bodies must be `application/x-www-form-urlencoded` and at most 1 MiB; JSON bodies are
   rejected. The rewritten request is always re-encoded by the proxy (`GET`: URL query, `POST`: form
   body).

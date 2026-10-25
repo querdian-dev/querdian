@@ -119,6 +119,9 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 * Prometheus `label/:name/values` checks denied and redacted labels against the name Prometheus 3
   looks up: a `U__`-escaped name (`U__customer__id`) is decoded first, so it can no longer read
   the values of a denied label.
+* Every single-valued request parameter (every name not ending in `[]`) given more than once is
+  `400 bad_request`, not only `query` and `q`: the enforcers and mergers read the first value of
+  parameters such as `targetLabels`, `delay_for` and `limit`, and backends disagree on which wins.
 
 ### Known limitations
 
