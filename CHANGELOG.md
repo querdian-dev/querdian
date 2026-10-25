@@ -94,6 +94,9 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 
 * Unit, fuzz, envtest and container-based end-to-end suites (differential, isolation, semantic
   equivalence) against Prometheus, Loki and Tempo.
+* End-to-end coverage of `labels.redact` against the real backends (results, upstream errors, `U__`
+  names) and of the token boundaries the injectors rely on: where Loki ends a `#` comment, that `#`
+  inside strings is no comment, and how Tempo ends strings and quoted attribute names (`\"`, `\\`).
 * CI: lint, race tests, envtest, fuzz, govulncheck, license gate, generate drift, DCO, CodeQL,
   OpenSSF Scorecard; Renovate configuration.
 * Documentation: policy guide, operations, troubleshooting, limitations, threat model, endpoint
@@ -119,6 +122,12 @@ limitations are in [docs/limitations.md](docs/limitations.md).
 * Prometheus `label/:name/values` checks denied and redacted labels against the name Prometheus 3
   looks up: a `U__`-escaped name (`U__customer__id`) is decoded first, so it can no longer read
   the values of a denied label.
+* Every single-valued request parameter (every name not ending in `[]`) given more than once is
+  `400 bad_request`, not only `query` and `q`: the enforcers and mergers read the first value of
+  parameters such as `targetLabels`, `delay_for` and `limit`, and backends disagree on which wins.
+* Tempo `search/tag/<name>/values` rejects quoted attribute names (`span."x"`) with `400`. The deny
+  check compares the name as plain text; Tempo 2.9.0 does not decode the quoting there, and the
+  proxy no longer relies on that.
 
 ### Known limitations
 

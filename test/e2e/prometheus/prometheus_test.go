@@ -119,6 +119,8 @@ func newFixture(t *testing.T) *fixture {
 			framework.Deny(framework.Rule("metrics", eq("namespace", "ns-a")), "customer_id"),
 			framework.Rule("metrics", eq("job", "api"))),
 		framework.ClusterPolicy("admin", framework.Group("admin"), framework.Unrestricted("metrics")),
+		framework.ClusterPolicy("redact-single", framework.Group("redact-1"),
+			framework.Redact(framework.Rule("metrics", eq("namespace", "ns-a")), v1.RedactPlaceholder, "customer_id")),
 	)
 	var ap []v1.AccessPolicy
 	nsLabels := map[string]map[string]string{}
@@ -172,6 +174,7 @@ func TestPrometheusE2E(t *testing.T) {
 	t.Run("isolation", func(t *testing.T) { testIsolation(t, f) })
 	t.Run("equivalence", func(t *testing.T) { testEquivalence(t, f) })
 	t.Run("denied-labels", func(t *testing.T) { testDeniedLabels(t, f) })
+	t.Run("redaction", func(t *testing.T) { testRedaction(t, f) })
 	t.Run("endpoints-and-auth", func(t *testing.T) { testEndpoints(t, f) })
 }
 

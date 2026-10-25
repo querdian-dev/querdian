@@ -29,9 +29,9 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 * **Parameters are allow-listed per route and unknown ones are rejected (`400 bad_request`)**, not
   silently dropped. Notably `storeMatch[]` (Thanos) is never forwarded. Allowed Thanos extras:
   `dedup`, `partial_response`, `replicaLabels`, `replicaLabels[]`, `max_source_resolution`.
-* A single-valued enforcement parameter (`query`, `q`) given more than once, in URL and form body
-  together or repeated, is `400 bad_request`. Backends disagree about which value wins; Querdian
-  refuses to guess.
+* A single-valued parameter (every name not ending in `[]`, such as `query`, `q`, `limit` or
+  `targetLabels`) given more than once, in URL and form body together or repeated, is
+  `400 bad_request`. Backends disagree about which value wins; Querdian refuses to guess.
 * `POST` bodies must be `application/x-www-form-urlencoded` and at most 1 MiB; JSON bodies are
   rejected. The rewritten request is always re-encoded by the proxy (`GET`: URL query, `POST`: form
   body).
@@ -267,6 +267,7 @@ an attribute from the policy checks.
   `deny`.
 * Tag endpoints: `api/v2/search/tags` lists tags of spans that satisfy the injected policy; denied
   tags are filtered out. Tag *values* are computed over policy-matching spans and returned as is.
+  The tag name of a values lookup must be unquoted (`span.x`, `.x`); `span."x"` is `400`.
 * Only the HTTP API is proxied; gRPC and streaming search are out of scope.
 
 ## Denied labels
@@ -311,7 +312,9 @@ disjoint are not detected, so such results are marked approximate although they 
   term. If the terms are not provably disjoint the response gets the header
   `X-Querdian-Approximate: true` and the server span `merge.approximate=true`; the body keeps
   Loki's format. Truncation to `limit` after summation is exact only if no branch cut off series.
-  Denied labels are stripped from the reported label sets, which can merge series.
+  Denied labels are stripped from the reported label sets, which can merge series. A merged
+  `index/volume_range` is a `matrix` unless every branch answered a `vector` of one and the same step
+  (Loki's single-step shape), which is kept.
 * Loki `stats` blocks in query responses are summed over fan-out branches; shared work is counted
   once per branch.
 * Loki `detected_labels` / `detected_fields` cardinalities are summed per label: exact for

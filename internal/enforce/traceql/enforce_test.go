@@ -219,6 +219,12 @@ func TestDeniedTagValuesName(t *testing.T) {
 			t.Errorf("%s: err = %v, want denied=%v", path, err, deny)
 		}
 	}
+	// Quoted names are compared undecoded, so they are rejected outright (a raw " reaches the router).
+	for _, path := range []string{`/api/v2/search/tag/span."secret"/values`, `/api/v2/search/tag/."secret"/values`} {
+		if _, err := plan(t, path, q(), e); !errors.Is(err, enforce.ErrUnsupported) {
+			t.Errorf("%s: err = %v, want unsupported", path, err)
+		}
+	}
 }
 
 func TestUnrestricted(t *testing.T) {

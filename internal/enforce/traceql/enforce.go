@@ -38,6 +38,7 @@ import (
 	"context"
 	"net/url"
 	"slices"
+	"strings"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/enforce"
@@ -81,6 +82,11 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 		merge = enforce.MergeTempoSearch
 	case tmplTags:
 	case tmplTagValues:
+		// The name is compared as plain text below. Tempo 2.9.0 does not decode TraceQL quoting here (a quoted
+		// name finds nothing, black-box), so quoting is rejected rather than trusted to stay undecoded.
+		if strings.ContainsRune(ep.PathParam, '"') {
+			return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "quoted attribute names are not supported in tag values lookups")
+		}
 		if traceLevelNames[ep.PathParam] && !RootCovered(eff) {
 			return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "trace-level intrinsic %s needs a policy that covers the root span", ep.PathParam)
 		}

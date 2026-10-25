@@ -14,6 +14,9 @@ func TestNormalise(t *testing.T) {
 	prom := func(path, method string) routes.Endpoint {
 		return routes.Lookup(config.BackendPrometheus, path, method)
 	}
+	loki := func(path, method string) routes.Endpoint {
+		return routes.Lookup(config.BackendLoki, path, method)
+	}
 	form := "application/x-www-form-urlencoded"
 	tests := []struct {
 		name    string
@@ -43,6 +46,12 @@ func TestNormalise(t *testing.T) {
 		}},
 		{"POST URL query plus form query", prom("/api/v1/query", "POST"), "POST", "/q?query=a", "query=b", form, "at most once", nil},
 		{"GET duplicate query", prom("/api/v1/query", "GET"), "GET", "/q?query=a&query=b", "", "", "at most once", nil},
+		// Every single-valued parameter, not only the enforcement one: enforcers and mergers read the first value.
+		{"GET duplicate time", prom("/api/v1/query", "GET"), "GET", "/q?query=up&time=1&time=2", "", "", `"time" must be given at most once`, nil},
+		{"POST URL query plus form limit", prom("/api/v1/query", "POST"), "POST", "/q?limit=1", "query=up&limit=2", form, `"limit" must be given at most once`, nil},
+		{"Loki duplicate targetLabels", loki("/loki/api/v1/index/volume", "GET"), "GET", "/q?query=x&targetLabels=app&targetLabels=pod", "", "", `"targetLabels" must be given at most once`, nil},
+		{"Loki duplicate delay_for", loki("/loki/api/v1/tail", "GET"), "GET", "/q?query=x&delay_for=1&delay_for=2", "", "", `"delay_for" must be given at most once`, nil},
+		{"duplicates listed sorted", prom("/api/v1/query", "GET"), "GET", "/q?query=a&time=1&query=b&time=2", "", "", `"query", "time" must be given at most once`, nil},
 		{"POST wrong content type", prom("/api/v1/query", "POST"), "POST", "/q", `{"query":"up"}`, "application/json", "Content-Type", nil},
 		{"POST no content type", prom("/api/v1/query", "POST"), "POST", "/q", "query=up", "", "Content-Type", nil},
 		{"POST body too large", prom("/api/v1/query", "POST"), "POST", "/q", "query=" + strings.Repeat("a", 2<<20), form, "too large", nil},
