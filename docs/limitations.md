@@ -312,7 +312,9 @@ disjoint are not detected, so such results are marked approximate although they 
   term. If the terms are not provably disjoint the response gets the header
   `X-Querdian-Approximate: true` and the server span `merge.approximate=true`; the body keeps
   Loki's format. Truncation to `limit` after summation is exact only if no branch cut off series.
-  Denied labels are stripped from the reported label sets, which can merge series.
+  Denied labels are stripped from the reported label sets, which can merge series. A merged
+  `index/volume_range` is a `matrix` unless every branch answered a `vector` of one and the same step
+  (Loki's single-step shape), which is kept.
 * Loki `stats` blocks in query responses are summed over fan-out branches; shared work is counted
   once per branch.
 * Loki `detected_labels` / `detected_fields` cardinalities are summed per label: exact for

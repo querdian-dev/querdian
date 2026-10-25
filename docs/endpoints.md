@@ -227,8 +227,11 @@ HTTP only. These are what `internal/fanout` merges.
 - `index/volume`: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a"},"value":[<sec>,"<bytes>"]}],"stats":{...}}}`.
   Without `targetLabels` the metric is the full series label set (so denied labels would be visible);
   with `aggregateBy=labels&targetLabels=app` it is `{"app":"a"}` per value.
-  `index/volume_range` returned `resultType` `vector` for a step larger than the data span in this
-  experiment; the documented `matrix` shape (`values:[[ts,"n"],...]`) was not observed.
+  `index/volume_range` answers the documented `matrix` (`values:[[ts,"n"],...]`) only when the data of
+  the selector spans several steps. When it all falls into one step (always for a step larger than the
+  data span) the answer is a `vector` with one sample per series at that step, and when nothing matches
+  an empty `vector` (Loki 3.5.0, observed in the e2e suite). The fan-out branches of one request can
+  therefore differ in shape; the merge treats a vector branch as single-point matrix series.
 - `patterns`: answers 404 unless the pattern ingester is enabled (`pattern_ingester.enabled: true`). With it
   enabled and little data, `{"status":"success","data":[]}` was observed; the non-empty shape
   `data:[{"pattern":"...","samples":[[<sec>,<count>],...]}]` is from the public docs and **unverified**.

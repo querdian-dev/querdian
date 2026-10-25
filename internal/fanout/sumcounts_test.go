@@ -233,3 +233,55 @@ func TestSumVolumeRangeEmptyVectorBranch(t *testing.T) {
 		t.Errorf("all empty: %v %v", out, err)
 	}
 }
+
+// Loki 3.5.0 also answers an index/volume_range branch whose series all fall into one step with a non-empty
+// "vector" (one sample per series at that step). The bodies are the pair Loki returned in a failing e2e run.
+func TestSumVolumeRangeVectorBranch(t *testing.T) {
+	vector := volBody("vector", `[{"metric":{"app":"api","ns":"b"},"value":[1792916940,"2048"]}]`, "")
+	matrix := volBody("matrix", `[{"metric":{"ns":"a"},"values":[[1792916699.999,"0"],[1792916940,"2048"]]}]`, "")
+	wantA := map[string]any{"metric": map[string]any{"ns": "a"}, "values": []any{[]any{1792916699.999, "0"}, []any{1792916940.0, "2048"}}}
+	wantB := map[string]any{"metric": map[string]any{"app": "api", "ns": "b"}, "values": []any{[]any{1792916940.0, "2048"}}}
+	for name, bodies := range map[string][]string{"vector first": {vector, matrix}, "vector last": {matrix, vector}} {
+		_, out, err := sumMerge(t, "/loki/api/v1/index/volume_range", nil, false, bodies...)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		d := out["data"].(map[string]any)
+		if d["resultType"] != "matrix" || !reflect.DeepEqual(d["result"], []any{wantB, wantA}) { // equal totals: ordered by label set
+			t.Errorf("%s: out = %v", name, out)
+		}
+	}
+
+	// A series in both shapes is summed per timestamp.
+	_, out, err := sumMerge(t, "/loki/api/v1/index/volume_range", nil, false,
+		volBody("vector", `[{"metric":{"ns":"a"},"value":[120,"3"]}]`, ""),
+		volBody("matrix", `[{"metric":{"ns":"a"},"values":[[60,"1"],[120,"2"]]}]`, ""))
+	want := []any{map[string]any{"metric": map[string]any{"ns": "a"}, "values": []any{[]any{60.0, "1"}, []any{120.0, "5"}}}}
+	if err != nil || !reflect.DeepEqual(out["data"].(map[string]any)["result"], want) {
+		t.Errorf("same series: %v %v", out, err)
+	}
+}
+
+// Single-step vectors of different steps are a range result: merged as one vector they would add values of
+// different timestamps. Vectors of one step keep the (exact) vector merge, as before.
+func TestSumVolumeRangeVectorTimestamps(t *testing.T) {
+	at60 := volBody("vector", `[{"metric":{"ns":"a"},"value":[60,"1"]}]`, "")
+	at120 := volBody("vector", `[{"metric":{"ns":"a"},"value":[120,"2"]}]`, "")
+	_, out, err := sumMerge(t, "/loki/api/v1/index/volume_range", nil, false, at60, at120)
+	want := []any{map[string]any{"metric": map[string]any{"ns": "a"}, "values": []any{[]any{60.0, "1"}, []any{120.0, "2"}}}}
+	if d := out["data"].(map[string]any); err != nil || d["resultType"] != "matrix" || !reflect.DeepEqual(d["result"], want) {
+		t.Errorf("different steps: %v %v", out, err)
+	}
+
+	_, out, err = sumMerge(t, "/loki/api/v1/index/volume_range", nil, false, at60, at60)
+	want = []any{map[string]any{"metric": map[string]any{"ns": "a"}, "value": []any{60.0, "2"}}}
+	if d := out["data"].(map[string]any); err != nil || d["resultType"] != "vector" || !reflect.DeepEqual(d["result"], want) {
+		t.Errorf("one step: %v %v", out, err)
+	}
+
+	// index/volume is an instant query: its vectors are never turned into a matrix.
+	_, out, err = sumMerge(t, "/loki/api/v1/index/volume", nil, false, at60, at120)
+	if err != nil || out["data"].(map[string]any)["resultType"] != "vector" {
+		t.Errorf("index/volume: %v %v", out, err)
+	}
+}

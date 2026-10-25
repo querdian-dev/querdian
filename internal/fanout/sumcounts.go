@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -62,7 +63,7 @@ func NewSumCountsMerger(denied DeniedFunc, approximate func(r *http.Request) boo
 				limit = n
 			}
 		}
-		out, in, n, err := sumCounts(resps, deny, limit)
+		out, in, n, err := sumCounts(resps, deny, limit, strings.HasSuffix(r.URL.Path, "/volume_range"))
 		if err != nil {
 			return err
 		}
@@ -88,7 +89,9 @@ const (
 	sumPatterns
 )
 
-func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, in, n int, err error) {
+// sumCounts merges the branches. rangeQuery is set for index/volume_range, whose vector branches may stand for
+// matrices (see vectorsAsMatrix).
+func sumCounts(resps []Response, deny map[string]struct{}, limit int, rangeQuery bool) (out any, in, n int, err error) {
 	if len(resps) == 0 {
 		return nil, 0, 0, fmt.Errorf("fanout: nothing to merge")
 	}
@@ -103,14 +106,7 @@ func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, 
 		warnings [][]string
 		isEmpty  = true
 	)
-	anyMatrix := false
-	for _, resp := range resps {
-		if top, err := decodeObject(resp.Body); err == nil {
-			if bs, err := sumShapeOf(top); err == nil && bs == sumMatrix {
-				anyMatrix = true
-			}
-		}
-	}
+	asMatrix := vectorsAsMatrix(resps, rangeQuery)
 	for i, resp := range resps {
 		top, derr := decodeObject(resp.Body)
 		if derr != nil {
@@ -123,9 +119,8 @@ func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, 
 		if derr != nil {
 			return nil, 0, 0, fmt.Errorf("branch %d: %w", i, derr)
 		}
-		// Black-box finding (Loki 3.5.0, T3.8): index/volume_range answers a branch that matches no series
-		// with resultType "vector" and an empty result instead of an empty matrix.
-		if anyMatrix && bs == sumVector && emptyResult(top) {
+		converted := asMatrix && bs == sumVector
+		if converted {
 			bs = sumMatrix
 		}
 		if bs == sumUnknown {
@@ -165,9 +160,15 @@ func sumCounts(resps []Response, deny map[string]struct{}, limit int) (out any, 
 			_ = json.Unmarshal(top["data"], &data)
 			statsRaw = append(statsRaw, data["stats"])
 			var cnt int
-			if bs == sumVector {
+			switch {
+			case bs == sumVector:
 				cnt, derr = addVector(vec, data["result"], deny)
-			} else {
+			case converted:
+				var res json.RawMessage
+				if res, derr = vectorAsMatrix(data["result"]); derr == nil {
+					cnt, derr = addMatrix(mat, res, deny)
+				}
+			default:
 				cnt, derr = addMatrix(mat, data["result"], deny)
 			}
 			if derr != nil {
@@ -516,10 +517,61 @@ func patternResult(acc map[string]*patSeries) []map[string]any {
 	return out
 }
 
-// emptyResult reports whether data.result of a vector/matrix response is an empty list.
-func emptyResult(top map[string]json.RawMessage) bool {
-	var data struct {
-		Result []json.RawMessage `json:"result"`
+// vectorsAsMatrix reports whether vector branches must be merged as matrices. Black-box findings (Loki 3.5.0):
+// index/volume_range answers a branch that matches no series with an empty "vector", and a branch whose series
+// all fall into one step with a "vector" of one sample per series at that step, instead of a matrix. Such a
+// vector is the matrix with one point per series. It is merged as a matrix when another branch is a matrix, and
+// on volume_range also when the vector samples of the branches lie at different timestamps: summing them as
+// one vector would add values of different steps. Vectors that all share one timestamp (or are all empty)
+// keep the exact vector merge, which is what Loki answers for a single step. Undecodable branches are
+// reported later by the merge itself.
+func vectorsAsMatrix(resps []Response, rangeQuery bool) bool {
+	times := map[string]bool{}
+	for _, resp := range resps {
+		top, err := decodeObject(resp.Body)
+		if err != nil {
+			continue
+		}
+		switch bs, err := sumShapeOf(top); {
+		case err != nil:
+		case bs == sumMatrix:
+			return true
+		case bs == sumVector && rangeQuery:
+			var data struct {
+				Result []struct {
+					Value []json.RawMessage `json:"value"`
+				} `json:"result"`
+			}
+			if decodeValue(top["data"], &data) != nil {
+				continue
+			}
+			for _, s := range data.Result {
+				if len(s.Value) == 2 {
+					times[string(s.Value[0])] = true
+				}
+			}
+		}
 	}
-	return json.Unmarshal(top["data"], &data) == nil && len(data.Result) == 0
+	return len(times) > 1
+}
+
+// vectorAsMatrix renders vector samples as single-point matrix series: {"value":[ts,v]} becomes
+// {"values":[[ts,v]]}. addMatrix validates the result.
+func vectorAsMatrix(raw json.RawMessage) (json.RawMessage, error) {
+	var res []struct {
+		Metric map[string]string `json:"metric"`
+		Value  json.RawMessage   `json:"value"`
+	}
+	if err := decodeValue(raw, &res); err != nil {
+		return nil, malformed("result: %v", err)
+	}
+	out := make([]map[string]any, len(res))
+	for i, s := range res {
+		out[i] = map[string]any{"metric": s.Metric, "values": []json.RawMessage{s.Value}}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil, malformed("result: %v", err)
+	}
+	return b, nil
 }
