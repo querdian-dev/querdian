@@ -34,7 +34,7 @@ func testParserBoundaries(t *testing.T, f *fixture) {
 		{"comment after escaped backslash", nsA(`|= "\\" `) + "# x\n" + orB, true},
 	}
 	// Loki 3.5.0 ends a comment at LF only (black-box); none of these may end it.
-	for _, term := range []string{"\r", "\v", "\f", "\x00", "\x1c", "\x1e", "\u0085", " ", " "} {
+	for _, term := range []string{"\r", "\v", "\f", "\x00", "\x1c", "\x1e", "\u0085", "\u2028", "\u2029"} {
 		cases = append(cases, tc{fmt.Sprintf("comment not ended by %q", term), nsA("") + " # x" + term + orB, false})
 	}
 	for _, c := range cases {
