@@ -85,13 +85,19 @@ func TestInputNotModified(t *testing.T) {
 }
 
 func TestTagEndpointsAbsentQ(t *testing.T) {
-	for _, path := range []string{"/api/v2/search/tags", "/api/v2/search/tag/span.foo/values", "/api/search"} {
+	// Tag lookups use the unparenthesised conjunction (tags.go), search the DNF.
+	want := map[string]string{
+		"/api/v2/search/tags":                `{ resource.ns = "a" }`,
+		"/api/v2/search/tag/span.foo/values": `{ resource.ns = "a" }`,
+		"/api/search":                        `{ (resource.ns = "a") }`,
+	}
+	for path, want := range want {
 		for _, params := range []url.Values{q(), q("q", "")} {
 			p, err := plan(t, path, params, one)
 			if err != nil {
 				t.Fatalf("%s: %v", path, err)
 			}
-			if got, want := p.Requests[0].Query.Get("q"), `{ (resource.ns = "a") }`; got != want {
+			if got := p.Requests[0].Query.Get("q"); got != want {
 				t.Errorf("%s: q = %q, want %q", path, got, want)
 			}
 		}

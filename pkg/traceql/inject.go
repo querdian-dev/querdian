@@ -55,6 +55,24 @@ func RenderDNF(terms []Term) (string, error) {
 	return strings.Join(parts, " || "), nil
 }
 
+// RenderConjunction renders one term without parentheses: `a = "x" && b = "y"`. Names and values are
+// rendered as by RenderDNF. It exists for Tempo's tag endpoints, which evaluate q only for some shapes
+// (internal/enforce/traceql, tags.go); everywhere else RenderDNF is the safe choice.
+func RenderConjunction(t Term) (string, error) {
+	if len(t) == 0 {
+		return "", errors.New("traceql: empty term")
+	}
+	conds := make([]string, len(t))
+	for i, c := range t {
+		s, err := renderCondition(c)
+		if err != nil {
+			return "", err
+		}
+		conds[i] = s
+	}
+	return strings.Join(conds, " && "), nil
+}
+
 func renderCondition(c Condition) (string, error) {
 	var op string
 	switch c.Op {

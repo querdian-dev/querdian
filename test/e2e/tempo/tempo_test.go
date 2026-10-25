@@ -59,6 +59,9 @@ type scenario struct {
 	unrestricted bool
 	// namespaced builds an AccessPolicy in this namespace instead of a ClusterAccessPolicy.
 	namespaced string
+	// noTagLookups: the policy cannot be expressed in a q shape Tempo evaluates on the tag endpoints
+	// (a negative matcher or an open regex), so the proxy refuses tag lookups (GHSA-jcqw-3c3f-xrmj).
+	noTagLookups bool
 }
 
 func (s scenario) user() string  { return "u-" + s.name }
@@ -94,10 +97,12 @@ const nsKey = "resource.k8s.namespace.name"
 var scenarios = []scenario{
 	{name: "ns-a", tenant: "t1", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-a")}}},
 	{name: "ns-ab", tenant: "t1", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-a")}, {framework.Eq(nsKey, "ns-b")}}},
-	{name: "ns-ac-notbeta", tenant: "t1", rules: [][]v1.Matcher{{framework.Re(nsKey, "ns-(a|c)"), framework.Ne("span.team", "beta")}}},
+	{name: "ns-ac-notbeta", tenant: "t1", rules: [][]v1.Matcher{{framework.Re(nsKey, "ns-(a|c)"), framework.Ne("span.team", "beta")}}, noTagLookups: true},
 	{name: "team-alpha", tenant: "t1", rules: [][]v1.Matcher{{framework.Eq("span.team", "alpha")}}},
 	{name: "svc-cart-db", tenant: "t1", rules: [][]v1.Matcher{{framework.Re("resource.service.name", "cart|db")}}},
 	{name: "t2-ns-a", tenant: "t2", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-a")}}},
+	{name: "t3-ns-a-or-svc", tenant: "t3", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-a")}, {framework.Eq("resource.service.name", "svc-ns-b")}}},
+	{name: "t3-ns-ac", tenant: "t3", rules: [][]v1.Matcher{{framework.Re(nsKey, "ns-(a|c)")}}},
 	{name: "ns-a-deny", tenant: "t1", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-a")}}, deny: []string{"span.customer_id"}},
 	{name: "ns-b-ap", tenant: "t1", rules: [][]v1.Matcher{{framework.Eq(nsKey, "ns-b")}}, namespaced: "ns-b"},
 	{name: "admin", tenant: "t1", unrestricted: true},
@@ -150,7 +155,7 @@ func newFixture(t *testing.T) *fixture {
 	f.to = f.from.Add(5 * time.Minute)
 
 	// Seed: main holds everything per tenant; the reference holds the granted spans per scenario.
-	for _, ten := range []string{"t1", "t2"} {
+	for _, ten := range []string{"t1", "t2", "t3"} {
 		var sp []spanDef
 		for _, s := range f.spans {
 			if s.tenant == ten {
@@ -180,7 +185,7 @@ func newFixture(t *testing.T) *fixture {
 		cl.Headers = map[string]string{"X-Scope-OrgID": tenant}
 		return api{c: cl, from: f.from, to: f.to}
 	}
-	for _, ten := range []string{"t1", "t2"} {
+	for _, ten := range []string{"t1", "t2", "t3"} {
 		f.directT[ten] = mainClient(f.main, ten)
 	}
 	for _, sc := range scenarios {

@@ -311,6 +311,20 @@ func allSpans() []spanDef {
 		b.add(spanDef{tenant: "t2", trace: tr, parent: root, name: "t2-child", service: "t2-svc", ns: ns, start: 10 * ms, dur: 50 * ms,
 			status: statusError, spanAttrs: attrs(ns, n, "POST", "alpha"), code: 500})
 	}
+
+	// Tenant t3: single-span traces, one per namespace and team. Black-box (GHSA-jcqw-3c3f-xrmj): Tempo 2.x
+	// answers tag values unfiltered for a q with || (terms that do not merge into one regex), Tempo 3.x for
+	// a q with =~.
+	for i, ns := range namespaces {
+		for j, team := range teams {
+			st := statusOK
+			if team == "beta" {
+				st = statusError
+			}
+			b.add(spanDef{tenant: "t3", trace: traceID(600 + 2*i + j), name: "op-" + ns + "-" + team, service: "svc-" + ns, ns: ns,
+				dur: 100 * ms, status: st, spanAttrs: map[string]string{"team": team}, code: 200})
+		}
+	}
 	return b.spans
 }
 

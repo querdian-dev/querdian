@@ -340,3 +340,69 @@ func TestTagsMerger(t *testing.T) {
 		t.Errorf("denied values: err %v body %q", err, rec.Body)
 	}
 }
+
+func TestUnionTempoTagValues(t *testing.T) {
+	a := []byte(`{"tagValues":[{"type":"string","value":"ns-a"},{"type":"string","value":"x"}],"metrics":{"inspectedBytes":"1"}}`)
+	b := []byte(`{"tagValues":[{"type":"string","value":"x"},{"type":"int","value":"x"},{"type":"string","value":"ns-b"}]}`)
+	got, err := UnionTempoTagValues([][]byte{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"tagValues":[{"type":"string","value":"ns-a"},{"type":"string","value":"x"},{"type":"int","value":"x"},{"type":"string","value":"ns-b"}]}`
+	if string(got) != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+	if got, _ := UnionTempoTagValues([][]byte{[]byte(`{}`), []byte(`{"tagValues":null}`)}); string(got) != `{"tagValues":[]}` {
+		t.Errorf("empty: %s", got)
+	}
+	if _, err := UnionTempoTagValues([][]byte{a, []byte(`[`)}); !errors.Is(err, ErrTempoResponse) {
+		t.Errorf("malformed: %v", err)
+	}
+}
+
+func TestUnionTempoTags(t *testing.T) {
+	a := []byte(`{"scopes":[{"name":"span","tags":["a","b"]},{"name":"resource","tags":["service.name"]}],"metrics":{}}`)
+	b := []byte(`{"scopes":[{"name":"span","tags":["b","c"]},{"name":"intrinsic","tags":["name"]}]}`)
+	got, err := UnionTempoTags([][]byte{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"scopes":[{"name":"span","tags":["a","b","c"]},{"name":"resource","tags":["service.name"]},{"name":"intrinsic","tags":["name"]}]}`
+	if string(got) != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+	if got, _ := UnionTempoTags([][]byte{[]byte(`{"tagNames":["x"]}`), []byte(`{"tagNames":["x","y"]}`)}); string(got) != `{"scopes":[],"tagNames":["x","y"]}` {
+		t.Errorf("legacy: %s", got)
+	}
+	if _, err := UnionTempoTags([][]byte{a, []byte(`{"scopes":7}`)}); !errors.Is(err, ErrTempoResponse) {
+		t.Errorf("malformed: %v", err)
+	}
+}
+
+func TestTempoTagsMergerUnitesAndFilters(t *testing.T) {
+	resps := []Response{
+		{Status: 200, Body: []byte(`{"scopes":[{"name":"span","tags":["team","secret"]}]}`)},
+		{Status: 200, Body: []byte(`{"scopes":[{"name":"span","tags":["team","method"]}]}`)},
+	}
+	rec := httptest.NewRecorder()
+	if err := NewTempoTagsMerger([]string{"span.secret"}, "")(rec, nil, resps); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := rec.Body.String(), `{"scopes":[{"name":"span","tags":["team","method"]}]}`; got != want {
+		t.Errorf("tags: got %s want %s", got, want)
+	}
+	vals := []Response{
+		{Status: 200, Body: []byte(`{"tagValues":[{"type":"string","value":"ns-a"}]}`)},
+		{Status: 200, Body: []byte(`{"tagValues":[{"type":"string","value":"ns-b"}]}`)},
+	}
+	rec = httptest.NewRecorder()
+	if err := NewTempoTagsMerger(nil, "resource.k8s.namespace.name")(rec, nil, vals); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := rec.Body.String(), `{"tagValues":[{"type":"string","value":"ns-a"},{"type":"string","value":"ns-b"}]}`; got != want {
+		t.Errorf("values: got %s want %s", got, want)
+	}
+	if err := NewTempoTagsMerger(nil, "x")(httptest.NewRecorder(), nil, nil); !errors.Is(err, ErrTempoResponse) {
+		t.Errorf("no responses: %v", err)
+	}
+}
