@@ -3,7 +3,7 @@ LDFLAGS := -X main.version=$(VERSION)
 FUZZTIME ?= 30s
 ENVTEST_K8S_VERSION ?= 1.33.0
 IMAGE ?= ghcr.io/querdian-dev/querdian
-GORELEASER_VERSION ?= v2.18.3
+GORELEASER_VERSION ?= v2.19.0
 
 .PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e fmt docker-build release-check site site-serve
 
