@@ -5,9 +5,18 @@
     "helpers:pinGitHubActionDigests",
     ":gitSignOff"
   ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/vendor/**"
+  ],
   "postUpdateOptions": [
     "gomodTidy"
   ],
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/^hack/quickstart/manifests/.+\\.yaml$/"
+    ]
+  },
   "packageRules": [
     {
       "description": "Group Go module minor/patch updates",
@@ -36,19 +45,49 @@
       "groupName": "github actions (minor/patch)"
     },
     {
-      "description": "Group container images used in tests (minor/patch)",
+      "description": "Group quickstart manifest images (minor/patch)",
       "matchManagers": [
-        "custom.regex"
-      ],
-      "matchDatasources": [
-        "docker"
+        "kubernetes"
       ],
       "matchUpdateTypes": [
         "minor",
         "patch",
         "digest"
       ],
-      "groupName": "test container images (minor/patch)"
+      "groupName": "quickstart images (minor/patch)"
+    },
+    {
+      "description": "Move every Prometheus pin (e2e tests, quickstart, demogen) together, so e2e tests the version the quickstart runs",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "prom/prometheus",
+        "docker.io/prom/prometheus"
+      ],
+      "groupName": "prometheus image"
+    },
+    {
+      "description": "Move every Loki pin (e2e tests, quickstart) together, so e2e tests the version the quickstart runs",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "grafana/loki",
+        "docker.io/grafana/loki"
+      ],
+      "groupName": "loki image"
+    },
+    {
+      "description": "Move every Tempo pin (e2e tests, quickstart) together, so e2e tests the version the quickstart runs",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "grafana/tempo",
+        "docker.io/grafana/tempo"
+      ],
+      "groupName": "tempo image"
     },
     {
       "description": "Move the GoReleaser pins together",
