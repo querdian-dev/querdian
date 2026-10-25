@@ -490,7 +490,8 @@ for u in alice bob carol; do
       fi
       nq=$((nq + 1))
       desc="$u: [$(jq -r .uid "$f")] $title"
-      if [[ "$title" == *"denied for order-team"* && "$u" == alice ]]; then
+      # The panel title states the expected refusal (isolation.json: "... alice gets an error ...").
+      if [[ "$title" == *"alice gets an error"* && "$u" == alice ]]; then
         if [[ "$err" == *customer_id* ]]; then pass "$desc -> refused by Querdian (denied label)"; else failed "$desc: expected a denied-label error, got '$err' / $n values"; bad=$((bad + 1)); fi
       elif [ -n "$err" ]; then
         failed "$desc: error: $err"
