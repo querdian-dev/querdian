@@ -183,22 +183,3 @@ func pushTraces(ctx context.Context, p *pusher, evs []*events, batch int, pace t
 	}
 	return n, nil
 }
-
-// flushTempo asks the ingester to cut and complete its head block now. Without it the history
-// would only become searchable after the block duration (2 minutes) plus a blocklist poll.
-func flushTempo(ctx context.Context, url string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req) // #nosec G704 -- the URL is a flag of this demo tool
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("flush: %s", resp.Status)
-	}
-	fmt.Println("flushed", url)
-	return nil
-}

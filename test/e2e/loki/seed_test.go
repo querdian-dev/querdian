@@ -1,6 +1,6 @@
 //go:build e2e
 
-// Package loki holds the Loki end-to-end suite (T3.8): a real Loki 3.5.0 container (black box) seeded
+// Package loki holds the Loki end-to-end suite (T3.8): a real Loki container (lokiImage, black box) seeded
 // with log streams of several namespaces and two tenants, a reference Loki holding only the granted
 // streams per policy (the oracle), the real proxy handler chain in-process, and a test OIDC issuer.
 package loki

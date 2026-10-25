@@ -15,9 +15,13 @@ data:
         otlp:
           protocols:
             http: {endpoint: "0.0.0.0:4318"}
-    # Tempo 3 monolithic: the live-store replaces the ingester and needs no Kafka.
+    # Tempo 3 monolithic: the live-store replaces the ingester and needs no Kafka. It has its own WAL
+    # slack (default 2m), which must cover the backfilled history: with spans outside the slack a block
+    # gets the ingestion time as its range, and searches over the history do not find it (black-box).
     live_store:
       max_block_duration: 2m
+      wal:
+        ingestion_time_range_slack: @@RETENTION_HOURS@@h
     storage:
       trace:
         backend: local
