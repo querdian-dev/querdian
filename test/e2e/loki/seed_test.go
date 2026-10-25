@@ -23,7 +23,7 @@ import (
 )
 
 // Pinned upstream image (T0.4/T0.5/T1.8 research used the same version).
-const lokiImage = "docker.io/grafana/loki:3.5.0"
+const lokiImage = "docker.io/grafana/loki:3.7.9"
 
 // lokiConfig: single binary, auth enabled (tenants), tenant federation, filesystem storage in the
 // container's own (ephemeral, removed with -v) file system, pattern ingester and volume endpoints on. Ingester
