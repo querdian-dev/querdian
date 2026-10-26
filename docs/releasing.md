@@ -235,6 +235,11 @@ git tag -s v0.2.0-rc.1 -m "Querdian v0.2.0-rc.1 (release pipeline dry-run)"   # 
 git push origin v0.2.0-rc.1
 ```
 
+Tag the release on the same commit as the last passing rc. The workflow passes the pushed tag to
+GoReleaser (`GORELEASER_CURRENT_TAG`); before that, `v0.1.1` on the commit of `v0.1.1-rc.1` was built and
+published as the rc (the run failed when uploading to the existing rc release; nothing was released as
+0.1.1, and the rc image tag was re-pushed unattested).
+
 A tag with a pre-release part (`-rc.N`) becomes a GitHub pre-release, does not move `latest`, and is
 marked `artifacthub.io/prerelease` on Artifact Hub. Its changelog comes from the `[X.Y.Z]` section of the
 release version, or from `[Unreleased]` while that section has no entries.

@@ -75,6 +75,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Release exactly the pushed tag. Without it GoReleaser picks one of the tags on the commit:
+          # v0.1.1 sat on the same commit as v0.1.1-rc.1 and was built and published as the rc.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       - name: Collect attestation subjects
         id: subjects
         run: |

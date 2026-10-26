@@ -11,7 +11,7 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-10-25
+## [0.1.1] - 2026-10-26
 
 A security release. See the [release notes](docs/release-notes-0.1.1.md).
 
