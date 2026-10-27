@@ -39,7 +39,7 @@ jobs:
         run: site/build-content.sh
       # Pinned and run from the module proxy so it stays out of go.mod; Renovate bumps the version.
       - name: Build site
-        run: go run github.com/gohugoio/hugo@v0.168.0 --source site --minify --gc
+        run: go run github.com/gohugoio/hugo@v0.169.0 --source site --minify --gc
       - name: Check internal links and files
         run: |
           set -euo pipefail
