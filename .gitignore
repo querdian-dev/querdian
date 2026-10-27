@@ -15,3 +15,6 @@ testdata/fuzz/**/*.tmp
 .impeccable/brief-*.md
 .impeccable/mocks/
 .impeccable/build/
+
+# /brag launch video output (and timestamped re-runs)
+/brag-output*/
