@@ -49,8 +49,9 @@ chart-lint: chart-crds-check
 	helm lint charts/querdian -f charts/querdian/ci/all-features-values.yaml
 	go test ./charts/...
 
+# hashicorp/go-uuid (MPL-2.0, file-level copyleft, used unmodified) arrives via prometheus/common >= v0.73.0.
 licenses:
-	go tool go-licenses check ./... --disallowed_types=forbidden,restricted,reciprocal,unknown
+	go tool go-licenses check ./... --disallowed_types=forbidden,restricted,reciprocal,unknown --ignore github.com/hashicorp/go-uuid
 
 envtest:
 	KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" go test -tags envtest ./...
