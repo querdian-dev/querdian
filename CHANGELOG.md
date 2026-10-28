@@ -11,6 +11,12 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+### Fixed
+
+* **OIDC issuer discovery failures are logged.** A wrong issuer URL, bad CA or DNS failure used to leave
+  `/readyz` at "issuer discovery not complete" with no cause anywhere. Each failed attempt now logs
+  `issuer discovery failed` (issuer, error, retry delay) and success logs `issuer discovery complete`.
+
 ## [0.1.1] - 2026-10-26
 
 A security release. See the [release notes](docs/release-notes-0.1.1.md).

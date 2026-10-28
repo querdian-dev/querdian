@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -50,6 +51,11 @@ func WithFailureCounter(c *prometheus.CounterVec) Option {
 	return func(a *Authenticator) { a.failures = c }
 }
 
+// WithLogger sets the logger that reports issuer discovery attempts. A nil logger (the default) discards.
+func WithLogger(l *slog.Logger) Option {
+	return func(a *Authenticator) { a.logger = l }
+}
+
 // WithRetryInterval sets the initial and maximum delay between background
 // discovery attempts (the delay doubles from initial up to max).
 func WithRetryInterval(initial, maxInterval time.Duration) Option {
@@ -61,6 +67,7 @@ type Authenticator struct {
 	cfg      config.AuthConfig
 	client   *http.Client
 	failures *prometheus.CounterVec
+	logger   *slog.Logger
 
 	retryInitial, retryMax time.Duration
 
@@ -75,6 +82,9 @@ func New(ctx context.Context, cfg config.AuthConfig, opts ...Option) (*Authentic
 	a := &Authenticator{cfg: cfg, retryInitial: time.Second, retryMax: 30 * time.Second}
 	for _, o := range opts {
 		o(a)
+	}
+	if a.logger == nil {
+		a.logger = slog.New(slog.DiscardHandler)
 	}
 	if a.failures != nil {
 		// Fail early if the vector does not have the expected single label.
@@ -107,8 +117,10 @@ func (a *Authenticator) discover(ctx context.Context) {
 		if err == nil {
 			// Audience (any-of) and issuer are checked in Authenticate.
 			a.verifier.Store(p.Verifier(&oidc.Config{SkipClientIDCheck: true, SkipIssuerCheck: true}))
+			a.logger.InfoContext(ctx, "issuer discovery complete", "issuer", a.cfg.Issuer)
 			return
 		}
+		a.logger.WarnContext(ctx, "issuer discovery failed", "issuer", a.cfg.Issuer, "retry_in", delay, "error", err.Error())
 		select {
 		case <-ctx.Done():
 			return

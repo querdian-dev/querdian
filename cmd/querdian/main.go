@@ -109,7 +109,7 @@ func run(args []string) error {
 		return err
 	}
 
-	authn, err := auth.New(ctx, cfg.Auth, auth.WithFailureCounter(metrics.AuthFailures))
+	authn, err := auth.New(ctx, cfg.Auth, auth.WithFailureCounter(metrics.AuthFailures), auth.WithLogger(logger))
 	if err != nil {
 		return err
 	}
