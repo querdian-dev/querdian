@@ -76,7 +76,7 @@ Grafana data sources use the proxy URL plus the `pathPrefix` (for example
 
 | Field | Default | Meaning |
 |---|---|---|
-| `issuer` | required | OIDC issuer URL (`http` or `https`). Discovery runs in the background with exponential backoff (1 s up to 30 s). The token's `iss` must equal this string exactly. |
+| `issuer` | required | OIDC issuer URL (`http` or `https`). Discovery runs in the background with exponential backoff (1 s up to 30 s); every failed attempt is logged as `issuer discovery failed` with the error. The token's `iss` must equal this string exactly. |
 | `audiences` | required, non-empty, no empty entries | The token's `aud` must contain **any** of these. |
 | `caFile` | empty | PEM bundle trusted for the issuer's discovery and JWKS requests (TLS 1.2 minimum). It is not used for backends. An unreadable file or one without certificates stops startup. |
 | `claims.username` | `preferred_username` | Claim holding the username; a dotted path is allowed (a literal key containing dots is tried first). Missing or empty means `401 unauthorized`. |

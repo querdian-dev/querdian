@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -9,12 +10,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -320,6 +323,44 @@ func TestDiscoveryRetries(t *testing.T) {
 		t.Fatalf("code = %d", w.Code)
 	}
 	waitReady(t, a)
+}
+
+// syncBuffer is a bytes.Buffer safe for the discovery goroutine to write while the test reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestDiscoveryLogsFailures(t *testing.T) {
+	ti := newTestIssuer(t, false)
+	ti.failDisc.Store(2)
+	var logs syncBuffer
+	newAuth(t, ti, nil, WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+
+	out := logs.String()
+	if n := strings.Count(out, "level=WARN"); n != 2 {
+		t.Fatalf("want 2 warnings for 2 failed attempts, got %d:\n%s", n, out)
+	}
+	for _, want := range []string{"issuer discovery failed", "issuer=" + ti.srv.URL, "retry_in=", "error="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "issuer discovery complete") {
+		t.Errorf("no completion line:\n%s", out)
+	}
 }
 
 func TestClaimExtraction(t *testing.T) {
