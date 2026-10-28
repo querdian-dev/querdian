@@ -11,11 +11,33 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-28
+
+A maintenance release: better diagnostics for OIDC issuer discovery and dependency updates. See the
+[release notes](docs/release-notes-0.1.2.md).
+
 ### Fixed
 
 * **OIDC issuer discovery failures are logged.** A wrong issuer URL, bad CA or DNS failure used to leave
   `/readyz` at "issuer discovery not complete" with no cause anywhere. Each failed attempt now logs
   `issuer discovery failed` (issuer, error, retry delay) and success logs `issuer discovery complete`.
+
+### Security
+
+* **`github.com/go-jose/go-jose/v4` v4.1.6** fixes a denial of service when parsing JWKs with RSA keys
+  ([GHSA-mgcc-cww5-fp2q](https://github.com/advisories/GHSA-mgcc-cww5-fp2q), CVE-2026-116587). Querdian
+  parses the OIDC issuer's JWKS through `go-oidc` and `go-jose`, so whoever controls the JWKS response
+  (a compromised identity provider, or the network path to an `http` issuer) could exhaust Querdian's
+  CPU. RSA keys are now capped at 4096 bits.
+* `golang.org/x/net` v0.62.0 fixes GO-2026-6860 and GO-2026-6866 in `x/net/html`, which Querdian does
+  not call; the update keeps image scanners clean.
+
+### Changed
+
+* Dependency updates: Go modules (`prometheus/common` v0.73.0, `k8s.io/*` v0.37.2), the `golang:1.27.3`
+  builder image digest and Hugo v0.169.0 for the website. `prometheus/common` v0.73.0 adds
+  `github.com/hashicorp/go-uuid` (MPL-2.0, used unmodified), which the license check now allows.
+* Quickstart: Grafana 13.3.0 and OpenTelemetry Collector 0.164.0.
 
 ## [0.1.1] - 2026-10-26
 
@@ -177,6 +199,7 @@ tenant-bound policies are unreliable (empty or incomplete, never wider than the 
 labels do not redact query results; bearer tokens are valid until expiry; there is no built-in rate
 limiting.
 
-[Unreleased]: https://github.com/querdian-dev/querdian/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/querdian-dev/querdian/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/querdian-dev/querdian/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/querdian-dev/querdian/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/querdian-dev/querdian/releases/tag/v0.1.0

@@ -18,6 +18,7 @@
     - security/self-assessment | Security self-assessment
 - title: Project
   pages:
+    - release-notes-0.1.2 | Release notes 0.1.2
     - release-notes-0.1.1 | Release notes 0.1.1
     - release-notes-0.1.0 | Release notes 0.1.0
     - releasing
