@@ -1,5 +1,8 @@
 # Querdian v0.1.1 release notes
 
+> **Superseded by [0.1.2](release-notes-0.1.2.md)**, which updates go-jose for a denial of service in
+> JWKS parsing ([GHSA-mgcc-cww5-fp2q](https://github.com/advisories/GHSA-mgcc-cww5-fp2q)). Upgrade recommended.
+
 A security release. **Upgrade if you proxy Tempo**: in 0.1.0, Tempo tag lookups could list tag names
 and values of spans outside a user's policy
 ([GHSA-jcqw-3c3f-xrmj](https://github.com/querdian-dev/querdian/security/advisories/GHSA-jcqw-3c3f-xrmj)).

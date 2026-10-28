@@ -11,28 +11,28 @@ everything fails closed: unknown endpoints, unknown users and unparseable querie
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/querdian-dev/querdian/badge)](https://scorecard.dev/viewer/?uri=github.com/querdian-dev/querdian)
 [![Artifact Hub](https://artifacthub.io/badge/repository/querdian)](https://artifacthub.io/packages/helm/querdian/querdian)
 
-**Status: alpha, [v0.1.1](https://github.com/querdian-dev/querdian/releases/tag/v0.1.1) is the latest
+**Status: alpha, [v0.1.2](https://github.com/querdian-dev/querdian/releases/tag/v0.1.2) is the latest
 release.** It is not ready for production use: the policy API is `v1alpha1` and may change
 incompatibly, and there are no production adopters yet. The proxy, the policy CRDs and the PromQL,
 LogQL and TraceQL enforcers are covered by unit, fuzz, envtest and container-based
 differential/equivalence suites (`make e2e`) against real Prometheus, Loki and Tempo. Read the
-[release notes](docs/release-notes-0.1.1.md) and the [known limitations](docs/limitations.md) before
+[release notes](docs/release-notes-0.1.2.md) and the [known limitations](docs/limitations.md) before
 you evaluate it. See also [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
 ```sh
-helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.1 \
+helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.2 \
   --namespace querdian --create-namespace -f my-values.yaml
 ```
 
 * Helm chart: `oci://ghcr.io/querdian-dev/charts/querdian`, also on
   [Artifact Hub](https://artifacthub.io/packages/helm/querdian/querdian); values in the
   [chart README](charts/querdian/README.md).
-* Container image: `ghcr.io/querdian-dev/querdian:0.1.1` (`linux/amd64`, `linux/arm64`).
-* Binaries, checksums and SBOMs: the [GitHub release](https://github.com/querdian-dev/querdian/releases/tag/v0.1.1).
+* Container image: `ghcr.io/querdian-dev/querdian:0.1.2` (`linux/amd64`, `linux/arm64`).
+* Binaries, checksums and SBOMs: the [GitHub release](https://github.com/querdian-dev/querdian/releases/tag/v0.1.2).
 * Everything is signed with cosign (keyless) and has build-provenance attestations; see
-  [Verify](docs/release-notes-0.1.1.md#verify).
+  [Verify](docs/release-notes-0.1.2.md#verify).
 
 To see it working first, run the [quickstart](docs/quickstart.md).
 
