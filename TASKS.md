@@ -550,6 +550,94 @@ picking up any task — section references (§) point there.
 
 ---
 
+## M6 — Multi-cluster
+
+The design is PLAN §18. Read it completely before you start a task in this milestone.
+
+### [ ] T6.1 — Configuration and CRDs
+- **Depends on:** —
+- **Files:** `api/v1alpha1/`, `internal/config/`, `config/crd/`, `charts/querdian/crds/`
+- **Acceptance:**
+  - [ ] The `multicluster` block and `clusterLabel` exist. A config without the block behaves as today.
+  - [ ] Querdian refuses to start if `maxStaleness` is zero or negative, or if a backend has no
+        `clusterLabel` while `multicluster` is set.
+  - [ ] The `SpokeCluster` and `SpokePolicy` kinds exist, with envtest coverage.
+
+### [ ] T6.2 — Policy origin in the compiler
+- **Depends on:** T6.1
+- **Files:** `internal/policy/`
+- **Acceptance:**
+  - [ ] The compiler input keeps the origin of each policy. Namespace labels and policy names do not
+        collide across clusters.
+  - [ ] Each spoke rule and each hub `AccessPolicy` rule carries the implicit cluster matcher.
+  - [ ] A spoke rule never compiles to `Unrestricted: true`. A test covers spoke `unrestricted: true`.
+  - [ ] The tenant allow-list (§18.8) applies, with the new reason `TenantNotAllowed`.
+  - [ ] A fuzz target shows that each term of a spoke rule carries the cluster matcher after DNF
+        normalisation, also if the rule has its own matchers on the cluster label.
+
+### [ ] T6.3 — Time limit in `Resolve`
+- **Depends on:** T6.2
+- **Files:** `internal/policy/`, `internal/server/`, `internal/ui/`, `internal/observability/`
+- **Acceptance:**
+  - [ ] The six rules of §18.6 about expiry hold, for an expired spoke and for a suspended spoke.
+  - [ ] If all rules of a user expire, `Resolve` returns an error and never an empty `Effective`. The
+        reason is `policy_source_expired`.
+  - [ ] Expired rules keep `labels.deny` and `labels.redact`. A test shows that expiry never widens access.
+  - [ ] The dashboard dry run uses the same check.
+  - [ ] The metric `querdian_cluster_policy_age_seconds` exists.
+
+### [ ] T6.4 — Controller for the hub objects
+- **Depends on:** T6.3
+- **Files:** `internal/controller/`
+- **Acceptance:**
+  - [ ] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table.
+  - [ ] A change of `lastSyncTime` or `suspended` updates the deadline table with no recompile.
+  - [ ] An unreachable spoke does not affect startup or readiness.
+  - [ ] The leader writes status conditions on `SpokePolicy` objects.
+
+### [ ] T6.5 — Receiver
+- **Depends on:** T6.1
+- **Files:** `cmd/querdian/`, new package `internal/receiver/`
+- **Acceptance:**
+  - [ ] `querdian receiver` terminates mTLS and takes the cluster from the cert only.
+  - [ ] It rejects unknown identities and enforces limits on the body size and the object count.
+  - [ ] It writes changed objects, then deletes, then sets `lastSyncTime`.
+  - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke.
+  - [ ] The sync reply carries the status conditions.
+
+### [ ] T6.6 — Agent
+- **Depends on:** T6.5
+- **Files:** `cmd/querdian/`, new package `internal/agent/`
+- **Acceptance:**
+  - [ ] `querdian agent` sends a digest at each heartbeat and the full state if the digest differs.
+  - [ ] It sends nothing until it has a complete read, and it reads the API server directly before each
+        heartbeat. A test shows that an agent without an API server does not renew `lastSyncTime`.
+  - [ ] It retries at least each minute after a failure.
+  - [ ] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5.
+
+### [ ] T6.7 — Chart and documentation
+- **Depends on:** T6.4, T6.6
+- **Files:** `charts/querdian/`, `docs/`
+- **Acceptance:**
+  - [ ] The chart can install the hub with the receiver, or the agent only for a spoke. It includes the
+        optional alert at 24 hours.
+  - [ ] The threat model adds the spoke admin as an actor, the agent cert, and the time limit (section 10).
+  - [ ] `docs/limitations.md` lists the limits in §18.9 and the open Loki tail.
+  - [ ] An operations guide describes the three tenant setups and the requirements for the ingest gateway.
+  - [ ] The policy dashboard shows the origin and the expired state of a policy.
+
+### [ ] T6.8 — End-to-end tests
+- **Depends on:** T6.7
+- **Files:** `test/e2e/`
+- **Acceptance:**
+  - [ ] A hub and two spokes on kind. A policy in spoke A never returns data of spoke B on all three
+        backends, also for equal namespace names.
+  - [ ] The suite covers no tenant header, one tenant for all clusters, and one tenant for each cluster.
+  - [ ] Grants stop after the time limit and return after the next sync. `suspended: true` stops them
+        at once.
+
+---
+
 ## Dependency overview
 
 ```
