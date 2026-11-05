@@ -572,9 +572,11 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         collide across clusters.
   - [ ] Each spoke rule and each hub `AccessPolicy` rule carries the implicit cluster matcher.
   - [ ] A spoke rule never compiles to `Unrestricted: true`. A test covers spoke `unrestricted: true`,
-        and a rule with `unrestricted: false` and no matchers.
-  - [ ] A `SpokePolicy` grants nothing in these conditions: no `multicluster` block, no `SpokeCluster`, or
-        a `SpokeCluster` with the name of `hubCluster`.
+        and a `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers. An `AccessPolicy` rule
+        with no matchers stays valid.
+  - [ ] A `SpokePolicy` grants nothing in these conditions: no `multicluster` block, no `SpokeCluster`,
+        a `SpokeCluster` with the name of `hubCluster`, or a `spec.identity` that does not end with the
+        name of the `SpokeCluster`.
   - [ ] The tenant allow-list (§18.9) applies, with the new reason `TenantNotAllowed`.
   - [ ] A fuzz target shows this property after DNF normalisation: a label set of a different cluster
         never matches the terms of a spoke alone, also if the rule has its own cluster matchers. Use
@@ -582,7 +584,7 @@ The design is PLAN §18. Read it completely before you start a task in this mile
 
 ### [ ] T6.3 — Time limit in `Resolve`
 - **Depends on:** T6.2
-- **Files:** `internal/policy/`, `internal/server/`, `internal/ui/`, `internal/observability/`, `internal/fanout/`
+- **Files:** `internal/policy/`, `internal/server/`, `internal/ui/`, `internal/observability/`, `internal/proxy/`
 - **Acceptance:**
   - [ ] Rules 3 to 8 of §18.6 hold. Tests cover each condition in rule 4, a deleted `SpokeCluster` and a
         re-created `SpokeCluster`.
@@ -599,8 +601,10 @@ The design is PLAN §18. Read it completely before you start a task in this mile
 - **Acceptance:**
   - [ ] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table. They
         start only if the `multicluster` block is set.
-  - [ ] A write of `lastSyncTime` reaches the deadline table with no recompile. A test covers this,
-        because the current filter ignores updates that do not change the generation.
+  - [ ] A change of `lastSyncTime`, `observedGeneration`, `metadata.generation`, `suspended` or
+        `spec.maxStaleness` reaches the deadline table. An envtest covers each field. A heartbeat starts
+        no recompile. The current filter ignores updates that do not change the generation.
+  - [ ] A replica reports ready only when the deadline table has its first complete state.
   - [ ] A change of `spec.tenants` or `defaultTenant` starts a recompile. A test shows that a smaller
         allow-list removes the grant.
   - [ ] An unreachable spoke does not affect startup or readiness.
@@ -614,14 +618,18 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         the cert only.
   - [ ] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
         unknown identity, and an identity on two `SpokeCluster` objects.
-  - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke.
+  - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
+        crafted names such as cluster `a-b` with policy `c`, and cluster `a` with policy `b-c`.
+  - [ ] It reads the `SpokeCluster` directly at the start of each sync and writes `status` with a
+        `resourceVersion` precondition. A test shows that a sync that overlaps a spec change validates
+        nothing.
   - [ ] Tests reject the whole sync for each condition under "Unknown input" in §18.5, and
         `lastSyncTime` does not change.
   - [ ] It writes changed objects, then deletes, then sets `lastSyncTime` and `observedGeneration`. It
         sets an owner reference on each `SpokePolicy`.
   - [ ] A test stops a sync between the writes and the deletes. The next digest does not renew
         `lastSyncTime`.
-  - [ ] The sync reply carries the reasons of the status conditions, and no message text.
+  - [ ] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`.
 
 ### [ ] T6.6 — Agent
 - **Depends on:** T6.5
@@ -648,8 +656,10 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         - the agent cert, the procedure in §18.7, and the time limit in section 10;
         - the policies of all spokes in the dashboard, and the changes to the trusted set.
   - [ ] `docs/limitations.md` lists the limits in §18.10, and the statement about TLS covers the receiver.
+  - [ ] The statements about open tails in `docs/limitations.md` and in the threat model describe the
+        close on expiry and on suspension.
   - [ ] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
-        requirements for the agent CA, and the removal of a spoke.
+        requirements for the agent CA, the removal of a spoke, and the risk of a rollback.
   - [ ] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
   - [ ] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
   - [ ] The chart README and `CHANGELOG.md` describe the change.

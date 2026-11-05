@@ -902,6 +902,9 @@ Querdian refuses to start in these conditions:
 - `hubCluster` is empty. A matcher `cluster=""` also accepts data with no cluster label.
 - `maxStaleness` is present with a zero or negative value. If it is absent, the default applies.
 - A backend has no `clusterLabel`, or the name is not valid for the backend type.
+- A backend has `clusterLabel`, but the `multicluster` block is absent. Without the block, a hub
+  `AccessPolicy` loses its cluster matcher and also matches namespace X of each spoke. This check stops an
+  accidental rollback.
 
 Querdian reads the static configuration at startup only, so each spoke has a cluster-scoped hub object:
 
@@ -930,8 +933,11 @@ The hub stores a spoke policy as a cluster-scoped `SpokePolicy`, one object for 
 
 - Its fields are the cluster, the kind, the namespace, the name, the generation of the spoke object, the
   policy spec, and the tenant label value of its namespace.
-- The spec has typed fields and the same CEL rules as the spoke kinds. The compiler also rejects a rule
-  with `unrestricted: false` and no matchers, so it does not rely on CEL only.
+- The object name is a hash of the cluster, the kind, the namespace and the name, so names cannot collide.
+  The receiver does not change or delete an object with a different `cluster` value.
+- The spec has typed fields and the same CEL rules as the spoke kinds. For a `ClusterAccessPolicy` rule,
+  on the hub and on spokes, the compiler also rejects `unrestricted: false` with no matchers.
+  The compiler does not rely on CEL only. An `AccessPolicy` rule with no matchers stays valid.
 - Only the receiver can write its `spec`. The Querdian leader writes its `status`.
 - The receiver sets an owner reference to the `SpokeCluster`, so a deletion of the `SpokeCluster` also
   removes its objects. A `SpokePolicy` whose cluster has no `SpokeCluster` grants nothing.
@@ -946,20 +952,21 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
 ```
 
 - `querdian agent` runs in each spoke. It only needs an outbound path to the receiver. Its RBAC is
-  `get/list/watch` on both policy kinds and `namespaces`, and `update/patch` on `*/status`. It uses
-  leader election, so one agent sends at a time.
+  `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on `*/status`, and
+  `coordination.k8s.io/leases` in its own namespace. It uses leader election, so one agent sends at a time.
 - `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
   The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
 - The agent sends a digest at each heartbeat (default each minute) and the full state if the digest
   differs. The full state replaces the earlier state, which makes each sync idempotent.
 - The receiver calculates its digest from the stored objects. It writes new and changed objects first,
-  then deletes, and sets `lastSyncTime` last. A failed sync thus leaves a digest that differs, and
-  the next heartbeat cannot renew `lastSyncTime` while a revoked grant stays.
+  then deletes, and sets `lastSyncTime` last. A failed sync leaves a digest that differs, so the
+  next heartbeat cannot renew `lastSyncTime` while a revoked grant stays.
 - The agent sends nothing until it has a complete read of the spoke API server. An empty state from an
   agent at startup must not delete grants.
-- The sync reply carries the status conditions of each policy, with reasons only. The agent writes them
-  to the spoke objects, so spoke teams can use `kubectl get ap`. The reply does not carry message text,
-  because a message can show the grants of a shared subject in other tenants.
+- The sync reply carries the status conditions of each policy. The agent writes them to the spoke
+  objects, so spoke teams can use `kubectl get ap`. The reply keeps messages about the policy itself, for
+  example a bad regex. It omits `CrossTenantUnionUnsupported`, because that condition can show the grants
+  of a shared subject in other tenants.
 
 **Identity.** The receiver terminates mTLS itself and takes the cluster from the cert only. The protocol
 has no cluster field.
@@ -970,6 +977,11 @@ has no cluster field.
    several URI SANs.
 3. The receiver compares the identity with `spec.identity` for an exact match. It rejects an unknown
    identity. It also rejects an identity that occurs on two `SpokeCluster` objects.
+4. The last path segment of `spec.identity` must be equal to the `SpokeCluster` name. Otherwise, the
+   policies of that spoke grant nothing. This check finds an identity on the wrong `SpokeCluster`.
+5. At the start of each sync, the receiver reads the `SpokeCluster` directly from the API server. It uses
+   this value for the checks of identity, suspension and generation. It writes `status` with a
+   `resourceVersion` precondition, so a sync that overlaps a spec change fails and validates nothing.
 
 **Use a dedicated agent cert.** The agent cert must not be the ingest cert, and its identity must not
 occur on an ingest cert. Otherwise, the theft of a write-only telemetry credential also gives the power
@@ -983,7 +995,7 @@ conditions, and it does not renew `lastSyncTime`:
 - a kind that does not agree with the spec;
 - an `AccessPolicy` with an empty namespace, or a `ClusterAccessPolicy` with a namespace;
 - a body or an object count above the limit;
-- too many changed syncs from one cluster in a time period;
+- more than one changed sync from one cluster in 10 seconds;
 - any sync while the `SpokeCluster` is suspended.
 
 ### 18.6 Time limit
@@ -995,7 +1007,8 @@ expire.
 2. An agent syncs only after a direct read of the spoke API server, not a read of its cache. Otherwise, an
    agent that has lost its API server can renew old policies forever. The receiver cannot verify this rule.
 3. `Resolve` does the check for each request, because expiry makes no event for a snapshot rebuild.
-   The deadlines are in a table outside the snapshot, so a heartbeat does not start a recompile.
+   The deadlines are in a table outside the snapshot, so a heartbeat does not start a recompile. A
+   replica reports ready only when the table has its first complete state.
 4. Querdian treats a spoke as expired if any of these conditions is true:
    - The deadline table has no entry for the spoke.
    - `suspended` is true.
@@ -1005,15 +1018,16 @@ expire.
 5. An expired rule loses its terms but keeps its `labels.deny` and `labels.redact`, so expiry only
    narrows access.
 6. If no term remains, `Resolve` must return an error. The `ErrNoGrant` check in `Resolve` runs before
-   this filter, and `Normalise` returns no error for an empty term list. This case thus needs its own
+   this filter, and `Normalise` returns no error for an empty term list. This case needs its own
    check and test. The new reason is `policy_source_expired` with status 403. It does not name the cluster.
 7. The next valid sync restores the grants with no manual work.
-8. A Loki tail checks the deadlines of the spokes in its policy each 10 seconds. If one has expired, the
-   tail closes. A suspended spoke can still send logs, so documentation alone is not sufficient here.
+8. Each 10 seconds, a Loki tail checks the deadlines of the spokes that had active terms when the tail
+   started. If one has expired, the tail closes. A suspended spoke can still send logs, so documentation alone is not sufficient here.
 
 Results that operators must accept:
 
 - Revocation of a spoke policy takes up to one heartbeat. During an outage, it takes up to the time limit.
+- The limit on changed syncs applies to the whole spoke, so it can delay a revocation by up to one retry.
 - A failure of an agent cert stops the sync only. The grants continue until the time limit.
 - A failure of the receiver, the network path or the hub API server expires all spokes after the time
   limit. Hub grants stay active, and a hub admin can add a temporary hub `ClusterAccessPolicy`.
