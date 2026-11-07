@@ -5,7 +5,7 @@ ENVTEST_K8S_VERSION ?= 1.33.0
 IMAGE ?= ghcr.io/querdian-dev/querdian
 GORELEASER_VERSION ?= v2.20.0
 
-.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e fmt docker-build release-check site site-serve
+.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e e2e-multicluster fmt docker-build release-check site site-serve
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/querdian ./cmd/querdian
@@ -58,8 +58,14 @@ licenses:
 envtest:
 	KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" go test -tags envtest ./...
 
+# The multicluster suite needs the envtest binaries in addition to a container runtime.
+ENVTEST_ASSETS = KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)"
+
 e2e:
-	go test -tags e2e -timeout 20m ./test/e2e/...
+	$(ENVTEST_ASSETS) go test -tags e2e -timeout 20m ./test/e2e/...
+
+e2e-multicluster:
+	$(ENVTEST_ASSETS) go test -tags e2e -timeout 10m -v -run TestMultiCluster ./test/e2e/multicluster/
 
 fmt:
 	gofmt -s -w .
