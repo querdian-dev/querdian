@@ -62,11 +62,6 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Fail closed while M6 is incomplete: without the compiler and the time limit, the block would be a
-	// security setting with no effect (PLAN §18). T6.4 removes this guard.
-	if cfg.Multicluster != nil {
-		return errors.New("config: multicluster is not implemented yet")
-	}
 	logger, err := newLogger(flags)
 	if err != nil {
 		return err
@@ -89,8 +84,10 @@ func run(args []string) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := observability.NewMetrics(reg)
-	// The informers of the SpokeCluster kind feed this table (T6.4). Until then it stays empty and
-	// incomplete: each spoke rule is expired, and with the multicluster block the replica is not ready.
+	// The SpokeCluster informer of the controller feeds this table only if the multicluster block is set
+	// (PLAN §18.6). Until the informer has given its first full list, the table is empty and incomplete: each
+	// spoke rule is expired, and with the block the replica is not ready. Without the block, the table stays
+	// empty, the controller compiles no SpokePolicy, and readiness does not use the table.
 	deadlines := policy.NewDeadlines()
 	reg.MustRegister(observability.NewClusterPolicyAge(deadlines.Ages))
 	reg.MustRegister(observability.NewClusterPolicyExpired(deadlines.ExpiredStates))
@@ -114,7 +111,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctl := controller.New(cfg, controller.WithRebuildHook(snapshotMetrics(metrics)))
+	ctl := controller.New(cfg, controller.WithRebuildHook(snapshotMetrics(metrics, cfg)), controller.WithDeadlines(deadlines))
 	if err := ctl.SetupWithManager(mgr); err != nil {
 		return err
 	}
@@ -185,7 +182,13 @@ func newLogger(f *config.Flags) (*slog.Logger, error) {
 }
 
 // snapshotMetrics updates the snapshot and policy metrics after every rebuild.
-func snapshotMetrics(m *observability.Metrics) func(*policy.Snapshot, error) {
+// The SpokePolicy kind has series only with the multicluster block, so the output without the block does not
+// change.
+func snapshotMetrics(m *observability.Metrics, cfg *config.Config) func(*policy.Snapshot, error) {
+	kinds := []string{"ClusterAccessPolicy", "AccessPolicy"}
+	if cfg.Multicluster != nil {
+		kinds = append(kinds, policy.KindSpokePolicy)
+	}
 	return func(snap *policy.Snapshot, err error) {
 		if err != nil || snap == nil {
 			m.SnapshotRebuilds.WithLabelValues("error").Inc()
@@ -202,7 +205,7 @@ func snapshotMetrics(m *observability.Metrics) func(*policy.Snapshot, error) {
 			counts[[2]string{r.Kind, ready}]++
 		}
 		m.Policies.Reset()
-		for _, kind := range []string{"ClusterAccessPolicy", "AccessPolicy"} {
+		for _, kind := range kinds {
 			for _, ready := range []string{"true", "false"} {
 				m.Policies.WithLabelValues(kind, ready).Set(counts[[2]string{kind, ready}])
 			}

@@ -604,20 +604,20 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] The dashboard dry run uses the same check.
   - [x] The metric `querdian_cluster_policy_age_seconds` exists.
 
-### [ ] T6.4 — Controller for the hub objects
+### [x] T6.4 — Controller for the hub objects
 - **Depends on:** T6.3
 - **Files:** `internal/controller/`
 - **Acceptance:**
-  - [ ] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table. They
+  - [x] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table. They
         start only if the `multicluster` block is set.
-  - [ ] A change of `lastSyncTime`, `observedGeneration`, `metadata.generation`, `suspended` or
+  - [x] A change of `lastSyncTime`, `observedGeneration`, `metadata.generation`, `suspended` or
         `spec.maxStaleness` reaches the deadline table. An envtest covers each field. A heartbeat starts
         no recompile. The current filter ignores updates that do not change the generation.
-  - [ ] A replica reports ready only when the deadline table has its first complete state.
-  - [ ] A change of `spec.tenants` or `defaultTenant` starts a recompile. A test shows that a smaller
+  - [x] A replica reports ready only when the deadline table has its first complete state.
+  - [x] A change of `spec.tenants` or `defaultTenant` starts a recompile. A test shows that a smaller
         allow-list removes the grant.
-  - [ ] An unreachable spoke does not affect startup or readiness.
-  - [ ] The leader writes status conditions on `SpokePolicy` objects.
+  - [x] An unreachable spoke does not affect startup or readiness.
+  - [x] The leader writes status conditions on `SpokePolicy` objects.
 
 ### [ ] T6.5 — Receiver
 - **Depends on:** T6.1
