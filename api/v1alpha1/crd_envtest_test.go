@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
 var k8s client.Client
@@ -110,15 +111,20 @@ func TestSpokeClusterValidation(t *testing.T) {
 	check(t, k8s.Create(ctx, mk("cluster-c", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-c", Tenants: []string{"t1"}, DefaultTenant: "t2"})), "defaultTenant must be in tenants")
 	check(t, k8s.Create(ctx, mk(strings.Repeat("a", 64), v1.SpokeClusterSpec{Identity: "spiffe://x/a"})), "at most 63 characters")
 
-	// The receiver writes status through the subresource; a status write does not change spec.
+	check(t, k8s.Create(ctx, mk("cluster-d", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-d", MaxStaleness: &metav1.Duration{}})), "maxStaleness must be positive")
+	check(t, k8s.Create(ctx, mk("cluster-e", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-e", MaxStaleness: &metav1.Duration{Duration: -3600e9}})), "maxStaleness must be positive")
+	check(t, k8s.Create(ctx, mk("cluster-f", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-f", Tenants: []string{"t1", "t1"}})), "Duplicate value")
+
+	// The receiver writes status through the subresource; a status write cannot change spec.
 	ok.Status.LastSyncTime = &metav1.Time{Time: metav1.Now().Time}
 	ok.Status.ObservedGeneration = ok.Generation
+	ok.Spec.Suspended = true
 	if err := k8s.Status().Update(ctx, ok); err != nil {
 		t.Fatal(err)
 	}
 	var got v1.SpokeCluster
 	if err := k8s.Get(ctx, client.ObjectKeyFromObject(ok), &got); err != nil || got.Status.LastSyncTime == nil || got.Spec.Suspended {
-		t.Fatalf("status update: %v %+v", err, got)
+		t.Fatalf("status update changed spec or lost status: %v %+v", err, got)
 	}
 }
 
@@ -158,8 +164,96 @@ func TestSpokePolicyValidation(t *testing.T) {
 	check(t, k8s.Create(ctx, &v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{GenerateName: "sp-"},
 		Spec: v1.SpokePolicySpec{SpokePolicySource: okCAP.Spec.SpokePolicySource}}), "spec.cluster")
 
-	okCAP.Spec.Cluster = "cluster-b"
-	check(t, k8s.Update(ctx, okCAP), "cluster is immutable")
+	for name, mut := range map[string]func(*v1.SpokePolicy){
+		"cluster":   func(p *v1.SpokePolicy) { p.Spec.Cluster = "cluster-b" },
+		"name":      func(p *v1.SpokePolicy) { p.Spec.Name = "y" },
+		"kind":      func(p *v1.SpokePolicy) { p.Spec.Kind = v1.SpokeAccessPolicy },
+		"namespace": func(p *v1.SpokePolicy) { p.Spec.Namespace = "ns" },
+	} {
+		upd := okCAP.DeepCopy()
+		mut(upd)
+		// A namespace on a ClusterAccessPolicy is caught by the kind rule.
+		if err := k8s.Update(ctx, upd); err == nil || !(strings.Contains(err.Error(), "immutable") || strings.Contains(err.Error(), "do not agree")) {
+			t.Errorf("change of %s: want a rejection, got %v", name, err)
+		}
+	}
+	upd := okCAP.DeepCopy()
+	upd.Spec.Generation = 2
+	check(t, k8s.Update(ctx, upd), "")
+
+	// The Querdian leader writes status through the subresource.
+	upd.Status = v1.SpokePolicyStatus{ObservedGeneration: upd.Generation, SourceGeneration: 2,
+		Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Compiled", LastTransitionTime: metav1.Now()}}}
+	upd.Spec.Name = "changed-by-status"
+	if err := k8s.Status().Update(ctx, upd); err != nil {
+		t.Fatal(err)
+	}
+	var got v1.SpokePolicy
+	if err := k8s.Get(ctx, client.ObjectKeyFromObject(upd), &got); err != nil || got.Status.SourceGeneration != 2 || got.Spec.Name != "x" {
+		t.Fatalf("status update changed spec or lost status: %v %+v", err, got)
+	}
+}
+
+func TestSpokePolicyNameValidation(t *testing.T) {
+	ctx := context.Background()
+	grp := v1.Subjects{Groups: []string{"g"}, Users: []string{}}
+	capSpec := &v1.ClusterAccessPolicySpec{Subjects: grp, Rules: []v1.ClusterRule{{Backends: []string{"metrics"}, Unrestricted: true}}}
+	apSpec := &v1.AccessPolicySpec{Subjects: grp, Rules: []v1.Rule{{Backends: []string{"metrics"}}}}
+	mk := func(src v1.SpokePolicySource) *v1.SpokePolicy {
+		return &v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{GenerateName: "sp-"}, Spec: v1.SpokePolicySpec{Cluster: "cluster-a", SpokePolicySource: src}}
+	}
+	for _, tc := range []struct {
+		name string
+		src  v1.SpokePolicySource
+		want string
+	}{
+		{"nul in name", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "a\x00b", Generation: 1, ClusterAccessPolicy: capSpec}, "spec.name"},
+		{"upper case name", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "Admins", Generation: 1, ClusterAccessPolicy: capSpec}, "spec.name"},
+		{"dotted name", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "team.admins", Generation: 1, ClusterAccessPolicy: capSpec}, ""},
+		{"long name", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: strings.Repeat("a", 254), Generation: 1, ClusterAccessPolicy: capSpec}, "spec.name"},
+		{"dotted namespace", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: "a.b", Name: "x", Generation: 1, AccessPolicy: apSpec}, "spec.namespace"},
+		{"long namespace", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: strings.Repeat("a", 64), Name: "x", Generation: 1, AccessPolicy: apSpec}, "spec.namespace"},
+		{"long tenant label", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: "ns", Name: "x", Generation: 1, TenantLabel: strings.Repeat("t", 64), AccessPolicy: apSpec}, "spec.tenantLabel"},
+		{"tenant label on cap", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "x", Generation: 1, TenantLabel: "t1", ClusterAccessPolicy: capSpec}, "kind, namespace and spec do not agree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { check(t, k8s.Create(ctx, mk(tc.src)), tc.want) })
+	}
+}
+
+// An object read back from the API server, with defaults applied, has the digest of the state the agent sent.
+func TestSpokePolicyDigestRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	src := []v1.SpokePolicySource{
+		{Kind: v1.SpokeClusterAccessPolicy, Name: "rt-cap", Generation: 4, ClusterAccessPolicy: &v1.ClusterAccessPolicySpec{
+			Subjects: v1.Subjects{Groups: []string{"g"}},
+			Rules: []v1.ClusterRule{{Backends: []string{"metrics", "logs"}, Tenants: []string{"t1"},
+				Matchers: []v1.Matcher{{Name: "app", Op: v1.MatchNotEqual, Value: ""}, {Name: "env", Op: v1.MatchRegexMatch, Value: "a|b"}},
+				Labels:   &v1.LabelFilter{Deny: []string{"customer"}, Redact: []v1.RedactRule{{Name: "ip", Strategy: v1.RedactIPv4Prefix, Octets: octets(2)}}}}},
+		}},
+		{Kind: v1.SpokeAccessPolicy, Namespace: "ns", Name: "rt-ap", Generation: 1, TenantLabel: "t1", AccessPolicy: &v1.AccessPolicySpec{
+			Subjects: v1.Subjects{Users: []string{"u"}},
+			Rules:    []v1.Rule{{Backends: []string{"traces"}, Labels: &v1.LabelFilter{}}},
+		}},
+	}
+	want, err := spokesync.Digest(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back []v1.SpokePolicySource
+	for _, s := range src {
+		obj := &v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{Name: spokesync.ObjectName("rt", &s)}, Spec: v1.SpokePolicySpec{Cluster: "rt", SpokePolicySource: s}}
+		if err := k8s.Create(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+		var got v1.SpokePolicy
+		if err := k8s.Get(ctx, client.ObjectKeyFromObject(obj), &got); err != nil {
+			t.Fatal(err)
+		}
+		back = append(back, got.Spec.SpokePolicySource)
+	}
+	if got, err := spokesync.Digest(back); err != nil || got != want {
+		t.Fatalf("digest after round trip = %s, %v; want %s", got, err, want)
+	}
 }
 
 func check(t *testing.T, err error, want string) {

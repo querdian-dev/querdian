@@ -27,7 +27,7 @@ spec:
       name: Namespace
       type: string
     - jsonPath: .spec.name
-      name: Name
+      name: Source
       type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
@@ -55,8 +55,10 @@ spec:
           metadata:
             type: object
           spec:
-            description: SpokePolicySpec is a spoke policy stored on the hub. Only
-              the receiver writes it (PLAN §18.4).
+            description: |-
+              SpokePolicySpec is a spoke policy stored on the hub. Only the receiver writes it (PLAN §18.4). The object
+              name is a hash of cluster, kind, namespace and name, so these fields are immutable. The kind rule of
+              SpokePolicySource ties the presence of namespace to the kind, so namespace cannot be added or removed.
             properties:
               accessPolicy:
                 description: AccessPolicySpec is the desired state of an AccessPolicy.
@@ -187,6 +189,7 @@ spec:
               cluster:
                 description: Cluster is the SpokeCluster name; the receiver takes
                   it from the agent cert.
+                maxLength: 63
                 minLength: 1
                 type: string
                 x-kubernetes-validations:
@@ -353,16 +356,28 @@ spec:
                 - ClusterAccessPolicy
                 - AccessPolicy
                 type: string
+                x-kubernetes-validations:
+                - message: kind is immutable
+                  rule: self == oldSelf
               name:
-                minLength: 1
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                 type: string
+                x-kubernetes-validations:
+                - message: name is immutable
+                  rule: self == oldSelf
               namespace:
                 description: Namespace of an AccessPolicy; absent for a ClusterAccessPolicy.
-                minLength: 1
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+                x-kubernetes-validations:
+                - message: namespace is immutable
+                  rule: self == oldSelf
               tenantLabel:
                 description: TenantLabel is the value of the policy.querdian.dev/tenant
                   label of the namespace (AccessPolicy only).
+                maxLength: 63
                 type: string
             required:
             - cluster
@@ -373,8 +388,8 @@ spec:
             x-kubernetes-validations:
             - message: kind, namespace and spec do not agree
               rule: 'self.kind == ''ClusterAccessPolicy'' ? (has(self.clusterAccessPolicy)
-                && !has(self.accessPolicy) && !has(self.namespace)) : (has(self.accessPolicy)
-                && !has(self.clusterAccessPolicy) && has(self.namespace))'
+                && !has(self.accessPolicy) && !has(self.namespace) && !has(self.tenantLabel))
+                : (has(self.accessPolicy) && !has(self.clusterAccessPolicy) && has(self.namespace))'
           status:
             description: SpokePolicyStatus is written by the Querdian leader.
             properties:

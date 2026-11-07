@@ -62,6 +62,11 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Fail closed while M6 is incomplete: without the compiler and the time limit, the block would be a
+	// security setting with no effect (PLAN §18). T6.4 removes this guard.
+	if cfg.Multicluster != nil {
+		return errors.New("config: multicluster is not implemented yet")
+	}
 	logger, err := newLogger(flags)
 	if err != nil {
 		return err

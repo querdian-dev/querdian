@@ -2,6 +2,7 @@ package spokesync
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -127,6 +128,14 @@ func TestObjectName(t *testing.T) {
 	}
 }
 
+func TestCertIdentity(t *testing.T) {
+	const id = "spiffe://mla.example.com/agent/cluster-a"
+	u, err := url.Parse(id)
+	if err != nil || CertIdentity(u) != id || !IdentityMatchesName(CertIdentity(u), "cluster-a") {
+		t.Fatalf("CertIdentity(%q) = %q, %v", id, CertIdentity(u), err)
+	}
+}
+
 func TestIdentityMatchesName(t *testing.T) {
 	for _, tc := range []struct {
 		identity, name string
@@ -143,6 +152,15 @@ func TestIdentityMatchesName(t *testing.T) {
 		{"/agent/cluster-a", "cluster-a", false},
 		{"spiffe://mla.example.com/agent/", "", false},
 		{"%zz", "cluster-a", false},
+		{"spiffe://x/agent/other%2Fcluster-a", "cluster-a", false},
+		{"spiffe://x/agent/cluster%2Da", "cluster-a", false},
+		{"spiffe://mla.example.com/agent/cluster-a?", "cluster-a", false},
+		{"spiffe://mla.example.com/agent/cluster-a#", "cluster-a", false},
+		{"spiffe:///cluster-a", "cluster-a", false},
+		{"spiffe://user:pw@x/cluster-a", "cluster-a", false},
+		{"spiffe://x/agent\\cluster-a", "cluster-a", false},
+		{"SPIFFE://x/agent/cluster-a", "cluster-a", false},
+		{"spiffe://x/agent//cluster-a", "cluster-a", true},
 	} {
 		if got := IdentityMatchesName(tc.identity, tc.name); got != tc.want {
 			t.Errorf("IdentityMatchesName(%q, %q) = %v, want %v", tc.identity, tc.name, got, tc.want)

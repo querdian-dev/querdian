@@ -163,8 +163,9 @@ const (
 	DefaultMaxStaleness    = 48 * time.Hour
 )
 
-// tenantIDLabel is the reserved federation label (policy.TenantIDLabel); it is never a valid policy label.
-const tenantIDLabel = "__tenant_id__"
+// TenantIDLabel is the reserved label used to bind terms to tenants under federation (PLAN §6.4). It is
+// never a valid policy label.
+const TenantIDLabel = "__tenant_id__"
 
 var (
 	promLabelName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -178,7 +179,7 @@ func ValidLabelName(t BackendType, name string) bool {
 	case BackendTempo:
 		return tempoAttrName.MatchString(name)
 	default:
-		return name != tenantIDLabel && promLabelName.MatchString(name)
+		return name != TenantIDLabel && promLabelName.MatchString(name)
 	}
 }
 
@@ -310,6 +311,8 @@ func (c *Config) Validate() error {
 			add("%s.clusterLabel is required with multicluster", p)
 		case c.Multicluster != nil && !ValidLabelName(b.Type, b.ClusterLabel):
 			add("%s.clusterLabel %q is not a valid name for a %s backend", p, b.ClusterLabel, b.Type)
+		case c.Multicluster != nil && strings.HasPrefix(b.ClusterLabel, "__"):
+			add("%s.clusterLabel %q is a reserved name", p, b.ClusterLabel)
 		case c.Multicluster != nil && b.ClusterLabel == b.NamespaceLabel:
 			add("%s.clusterLabel must differ from namespaceLabel", p)
 		}

@@ -147,14 +147,27 @@ func prune(v any) (any, bool) {
 	return nil, false
 }
 
-// IdentityMatchesName reports whether the last path segment of a SpokeCluster identity (a URI SAN) is
-// exactly name (PLAN §18.5). A suffix of a segment does not match, and an identity with a query or a
-// fragment never matches.
+// IdentityMatchesName reports whether a SpokeCluster identity (a URI SAN) is canonical and its last path
+// segment is exactly name (PLAN §18.5). The check works on the raw text: an identity with an escape, a
+// query, a fragment, user info or a backslash never matches, and neither does one without a host. A suffix
+// of a segment does not match.
+//
+// The receiver compares spec.identity with CertIdentity of the client cert. Because only canonical
+// identities match here, both comparisons see the same text.
 func IdentityMatchesName(identity, name string) bool {
-	u, err := url.Parse(identity)
-	if err != nil || u.Scheme == "" || u.RawQuery != "" || u.Fragment != "" || name == "" {
+	if name == "" || strings.ContainsAny(identity, "%?#@\\") || !canonical(identity) {
 		return false
 	}
-	i := strings.LastIndexByte(u.Path, '/')
-	return i >= 0 && u.Path[i+1:] == name
+	i := strings.LastIndexByte(identity, '/')
+	return i >= 0 && identity[i+1:] == name
+}
+
+// CertIdentity returns the text that the receiver compares with spec.identity for a URI SAN of a client cert.
+func CertIdentity(u *url.URL) string { return u.String() }
+
+// canonical reports whether s is an absolute URI with a host and a path, in the form that url.URL.String
+// gives back.
+func canonical(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme != "" && u.Host != "" && u.Opaque == "" && u.Path != "" && u.String() == s
 }

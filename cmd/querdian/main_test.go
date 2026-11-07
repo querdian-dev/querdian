@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/querdian-dev/querdian/internal/config"
@@ -24,6 +27,24 @@ func TestRunVersionAndFlagErrors(t *testing.T) {
 	}
 	if err := run([]string{"--config=/nonexistent/config.yaml"}); err == nil {
 		t.Fatal("missing config must fail")
+	}
+}
+
+// Until M6 is complete, a multicluster block must stop startup instead of being ignored.
+func TestRunRejectsMulticluster(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := `
+auth: {issuer: "https://idp.example.com", audiences: [q]}
+backends:
+  - {name: m, type: prometheus, url: "http://p:9090", pathPrefix: /prom, namespaceLabel: namespace, clusterLabel: cluster}
+multicluster: {hubCluster: mla}
+`
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"--config=" + path})
+	if err == nil || !strings.Contains(err.Error(), "multicluster is not implemented yet") {
+		t.Fatalf("want the multicluster guard, got %v", err)
 	}
 }
 

@@ -6,13 +6,14 @@ import (
 	"sync"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/config"
 )
 
 // TenantLabel is the namespace label that assigns a namespace to a backend tenant.
 const TenantLabel = "policy.querdian.dev/tenant"
 
 // TenantIDLabel is the reserved label used to bind terms to tenants under federation (PLAN §6.4).
-const TenantIDLabel = "__tenant_id__"
+const TenantIDLabel = config.TenantIDLabel
 
 // Status reasons (PLAN §4.4).
 const (

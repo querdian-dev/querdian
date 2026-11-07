@@ -184,6 +184,7 @@ func TestMulticluster(t *testing.T) {
 		{"clusterLabel without block", mc("", "clusterLabel: cluster"), "requires the multicluster block"},
 		{"invalid clusterLabel", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: k8s.cluster"), "not a valid name"},
 		{"tenant id label", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: __tenant_id__"), "not a valid name"},
+		{"reserved label", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: __name__"), "reserved name"},
 		{"tempo unscoped", strings.Replace(tempo, "namespaceLabel: namespace", "namespaceLabel: namespace, clusterLabel: cluster", 1) + "multicluster: {hubCluster: mla}\n", "not a valid name"},
 		{"same as namespaceLabel", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: namespace"), "must differ from namespaceLabel"},
 		{"unknown field", mc("multicluster: {hubCluster: mla, spokes: []}\n", "clusterLabel: cluster"), "unknown field"},

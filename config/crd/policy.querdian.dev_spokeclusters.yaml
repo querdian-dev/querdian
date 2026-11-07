@@ -57,8 +57,9 @@ spec:
                 type: string
               identity:
                 description: |-
-                  Identity is the URI SAN of the agent cert of this spoke. Its last path segment must equal the
-                  SpokeCluster name.
+                  Identity is the URI SAN of the agent cert of this spoke, in canonical form. Its last path segment must
+                  equal the SpokeCluster name.
+                maxLength: 2048
                 minLength: 1
                 type: string
               maxStaleness:
@@ -77,12 +78,15 @@ spec:
                 items:
                   type: string
                 type: array
+                x-kubernetes-list-type: set
             required:
             - identity
             type: object
             x-kubernetes-validations:
             - message: defaultTenant must be in tenants
               rule: '!has(self.defaultTenant) || self.defaultTenant in self.tenants'
+            - message: maxStaleness must be positive
+              rule: '!has(self.maxStaleness) || duration(self.maxStaleness) > duration(''0s'')'
           status:
             description: SpokeClusterStatus is written by the receiver after each
               valid sync.

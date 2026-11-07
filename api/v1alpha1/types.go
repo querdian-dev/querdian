@@ -193,13 +193,16 @@ type AccessPolicyList struct {
 
 // SpokeClusterSpec is the desired state of a SpokeCluster. Only hub admins write it (PLAN §18.4).
 // +kubebuilder:validation:XValidation:rule="!has(self.defaultTenant) || self.defaultTenant in self.tenants",message="defaultTenant must be in tenants"
+// +kubebuilder:validation:XValidation:rule="!has(self.maxStaleness) || duration(self.maxStaleness) > duration('0s')",message="maxStaleness must be positive"
 type SpokeClusterSpec struct {
-	// Identity is the URI SAN of the agent cert of this spoke. Its last path segment must equal the
-	// SpokeCluster name.
+	// Identity is the URI SAN of the agent cert of this spoke, in canonical form. Its last path segment must
+	// equal the SpokeCluster name.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
 	Identity string `json:"identity"`
 	// Tenants is the allow-list of tenants that policies of this spoke may use.
 	// +optional
+	// +listType=set
 	// +kubebuilder:default={}
 	Tenants []string `json:"tenants"`
 	// DefaultTenant is used for spoke AccessPolicy objects whose namespace has no tenant label.
@@ -263,20 +266,30 @@ const (
 
 // SpokePolicySource is one policy object of a spoke, as the agent sends it. Exactly one of the two specs is
 // set, matching Kind.
-// +kubebuilder:validation:XValidation:rule="self.kind == 'ClusterAccessPolicy' ? (has(self.clusterAccessPolicy) && !has(self.accessPolicy) && !has(self.namespace)) : (has(self.accessPolicy) && !has(self.clusterAccessPolicy) && has(self.namespace))",message="kind, namespace and spec do not agree"
+//
+// The state digest (spokesync.Digest) treats absent, null, empty and zero values alike. Every field added
+// here or in the nested specs must therefore mean the same when it is absent and when it is empty or zero,
+// and must have no non-zero default.
+// +kubebuilder:validation:XValidation:rule="self.kind == 'ClusterAccessPolicy' ? (has(self.clusterAccessPolicy) && !has(self.accessPolicy) && !has(self.namespace) && !has(self.tenantLabel)) : (has(self.accessPolicy) && !has(self.clusterAccessPolicy) && has(self.namespace))",message="kind, namespace and spec do not agree"
 type SpokePolicySource struct {
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="kind is immutable"
 	Kind SpokePolicyKind `json:"kind"`
 	// Namespace of an AccessPolicy; absent for a ClusterAccessPolicy.
 	// +optional
-	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="namespace is immutable"
 	Namespace string `json:"namespace,omitempty"`
-	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
 	Name string `json:"name"`
 	// Generation is metadata.generation of the object in the spoke.
 	// +kubebuilder:validation:Minimum=1
 	Generation int64 `json:"generation"`
 	// TenantLabel is the value of the policy.querdian.dev/tenant label of the namespace (AccessPolicy only).
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
 	TenantLabel string `json:"tenantLabel,omitempty"`
 	// +optional
 	ClusterAccessPolicy *ClusterAccessPolicySpec `json:"clusterAccessPolicy,omitempty"`
@@ -284,10 +297,13 @@ type SpokePolicySource struct {
 	AccessPolicy *AccessPolicySpec `json:"accessPolicy,omitempty"`
 }
 
-// SpokePolicySpec is a spoke policy stored on the hub. Only the receiver writes it (PLAN §18.4).
+// SpokePolicySpec is a spoke policy stored on the hub. Only the receiver writes it (PLAN §18.4). The object
+// name is a hash of cluster, kind, namespace and name, so these fields are immutable. The kind rule of
+// SpokePolicySource ties the presence of namespace to the kind, so namespace cannot be added or removed.
 type SpokePolicySpec struct {
 	// Cluster is the SpokeCluster name; the receiver takes it from the agent cert.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="cluster is immutable"
 	Cluster           string `json:"cluster"`
 	SpokePolicySource `json:",inline"`
@@ -314,7 +330,7 @@ type SpokePolicyStatus struct {
 // +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=`.spec.cluster`
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.spec.kind`
 // +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=`.spec.namespace`
-// +kubebuilder:printcolumn:name="Name",type=string,JSONPath=`.spec.name`
+// +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.name`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 type SpokePolicy struct {
 	metav1.TypeMeta   `json:",inline"`
