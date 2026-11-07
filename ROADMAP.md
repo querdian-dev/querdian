@@ -36,8 +36,9 @@ promise to a user. Priorities will follow real feedback.
 
 ## Project and supply chain
 
-* CI additions: run `make e2e`, `make chart-lint` and `make release-check` (only the lighter jobs
-  run on every pull request today; PLAN section 13 envisages nightly long fuzzing and full E2E).
+* CI additions: make the `e2e` and `chart` jobs (which run `make e2e` and `make chart-lint` on every
+  pull request) required checks once they have been stable, and run `make release-check` in CI
+  (PLAN section 13 also envisages nightly long fuzzing and full E2E).
 * Measure test coverage.
 * A second maintainer and contributors from other organizations (GOVERNANCE.md assumes more than
   one reviewer).

@@ -19,10 +19,15 @@ One binary, `querdian`, runs three things:
   `GET /healthz`, `GET /readyz`. It is unauthenticated; do not expose it outside the cluster.
 * the optional **dashboard listener** (`--ui-listen`, off by default): a read-only view of the active
   policies, see [dashboard.md](dashboard.md).
-* the **controller**: informers on `ClusterAccessPolicy`, `AccessPolicy` and `Namespace`, a 250 ms
-  debounce, snapshot compilation and, on the leader only, status writing.
+* the **controller**: informers on `ClusterAccessPolicy`, `AccessPolicy` and `Namespace` (with the
+  `multicluster` block also `SpokeCluster` and `SpokePolicy`), a 250 ms debounce, snapshot
+  compilation and, on the leader only, status writing.
 
 Every replica builds its own snapshot and serves traffic independently. Replicas share no state.
+
+The same binary has two subcommands for a central hub that enforces the policies of several
+clusters: `querdian receiver` (on the hub) and `querdian agent` (in each spoke). They, the
+`multicluster` block and the migration steps are described in [multicluster.md](multicluster.md).
 
 ## Static configuration
 
@@ -98,6 +103,17 @@ introspection and no revocation check beyond token expiry.
 | `tenantFederation` | `none` | `none` or `tenantIdLabel`. `tenantIdLabel` requires a `tenantHeader` and says the backend can filter `__tenant_id__` under a `t1\|t2` header (Loki, Mimir). Use `none` for Tempo. See [policy-guide.md](policy-guide.md#cross-tenant-behaviour-per-backend). |
 | `forwardHeaders` | `[Accept, Accept-Encoding, User-Agent]`, on Loki plus `X-Loki-Response-Encoding-Flags` | Client headers passed to the backend; every other client header is dropped. A list replaces the default, `[]` forwards none. Rejected at startup: credentials (`Authorization`, `Cookie`, `Proxy-Authorization`), tenant headers (`X-Scope-OrgID`, `THANOS-TENANT`, this backend's `tenantHeader`), trace context (`traceparent`, `tracestate`, `baggage`), forwarding headers (`Forwarded`, `X-Forwarded-*`, `X-Real-IP`), hop-by-hop headers (`Connection`, `Upgrade`, `TE`, ...), `Host`, `Content-Type` and `Content-Length`. Add a header only once you know what it does in the backend: one that selects a tenant under another name or changes limits (for example Loki's `X-Loki-Query-Limits`) hands that control to every client. Responses in a format a filter cannot parse fail with `502`. Applies to single-request plans; fan-out requests and `tail` handshakes carry no client headers. |
 | `traceByID` | `deny` on Tempo | Tempo only (setting it elsewhere is an error): `deny` answers trace-by-ID requests with `403 trace_by_id_denied`; `filter` fetches the trace and removes spans the policy does not admit. |
+| `clusterLabel` | empty | Label/attribute carrying the cluster in this backend. Required on every backend with the `multicluster` block and forbidden without it. It must be a valid name for the type, must not start with `__` and must differ from `namespaceLabel`. **Its integrity is a security requirement**, see [multicluster.md](multicluster.md#cluster-label-integrity-the-ingest-gateway). |
+
+### `multicluster`
+
+Optional. Without it Querdian is a single-cluster proxy. With it, one Querdian on a hub enforces
+the policies of the hub and of the spoke clusters; see [multicluster.md](multicluster.md).
+
+| Field | Default | Meaning |
+|---|---|---|
+| `hubCluster` | required | Cluster label value of the hub's own telemetry. Hub `AccessPolicy` rules get the implicit matcher `<clusterLabel>="<hubCluster>"`. Must not be empty. |
+| `maxStaleness` | `48h` | Time limit of spoke policies: they stop when the spoke has not synced for this long. Must be positive; `SpokeCluster.spec.maxStaleness` overrides it per spoke. |
 
 ### `limits`
 
@@ -159,7 +175,7 @@ Until a chart exists, a deployment needs:
 | Endpoint | Returns 200 when |
 |---|---|
 | `/healthz` | the process is serving (always `ok`). |
-| `/readyz` | a first policy snapshot exists **and** OIDC issuer discovery has completed. Otherwise `503` with the missing part in the body. |
+| `/readyz` | a first policy snapshot exists **and** OIDC issuer discovery has completed (with the `multicluster` block also: all `SpokeCluster` objects have been read once). Otherwise `503` with the missing part in the body. |
 
 Until then the proxy answers `503 unavailable` (`snapshot_not_ready` or `auth_unavailable`).
 After readiness, readiness stays true while the Kubernetes API is unreachable: the last good
@@ -228,7 +244,9 @@ Served on the management port. Labels: `endpoint` is the route template (for exa
 | `querdian_auth_failures_total` | counter | `reason` | `missing_token`, `invalid_token`, `expired`, `audience`, `issuer`, `missing_username`. |
 | `querdian_snapshot_generation` | gauge | | Counts rebuilds **of this replica**; not comparable across replicas. |
 | `querdian_snapshot_rebuilds_total` | counter | `result` | `ok` or `error`. |
-| `querdian_policies` | gauge | `kind`, `ready` | Policies by kind and compile result. |
+| `querdian_policies` | gauge | `kind`, `ready` | Policies by kind and compile result. `kind` is `ClusterAccessPolicy`, `AccessPolicy`, and with the `multicluster` block also `SpokePolicy`. |
+| `querdian_cluster_policy_age_seconds` | gauge | `cluster` | Multi-cluster: time since the last valid policy sync of a spoke (`+Inf` before the first). |
+| `querdian_cluster_policy_expired` | gauge | `cluster` | Multi-cluster: `1` if the policies of a spoke are expired or suspended, else `0`. |
 
 Go and process collectors are also exported.
 
@@ -283,12 +301,15 @@ is set. A `querdian started` line is written at startup.
 * **Rolling updates** are safe for availability: a new pod is ready only after its first snapshot
   and issuer discovery. During a rollout old and new replicas may enforce slightly different
   behaviour if the new version changed rewriting rules; there is no cross-replica coordination.
-* **Policy changes** reach each replica within the watch latency plus ~250 ms. In-flight requests
+* **Policy changes** reach each replica within the watch latency plus ~250 ms (a steady stream of
+  changes delays a rebuild by at most 8 debounce intervals, 2 s). In-flight requests
   and **open WebSocket tails continue under the policy they started with**, and an open tail is not
-  closed when the token expires.
+  closed when the token expires. In a multi-cluster setup, a tail closes within 10 seconds when a
+  spoke whose rules gave its terms expires or is suspended.
 * **Kubernetes API outage**: replicas keep serving with the last snapshot (they do not fail open
-  or closed). A failed rebuild keeps the previous snapshot and increments
-  `querdian_snapshot_rebuilds_total{result="error"}`; a new pod cannot become ready.
+  or closed). A failed rebuild keeps the previous snapshot, increments
+  `querdian_snapshot_rebuilds_total{result="error"}` and runs again after one second; a new pod
+  cannot become ready.
 * **Issuer outage**: tokens can only be verified with keys the verifier has cached; unreachable
   issuer discovery at startup keeps the pod unready (`auth_unavailable`).
 * **Removed backend names or labels**: policies referencing an unknown backend become

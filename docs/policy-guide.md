@@ -63,8 +63,9 @@ For platform administrators. A rule may use arbitrary matchers, name tenants and
 |---|---|
 | `backends` | Names of backends from the static configuration (at least one). |
 | `tenants` | Backend tenants the rule applies to. **Required for every backend that has a `tenantHeader`**, ignored for backends without one. |
-| `unrestricted` | `true` grants all data of the listed tenants. Must not be combined with `matchers` (and the CRD requires exactly one of `unrestricted: true` or a non-empty `matchers`). |
+| `unrestricted` | `true` grants all data of the listed tenants. Must not be combined with `matchers` (and the CRD requires exactly one of `unrestricted: true` or a non-empty `matchers`). The compiler checks this too: a rule with `unrestricted: false` and no matchers is `InvalidMatcher`, also if it was stored without the CRD validation. |
 | `matchers` | Label constraints, ANDed. |
+| `allClusters` | Multi-cluster only: the rule applies to all clusters, including spokes added later. See [Multi-cluster](#multi-cluster). Without the `multicluster` configuration block it has no effect. Must not be combined with `unrestricted`. |
 | `labels.deny` | Labels hidden from this grant, see below. |
 
 ### AccessPolicy (namespaced, short name `ap`)
@@ -72,7 +73,8 @@ For platform administrators. A rule may use arbitrary matchers, name tenants and
 For teams. Compared to a cluster rule:
 
 * Every rule is implicitly ANDed with `<backend.namespaceLabel> = "<metadata.namespace>"`. This
-  matcher is placed first and cannot be removed or widened by the policy author.
+  matcher is placed first and cannot be removed or widened by the policy author. In a
+  [multi-cluster](#multi-cluster) setup a cluster matcher follows it.
 * There is no `unrestricted` and no `tenants`.
 * The backend tenant is read from the label `policy.querdian.dev/tenant` of the policy's
   namespace, but only for backends that have a `tenantHeader`. A missing or blank label makes the
@@ -267,6 +269,67 @@ Practical consequences:
   affected.
 * Behaviour with duplicate tenants (`t1|t1`) and unusual tenant IDs has not been tested.
 
+## Multi-cluster
+
+With the `multicluster` block in the static configuration, one Querdian on a central hub enforces
+the policies of the hub and of several spoke clusters. The setup, the trust model and the
+operations are in [multicluster.md](multicluster.md). For policy authors, three rules change.
+
+**The implicit cluster matcher.** Querdian takes the cluster of a policy from where the policy comes
+from, never from its text, in the same way as the namespace of an `AccessPolicy`:
+
+| Policy | Implicit matchers |
+|---|---|
+| Hub `AccessPolicy` in namespace `X` | `<namespaceLabel>="X"`, then `<clusterLabel>="<hubCluster>"` |
+| Spoke `AccessPolicy` in namespace `X` | `<namespaceLabel>="X"`, then `<clusterLabel>="<spoke>"` |
+| Spoke `ClusterAccessPolicy` | `<clusterLabel>="<spoke>"` (first) |
+| Hub `ClusterAccessPolicy` | none; the rule states its own scope (below) |
+
+`<clusterLabel>` is the `clusterLabel` of the backend, `<hubCluster>` is `multicluster.hubCluster`
+and `<spoke>` is the name of the `SpokeCluster`. A policy author cannot remove or widen these
+matchers. A spoke matcher on the cluster label is ANDed with the implicit one, so it can only
+narrow. A spoke rule with `unrestricted: true` grants the whole spoke (`<clusterLabel>="<spoke>"`)
+and is never unrestricted, so its users' queries are always rewritten. A spoke rule with
+`allClusters: true` is `InvalidClusterScope`.
+
+Hub data without the cluster label is invisible to hub `AccessPolicy` users, and hub telemetry must
+therefore carry `<clusterLabel>="<hubCluster>"`.
+
+**The cluster scope of a hub `ClusterAccessPolicy`.** A new spoke must not silently widen a hub
+grant. Each rule must therefore state its cluster scope **for each of its backends**, with one of:
+
+* a matcher on that backend's `clusterLabel` that names a **fixed set of non-empty cluster names**:
+  `Equal`, or `RegexMatch` with a finite alternation such as `mla|cluster-a` or `cluster-(a|b)`;
+* `allClusters: true`, with no matcher on that backend's `clusterLabel`;
+* `unrestricted: true` (all clusters, also future ones).
+
+`NotEqual`, `RegexNoMatch` and open regexes such as `.+` or `cluster-.*` do not count, because they
+also match each new spoke. An empty value does not count, because it matches data without a cluster
+label. Case-insensitive regexes and regexes that name more than 1024 clusters do not count either.
+Otherwise the policy is `InvalidClusterScope` and grants nothing. `allClusters` exists because
+`cluster=~".+"` is an open regex, and Tempo tag lookups reject open regexes with `400`.
+
+```yaml
+rules:
+  - backends: [metrics]
+    matchers:
+      - {name: cluster, op: RegexMatch, value: "mla|cluster-a"}
+      - {name: namespace, op: Equal, value: kube-system}
+  - backends: [logs]
+    tenants: [tenant1]
+    allClusters: true          # every cluster, also spokes added later
+    matchers:
+      - {name: k8s_namespace_name, op: Equal, value: kube-system}
+```
+
+A rule that lists several backends needs the scope on each of them: a cluster matcher names one
+label, so it states the scope only of the backends whose `clusterLabel` has that name.
+
+**Spoke tenants.** A spoke policy may use only the tenants in `SpokeCluster.spec.tenants`
+(`TenantNotAllowed` otherwise). The tenant of a spoke `AccessPolicy` comes from the namespace label in
+the spoke, then from `spec.defaultTenant`. See
+[multicluster.md](multicluster.md#tenant-setups).
+
 ## Denied labels
 
 `labels.deny` lists label names (Prometheus, Loki) or scoped attributes (Tempo, for example
@@ -379,15 +442,28 @@ older generation is never written over a newer spec.
 | Reason | `Ready` | Meaning and fix |
 |---|---|---|
 | `Compiled` | `True` | The policy is active. |
-| `InvalidMatcher` | `False` | A regex does not compile, a matcher or denied-label name is invalid for the backend type (for example `__tenant_id__`, a name with dots on Prometheus/Loki, an unscoped name on Tempo), an operator is unknown, or an `unrestricted` rule also lists matchers. Also raised if the backend's `namespaceLabel` is not a valid name for its type. The message names the rule and field. Fix the matcher. |
+| `InvalidMatcher` | `False` | A regex does not compile, a matcher or denied-label name is invalid for the backend type (for example `__tenant_id__`, a name with dots on Prometheus/Loki, an unscoped name on Tempo), an operator is unknown, an `unrestricted` rule also lists matchers, or a `ClusterAccessPolicy` rule has `unrestricted: false` and no matchers (the CRD rejects this too; the compiler does not rely on it). Also raised if the backend's `namespaceLabel` is not a valid name for its type. The message names the rule and field. Fix the matcher. |
 | `UnknownBackend` | `False` | A rule lists a backend that is not in the static configuration. Fix the name or the configuration (changing the configuration needs a restart). |
 | `TenantRequired` | `False` | A `ClusterAccessPolicy` rule targets a backend with a `tenantHeader` but lists no `tenants`. Add `tenants`. |
-| `TenantNotAssigned` | `False` | An `AccessPolicy` targets a backend with a `tenantHeader`, but its namespace lacks a non-blank label `policy.querdian.dev/tenant`. Label the namespace; the snapshot is rebuilt on label changes. |
+| `TenantNotAssigned` | `False` | An `AccessPolicy` targets a backend with a `tenantHeader`, but its namespace lacks a non-blank label `policy.querdian.dev/tenant`. Label the namespace; the snapshot is rebuilt on label changes. For a spoke `AccessPolicy`: the spoke namespace has no tenant label and the `SpokeCluster` has no `defaultTenant`. |
 | `CrossTenantUnionUnsupported` | `True` | The policy is active, but it contributes to a user whose grants span several tenants with differing rules on a backend with `tenantFederation: none`. Those users' requests are answered `403 cross_tenant_union_unsupported`. The message lists the affected backends. Informational. |
+| `InvalidClusterScope` | `False` | Multi-cluster only. A hub `ClusterAccessPolicy` rule does not state its cluster scope for one of its backends (no `Equal` or finite `RegexMatch` on the `clusterLabel`, no `allClusters`, not `unrestricted`), uses `allClusters` together with a cluster matcher or with `unrestricted`, or a spoke rule sets `allClusters`. See [Multi-cluster](#multi-cluster). |
+| `TenantNotAllowed` | `False` | Multi-cluster only. A spoke policy uses a tenant that is not in `SpokeCluster.spec.tenants`. Add the tenant to the allow-list on the hub, or change the spoke policy or namespace label. |
+| `MulticlusterDisabled` | `False` | A `SpokePolicy` exists, but the static configuration has no `multicluster` block. Spoke policies grant nothing without it. |
+| `SpokeClusterNotFound` | `False` | No `SpokeCluster` has the name in `SpokePolicy.spec.cluster`. Normally transient after the deletion of a `SpokeCluster`, until garbage collection removes its objects. |
+| `SpokeClusterInvalid` | `False` | The `SpokeCluster` cannot be trusted: its name is equal to `multicluster.hubCluster`, the last path segment of `spec.identity` is not its name, or the name occurs more than once. Fix the `SpokeCluster` on the hub. |
+| `InvalidSpokePolicy` | `False` | The `SpokePolicy` object itself is malformed: kind, namespace and spec do not agree, a name is invalid, or the object name is not the one the receiver gives (`sp-` and a hash). Such an object was not written by the receiver; delete it. |
 
 All reasons except `Compiled` and `CrossTenantUnionUnsupported` mean the policy grants nothing, on
 all its backends: one invalid rule disables the whole policy. `kubectl get cap` and `kubectl get ap`
 show `Ready` and the reason. The same counts are exported as `querdian_policies{kind,ready}`.
+
+With the `multicluster` block, the leader also writes the `Ready` condition of each `SpokePolicy` on
+the hub (`kubectl get sp`). The `querdian agent` copies the conditions of its spoke's policies back to
+the spoke objects at the next heartbeat, so spoke teams use `kubectl get cap,ap` as usual. The copy
+omits the message of `CrossTenantUnionUnsupported`, because it can reveal the grants of a shared
+subject in other tenants: such a policy shows `Compiled` in the spoke. A policy of an expired spoke
+stays `Compiled`; expiry is checked per request, not at compile time.
 
 If the leader replica is not available, statuses are not updated, but all replicas keep enforcing
 their own snapshot.

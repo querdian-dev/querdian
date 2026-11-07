@@ -27,6 +27,7 @@ lists every reason the server can set.
 | `snapshot_not_ready` | error | 503 | `unavailable` | No policy snapshot exists yet (startup, or the Kubernetes caches have not synced). | Wait; if persistent, check the pod's access to the Kubernetes API (RBAC) and its logs. |
 | `internal` | error | 500 | `internal` | The authentication middleware passed a request without an identity. Should not happen. | Report a bug with the trace ID. |
 | `no_grant` | deny | 403 | `forbidden` | No active rule grants this user (by username or any group) access to this backend. | Check the user's groups in the token, the policy's `subjects`, the backend name in the rules, and that the policy is `Ready` (`kubectl get cap,ap`). A policy in `TenantNotAssigned` or any other failing status grants nothing. |
+| `policy_source_expired` | deny | 403 | `forbidden` | Multi-cluster only. Rules grant this user access to the backend, but every rule that gives a term comes from a spoke that is expired or suspended (no valid sync within `maxStaleness`, `suspended: true`, `SpokeCluster` changed or deleted). The message does not name the cluster. | `kubectl get spokeclusters` (`LastSync`, `Suspended`) and `querdian_cluster_policy_expired`; check the agent in the spoke and the receiver logs. The next valid sync restores the grants. See [multicluster.md](multicluster.md#time-limit-and-outages). |
 | `policy_too_complex` | deny | 403 | `forbidden` | The user's merged policy has more than `limits.maxPolicyTerms` terms. | Simplify the policies (fewer, broader rules or rules that differ in one label so they merge), or raise the limit knowingly. |
 | `cross_tenant_union_unsupported` | deny | 403 | `forbidden` | The user has rules in several tenants with differing terms on a backend with `tenantFederation: none`. | Give the user identical rules in each tenant, use one tenant, or use a backend that supports `__tenant_id__` filtering. See the `CrossTenantUnionUnsupported` status. |
 | `resolve_failed` | error | 500 | `internal` | Policy resolution failed unexpectedly (for example the backend is unknown to the snapshot). | Report a bug with the trace ID; check that the config of all replicas matches. |
@@ -47,8 +48,14 @@ Authentication failure sub-reasons (`querdian_auth_failures_total{reason}`; the 
 `audience`, `issuer`, `missing_username`.
 
 Policy compile status reasons (`Compiled`, `InvalidMatcher`, `UnknownBackend`, `TenantRequired`,
-`TenantNotAssigned`, `CrossTenantUnionUnsupported`) are on the policy objects, not on requests; see
+`TenantNotAssigned`, `CrossTenantUnionUnsupported`, and in a multi-cluster setup
+`InvalidClusterScope`, `TenantNotAllowed`, `MulticlusterDisabled`, `SpokeClusterNotFound`,
+`SpokeClusterInvalid`, `InvalidSpokePolicy`) are on the policy objects, not on requests; see
 [policy-guide.md](policy-guide.md#status-conditions).
+
+A spoke rule that has expired gives no terms, but its denied and redacted labels still apply. Its
+policy therefore still appears in `policies.matched` and `querdian.policies`, and its denied labels
+can still cause `403 denied_label`.
 
 ## Typical problems
 
@@ -70,6 +77,16 @@ Policy compile status reasons (`Compiled`, `InvalidMatcher`, `UnknownBackend`, `
   Tempo search redaction, not a bug.
 * **Hot policy change not visible yet.** Allow about a second, then check
   `querdian_snapshot_rebuilds_total{result="error"}` and the `snapshot.rebuild` spans.
+* **Multi-cluster: a hub team sees no data although its `AccessPolicy` is Ready.** A hub
+  `AccessPolicy` also matches `<clusterLabel>="<hubCluster>"`. Hub data without that label (old data,
+  ruler output, a hub agent that does not set it) is invisible. Use the checks in
+  [multicluster.md](multicluster.md#2-make-sure-that-hub-telemetry-carries-the-hub-cluster-label).
+* **Multi-cluster: a spoke policy is not active.** On the hub, `kubectl get sp` shows its reason; in
+  the spoke, the agent copies it to the policy at the next heartbeat. A spoke policy that shows
+  `Compiled` but gives `policy_source_expired` belongs to an expired or suspended spoke.
+* **Multi-cluster: the proxy is not ready.** With the `multicluster` block, `/readyz` answers
+  `spoke deadline table not ready` until the replica has read all `SpokeCluster` objects. Check the
+  RBAC for `spokeclusters` and that the CRDs are installed.
 
 ## Metrics queries (PromQL)
 
@@ -243,11 +260,44 @@ Snapshot rebuilds (controller root spans):
 7. **Cross-tenant requests fail upstream with 4xx/5xx.** The backend must have federation enabled
    for `t1|t2` tenant headers; see [policy-guide.md](policy-guide.md#tenants).
 
+## Receiver HTTP statuses
+
+In a [multi-cluster](multicluster.md) setup, `querdian receiver` answers each agent request with one
+of these statuses. Each rejection has a JSON body `{"error":"..."}` with a generic message and is
+logged by the receiver as `sync rejected` with the identity and the cause. A rejected sync never
+renews `lastSyncTime`. A cert that is not signed by `--client-ca-file` fails in the TLS handshake,
+before any HTTP status; the agent logs it as a connection error.
+
+| Status | Message | Cause | Agent behaviour |
+|---|---|---|---|
+| 200 | `result: ok` | The stored state equals the agent's state; `lastSyncTime` is renewed. The body carries the `Ready` conditions. | waits for the next heartbeat |
+| 200 | `result: fullStateRequired` | The digest of the heartbeat differs from the stored state. Nothing is renewed. | sends the full state at once |
+| 400 | `invalid request: ...`, `invalid policy: ...`, `invalid state: ...`, `the digest is not valid`, `the digest does not agree with the policies`, `a heartbeat must not carry policies`, `cannot read the body` | The body does not follow the protocol: an unknown field, a kind that does not agree with the spec, an `AccessPolicy` without a namespace, a `ClusterAccessPolicy` with one, a duplicate policy. | retries at the next heartbeat (at most one minute) |
+| 400 | `the API server rejected a policy` | The API server rejected a `SpokePolicy` (CRD validation). | retries at the next heartbeat |
+| 403 | `client certificate not accepted` | The cert has no URI SAN or several URI SANs. | retries at the next heartbeat |
+| 403 | `unknown identity`, `the identity is on more than one SpokeCluster`, `the identity does not agree with the SpokeCluster name`, `the SpokeCluster name is not a valid label value` | No `SpokeCluster` has the URI SAN as `spec.identity`, two have it, or the last path segment is not the name. | retries at the next heartbeat |
+| 403 | `the SpokeCluster is suspended`, `the SpokeCluster has a deletion timestamp` | The spoke is suspended or being deleted. | retries at the next heartbeat |
+| 404 | `unknown path` | A path other than `/v1alpha1/sync`, or a query string. Check `--receiver-url`. | retries at the next heartbeat |
+| 405 | `unknown method` | A method other than `POST`. | retries at the next heartbeat |
+| 409 | `a request with this identity is in progress`, `a sync for this cluster is in progress`, `the SpokeCluster changed during the sync`, `the stored state changed during the sync` | Two agents with the same cert (leader election off), an overlapping sync, or a `SpokeCluster` or `SpokePolicy` changed during the sync. | retries with backoff |
+| 413 | `the body is too large`, `too many policies` | Above `--max-body-bytes` or `--max-policies`. Raise the limit or reduce the policies of the spoke. | retries at the next heartbeat |
+| 415 | `unknown content type` | A content type other than `application/json`, or a content encoding. | retries at the next heartbeat |
+| 429 | `too many changed syncs` | More than one changed sync of a cluster in 10 seconds (`Retry-After: 10`). | retries after `Retry-After` |
+| 500 | `internal error` | An API server error or an inconsistent stored state; the cause is in the receiver log. | retries at the next heartbeat |
+| 503 | `too many requests in progress` | More than `--max-in-flight` requests at once (`Retry-After: 1`). | retries at the next heartbeat |
+
+The receiver's `/readyz` answers `503 not the leader` on each replica that does not hold the lease.
+This is normal: only the leader serves syncs.
+
 ## Checks for operators
 
 ```sh
 kubectl get cap,ap -A                      # Ready and Reason of every policy
 kubectl get ns --show-labels | grep policy.querdian.dev/tenant
-curl -s localhost:9090/readyz              # snapshot and issuer discovery
+curl -s localhost:9090/readyz              # snapshot, issuer discovery and (multi-cluster) spoke table
 curl -s localhost:9090/metrics | grep '^querdian_policies'
+# multi-cluster, on the hub:
+kubectl get spokeclusters                  # Suspended and LastSync of every spoke
+kubectl get sp                             # spoke policies with cluster, kind and Ready
+curl -s localhost:9090/metrics | grep '^querdian_cluster_policy_'
 ```
