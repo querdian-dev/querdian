@@ -20,6 +20,8 @@ type spokeDeadline struct {
 	// lastSync is the zero time if status.lastSyncTime is absent.
 	lastSync     time.Time
 	maxStaleness time.Duration
+	// generation is metadata.generation of the SpokeCluster.
+	generation int64
 }
 
 // Deadlines is the table of spoke deadlines (PLAN §18.6, rule 3). It is outside the snapshot, so a
@@ -32,6 +34,41 @@ type Deadlines struct {
 	mu       sync.RWMutex
 	spokes   map[string]spokeDeadline
 	complete bool
+	// compiled maps a spoke to the SpokeCluster generation that the current snapshot was compiled from. It
+	// is nil until TrackCompiled; after that, a spoke is expired unless its entry has the compiled generation.
+	compiled map[string]int64
+}
+
+// TrackCompiled makes Expired also require that the current snapshot was compiled from the current
+// generation of the SpokeCluster. Without this check, a sync of a new generation (for example a smaller
+// tenant allow-list) makes a spoke valid before the rebuild has applied the new spec. Until the first
+// SetCompiled, each spoke is expired. The controller calls it when the multicluster block is set.
+func (d *Deadlines) TrackCompiled() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.compiled == nil {
+		d.compiled = map[string]int64{}
+	}
+}
+
+// SetCompiled records the SpokeCluster generations that the current snapshot was compiled from. Call it
+// after each snapshot swap. It has no effect before TrackCompiled.
+func (d *Deadlines) SetCompiled(generations map[string]int64) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.compiled == nil {
+		return
+	}
+	d.compiled = make(map[string]int64, len(generations))
+	for name, g := range generations {
+		d.compiled[name] = g
+	}
 }
 
 // NewDeadlines returns an empty table.
@@ -47,7 +84,7 @@ func (d *Deadlines) Update(sc *v1.SpokeCluster, defaultMaxStaleness time.Duratio
 	if d == nil || sc == nil || sc.Name == "" {
 		return
 	}
-	e := spokeDeadline{maxStaleness: defaultMaxStaleness}
+	e := spokeDeadline{maxStaleness: defaultMaxStaleness, generation: sc.Generation}
 	if sc.Spec.MaxStaleness != nil {
 		e.maxStaleness = sc.Spec.MaxStaleness.Duration
 	}
@@ -101,16 +138,22 @@ func (d *Deadlines) Complete() bool {
 // rule 4). It is true if any of these conditions is true: the table has no entry for the spoke, the
 // spoke is suspended or in deletion, observedGeneration differs from metadata.generation, maxStaleness is
 // zero or negative, lastSyncTime is absent or more than MaxSyncTimeSkew in the future, or maxStaleness
-// has passed since lastSyncTime. Hub rules have no origin and never expire; do not call Expired for them.
+// has passed since lastSyncTime. After TrackCompiled, it is also true while the current snapshot was compiled
+// from a different generation of the SpokeCluster. Hub rules have no origin and never expire; do not call Expired for them.
 func (d *Deadlines) Expired(origin string, now time.Time) bool {
 	if d == nil {
 		return true
 	}
 	d.mu.RLock()
 	e, ok := d.spokes[origin]
+	compiledGen, compiledOK := d.compiled[origin]
+	tracking := d.compiled != nil
 	d.mu.RUnlock()
 	switch {
 	case !ok, !e.valid, e.lastSync.IsZero():
+		return true
+	case tracking && (!compiledOK || compiledGen != e.generation):
+		// The snapshot does not yet contain the current spec of the spoke.
 		return true
 	case e.lastSync.After(now.Add(MaxSyncTimeSkew)):
 		return true

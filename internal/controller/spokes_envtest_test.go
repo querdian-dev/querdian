@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -342,10 +343,25 @@ func TestSpokeTenantChangesRecompile(t *testing.T) {
 
 	t.Run("smaller allow-list", func(t *testing.T) {
 		patchSpokeSpec(t, name, func(s *v1.SpokeClusterSpec) { s.Tenants = []string{"tenant-b"} })
-		// The sync of the new generation makes the spoke valid again, so the missing grant comes from the
-		// compiler and not from expiry.
+		// The sync of the new generation comes at once, before the rebuild. At no time after the spec change
+		// may the removed tenant be granted: the table keeps the spoke expired until the snapshot has the
+		// new generation.
 		syncSpoke(t, name, time.Now())
-		expiredFor(t, dl, name, false, "spoke synced")
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			eff, err := resolveNow(c, dl, "allow-group", "logs")
+			if err == nil && slices.Contains(eff.Tenants, "tenant-a") {
+				t.Fatalf("removed tenant-a is granted after the spec change: %+v", eff)
+			}
+			if r, ok := spokeResult(c, labelled.Name); ok && r.Reason == policy.ReasonTenantNotAllowed {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the rebuild did not apply the smaller allow-list")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		expiredFor(t, dl, name, false, "spoke synced and compiled")
 		eventually(t, 10*time.Second, "grant removed", func() bool {
 			r, ok := spokeResult(c, labelled.Name)
 			_, err := resolveNow(c, dl, "allow-group", "logs")
