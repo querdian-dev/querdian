@@ -1,0 +1,73 @@
+{{- if and (include "querdian.receiverEnabled" .) .Values.rbac.create }}
+{{- $c := dict "root" . "component" "receiver" }}
+{{- $sa := include "querdian.componentServiceAccountName" (merge (dict "sa" .Values.receiver.serviceAccount) $c) }}
+# The receiver writes the spec of SpokePolicy and only the status of SpokeCluster (PLAN section 18.5).
+# These are the verbs that the receiver uses. It reads directly from the API server, so it needs no watch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+rules:
+  - apiGroups: [policy.querdian.dev]
+    resources: [spokeclusters]
+    verbs: [get, list]
+  - apiGroups: [policy.querdian.dev]
+    resources: [spokeclusters/status]
+    verbs: [update]
+  - apiGroups: [policy.querdian.dev]
+    resources: [spokepolicies]
+    verbs: [list, create, update, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "querdian.componentName" $c }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "querdian.componentName" $c }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+rules:
+  # create cannot have resourceNames. The lease name is fixed in `querdian receiver`.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [querdian-receiver-leader-election]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "querdian.componentName" $c }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "querdian.componentName" $c }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

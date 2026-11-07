@@ -1,0 +1,10 @@
+# A backend with clusterLabel but no multicluster block. Querdian refuses this config (PLAN section 18.4),
+# so the schema must reject it too.
+config:
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://thanos-query.monitoring:10902
+      pathPrefix: /prometheus
+      namespaceLabel: namespace
+      clusterLabel: cluster

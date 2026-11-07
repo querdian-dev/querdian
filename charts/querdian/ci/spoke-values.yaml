@@ -1,0 +1,22 @@
+# Spoke of a multi-cluster deployment (PLAN section 18): only the policy agent. The Secrets must exist
+# before the install.
+mode: spoke
+agent:
+  receiverURL: https://querdian-receiver.mla.example.com:8443
+  tls:
+    existingSecret: querdian-agent-tls
+  receiverCA:
+    existingSecret: querdian-agent-tls
+networkPolicy:
+  enabled: true
+  ingress:
+    managementFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+  egress:
+    receiver:
+      to:
+        - ipBlock:
+            cidr: 198.51.100.10/32
+      ports: [8443]

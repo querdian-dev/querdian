@@ -3,3 +3,4 @@
 *.bak
 *.tmp
 *_test.go
+testdata/

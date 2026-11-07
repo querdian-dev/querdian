@@ -1,4 +1,4 @@
-{{- if .Values.rbac.create }}
+{{- if and (include "querdian.proxyEnabled" .) .Values.rbac.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -15,6 +15,16 @@ rules:
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [get, list, watch]
+  {{- if .Values.config.multicluster }}
+  # Hub (PLAN section 18.5): read the spoke objects; write only the status of SpokePolicy. The
+  # receiver writes the spec of SpokePolicy and the status of SpokeCluster.
+  - apiGroups: [policy.querdian.dev]
+    resources: [spokeclusters, spokepolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy.querdian.dev]
+    resources: [spokepolicies/status]
+    verbs: [update, patch]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
