@@ -591,18 +591,18 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         never matches the terms of a spoke alone, also if the rule has its own cluster matchers. Use
         `FuzzNormaliseEquivalence` for a mix of hub and spoke terms.
 
-### [ ] T6.3 — Time limit in `Resolve`
+### [x] T6.3 — Time limit in `Resolve`
 - **Depends on:** T6.2
 - **Files:** `internal/policy/`, `internal/server/`, `internal/ui/`, `internal/observability/`, `internal/proxy/`
 - **Acceptance:**
-  - [ ] Rules 3 to 8 of §18.6 hold. Tests cover each condition in rule 4, a deleted `SpokeCluster` and a
+  - [x] Rules 3 to 8 of §18.6 hold. Tests cover each condition in rule 4, a deleted `SpokeCluster` and a
         re-created `SpokeCluster`.
-  - [ ] If all rules of a user expire, `Resolve` returns an error and never an empty `Effective`. The
+  - [x] If all rules of a user expire, `Resolve` returns an error and never an empty `Effective`. The
         reason is `policy_source_expired` with status 403, in the handler and in the dashboard.
-  - [ ] Expired rules keep `labels.deny` and `labels.redact`. A test shows that expiry never widens access.
-  - [ ] An open Loki tail closes within 10 seconds after expiry or suspension of a spoke in its policy.
-  - [ ] The dashboard dry run uses the same check.
-  - [ ] The metric `querdian_cluster_policy_age_seconds` exists.
+  - [x] Expired rules keep `labels.deny` and `labels.redact`. A test shows that expiry never widens access.
+  - [x] An open Loki tail closes within 10 seconds after expiry or suspension of a spoke in its policy.
+  - [x] The dashboard dry run uses the same check.
+  - [x] The metric `querdian_cluster_policy_age_seconds` exists.
 
 ### [ ] T6.4 — Controller for the hub objects
 - **Depends on:** T6.3

@@ -144,7 +144,7 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 
 	// --- resolve
 	_, rspan := s.tracer.Start(ctx, "policy.resolve")
-	eff, err := snap.Resolve(id.Username, id.Groups, b.Name)
+	eff, err := snap.ResolveAt(id.Username, id.Groups, b.Name, s.d.Deadlines, time.Now())
 	rspan.SetAttributes(
 		attribute.Int64("snapshot.generation", snap.Generation),
 		attribute.Int("policies.matched", len(eff.Policies)),
@@ -162,6 +162,10 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		case errors.Is(err, policy.ErrTooComplex):
 			st.set(decisionDeny, "policy_too_complex")
 			proxy.WriteError(w, r, http.StatusForbidden, "forbidden", "effective policy is too complex")
+		case errors.Is(err, policy.ErrPolicySourceExpired):
+			// The message does not name the cluster (PLAN §18.6, rule 6).
+			st.set(decisionDeny, "policy_source_expired")
+			proxy.WriteError(w, r, http.StatusForbidden, "forbidden", "the policy source of this grant has expired")
 		case errors.Is(err, policy.ErrCrossTenantUnion):
 			st.set(decisionDeny, "cross_tenant_union_unsupported")
 			proxy.WriteError(w, r, http.StatusForbidden, "forbidden", "access across tenants with differing rules is not supported on this backend")
@@ -208,6 +212,12 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		var opt proxy.TailOptions
 		if red != nil {
 			opt.Rewrite = red.TailFrame
+		}
+		// Close the tail when a spoke that gave terms at the start expires (PLAN §18.6, rule 8).
+		if origins := eff.Origins; len(origins) > 0 {
+			dl := s.d.Deadlines
+			opt.Revoked = func() bool { return dl.AnyExpired(origins, time.Now()) }
+			opt.RevokeCheckInterval = s.tailRevokeCheck
 		}
 		s.proxies[b.Name].ServeTail(w, r, target, plan, opt)
 		return
