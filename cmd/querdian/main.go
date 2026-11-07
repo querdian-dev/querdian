@@ -89,6 +89,10 @@ func run(args []string) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := observability.NewMetrics(reg)
+	// The informers of the SpokeCluster kind feed this table (T6.4). Until then it stays empty and
+	// incomplete: each spoke rule is expired, and with the multicluster block the replica is not ready.
+	deadlines := policy.NewDeadlines()
+	reg.MustRegister(observability.NewClusterPolicyAge(deadlines.Ages))
 
 	scheme := runtime.NewScheme()
 	if err := controller.AddToScheme(scheme); err != nil {
@@ -125,7 +129,7 @@ func run(args []string) error {
 	}
 	var uiHandler http.Handler
 	if flags.UIListen != "" {
-		uiHandler = ui.Handler(ui.Deps{Config: cfg, Snapshots: ctl, Enforcers: enforcers, Version: version, Logger: logger})
+		uiHandler = ui.Handler(ui.Deps{Config: cfg, Snapshots: ctl, Deadlines: deadlines, Enforcers: enforcers, Version: version, Logger: logger})
 		if flags.UIAuth == "oidc" {
 			uiHandler = authn.Middleware(server.RequireGroup(flags.UIAdminGroup, uiHandler))
 		} else {
@@ -138,6 +142,7 @@ func run(args []string) error {
 		UIHandler:    uiHandler,
 		Config:       cfg,
 		Snapshots:    ctl,
+		Deadlines:    deadlines,
 		Auth:         authn,
 		Enforcers:    enforcers,
 		TailPlanners: map[config.BackendType]server.TailPlanner{config.BackendLoki: enforcelogql.PlanTail},

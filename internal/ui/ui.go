@@ -26,6 +26,9 @@ type SnapshotProvider interface {
 type Deps struct {
 	Config    *config.Config
 	Snapshots SnapshotProvider
+	// Deadlines is the table of spoke deadlines; the dashboard uses the same expiry check as the proxy.
+	// With nil, each rule from a spoke is expired.
+	Deadlines *policy.Deadlines
 	// Enforcers rewrite queries for the test bench, per backend type.
 	Enforcers map[config.BackendType]enforce.Enforcer
 	Version   string

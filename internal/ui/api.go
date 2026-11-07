@@ -171,6 +171,8 @@ func resolveReason(err error) string {
 	switch {
 	case errors.Is(err, policy.ErrNoGrant):
 		return "no_grant"
+	case errors.Is(err, policy.ErrPolicySourceExpired):
+		return "policy_source_expired"
 	case errors.Is(err, policy.ErrCrossTenantUnion):
 		return "cross_tenant_union_unsupported"
 	case errors.Is(err, policy.ErrTooComplex):
@@ -203,7 +205,7 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 		b := &h.d.Config.Backends[i]
 		a := accessJSON{Backend: b.Name, Type: string(b.Type), Tenants: []string{}, Terms: []termJSON{},
 			DeniedLabels: []string{}, Redactions: []redactionJSON{}, Policies: []string{}}
-		eff, err := s.Resolve(user, groups, b.Name)
+		eff, err := s.ResolveAt(user, groups, b.Name, h.d.Deadlines, time.Now())
 		if err != nil {
 			a.Reason = resolveReason(err)
 			out = append(out, a)
@@ -308,7 +310,7 @@ func (h *handler) test(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, res)
 	}
 
-	eff, err := s.Resolve(req.User, req.Groups, b.Name)
+	eff, err := s.ResolveAt(req.User, req.Groups, b.Name, h.d.Deadlines, time.Now())
 	if err != nil {
 		deny(http.StatusForbidden, resolveReason(err), err.Error())
 		return

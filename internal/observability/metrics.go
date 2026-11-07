@@ -81,6 +81,34 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+// clusterPolicyAge is the collector of querdian_cluster_policy_age_seconds. It reads the ages at each
+// scrape, because the age increases without an event.
+type clusterPolicyAge struct {
+	desc *prometheus.Desc
+	ages func(now time.Time) map[string]float64
+}
+
+// NewClusterPolicyAge returns the collector of querdian_cluster_policy_age_seconds{cluster} (PLAN §18.6).
+// ages gives the time in seconds since the last valid sync of each spoke cluster; policy.Deadlines.Ages
+// implements it. A spoke that has not synced has the value +Inf.
+func NewClusterPolicyAge(ages func(now time.Time) map[string]float64) prometheus.Collector {
+	return &clusterPolicyAge{
+		desc: prometheus.NewDesc("querdian_cluster_policy_age_seconds",
+			"Time since the last valid policy sync of a spoke cluster.", []string{"cluster"}, nil),
+		ages: ages,
+	}
+}
+
+// Describe implements prometheus.Collector.
+func (c *clusterPolicyAge) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+
+// Collect implements prometheus.Collector.
+func (c *clusterPolicyAge) Collect(ch chan<- prometheus.Metric) {
+	for cluster, age := range c.ages(time.Now()) {
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, age, cluster)
+	}
+}
+
 // ObserveWithExemplar records v on o and attaches the trace ID of the span in
 // ctx as exemplar when that span context is valid and sampled.
 func ObserveWithExemplar(ctx context.Context, o prometheus.Observer, v float64) {

@@ -177,4 +177,7 @@ type Effective struct {
 	// Redactions is the strictest redaction per label over matched rules; nil if none.
 	Redactions map[string]Redaction
 	Policies   []string // names, for tracing and logging
+	// Origins are the spoke clusters whose rules gave terms, sorted and deduplicated; empty if only hub rules
+	// gave terms. An open Loki tail closes when one of them expires (PLAN §18.6, rule 8).
+	Origins []string
 }

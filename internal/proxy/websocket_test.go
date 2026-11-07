@@ -277,3 +277,46 @@ func TestTailRewriteErrorFailsClosed(t *testing.T) {
 	}
 	f.waitClosed(t, 1)
 }
+
+// TestTailClosesWhenRevoked: the tail checks Revoked at each interval and closes all sockets once it is true.
+func TestTailClosesWhenRevoked(t *testing.T) {
+	f := newFakeLoki(t, map[string]branch{`{a="1"}`: {frames: []string{frameA}}})
+	var mu sync.Mutex
+	revoked, checks := false, 0
+	srv := tailServerOpt(t, f, TailOptions{RevokeCheckInterval: 20 * time.Millisecond, Revoked: func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		checks++
+		return revoked
+	}}, `{a="1"}`)
+	c := dial(t, srv, nil)
+	if got := readText(t, c); got != frameA {
+		t.Fatalf("frame = %s", got)
+	}
+	// The tail stays open while Revoked is false.
+	for {
+		mu.Lock()
+		n := checks
+		mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	revoked = true
+	mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := c.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation || !strings.Contains(err.Error(), "policy source expired") {
+		t.Fatalf("err = %v", err)
+	}
+	f.waitClosed(t, 1)
+}
+
+func TestTailRevokeCheckDefault(t *testing.T) {
+	if got := (TailOptions{}).withDefaults().RevokeCheckInterval; got <= 0 || got > 10*time.Second {
+		t.Fatalf("default interval = %v, want at most 10s (PLAN §18.6, rule 8)", got)
+	}
+}
