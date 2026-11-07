@@ -230,3 +230,49 @@ func TestDeadlinesExpiredStates(t *testing.T) {
 		t.Fatal("nil table")
 	}
 }
+
+// After TrackCompiled, a spoke is expired until the snapshot was compiled from its current generation, also
+// when a sync of that generation has already made it valid (PLAN §18.6, §18.9).
+func TestDeadlinesTrackCompiled(t *testing.T) {
+	now := testNow
+	d := NewDeadlines()
+	sc := spoke("cluster-a")
+	d.Update(sc, defaultStale)
+	if d.Expired("cluster-a", now) {
+		t.Fatal("without tracking the fresh spoke must be valid")
+	}
+	d.TrackCompiled()
+	if !d.Expired("cluster-a", now) {
+		t.Fatal("tracked spoke must be expired before the first SetCompiled")
+	}
+	d.SetCompiled(map[string]int64{"cluster-a": sc.Generation})
+	if d.Expired("cluster-a", now) {
+		t.Fatal("compiled generation equals the entry: must be valid")
+	}
+	// A spec change and an immediate sync of the new generation, before the rebuild.
+	next := sc.DeepCopy()
+	next.Generation++
+	next.Status.ObservedGeneration = next.Generation
+	d.Update(next, defaultStale)
+	if !d.Expired("cluster-a", now) {
+		t.Fatal("the snapshot has the old generation: must be expired")
+	}
+	d.SetCompiled(map[string]int64{"cluster-a": next.Generation})
+	if d.Expired("cluster-a", now) {
+		t.Fatal("after the rebuild the spoke must be valid again")
+	}
+	d.SetCompiled(map[string]int64{})
+	if !d.Expired("cluster-a", now) {
+		t.Fatal("a spoke missing from the compiled set must be expired")
+	}
+	// SetCompiled before TrackCompiled has no effect, and a nil table is safe.
+	u := NewDeadlines()
+	u.SetCompiled(map[string]int64{"x": 1})
+	u.Update(spoke("cluster-a"), defaultStale)
+	if u.Expired("cluster-a", now) {
+		t.Fatal("SetCompiled must not start tracking")
+	}
+	var nilTable *Deadlines
+	nilTable.TrackCompiled()
+	nilTable.SetCompiled(nil)
+}

@@ -112,6 +112,9 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 	if c.cfg.Multicluster != nil && c.deadlines == nil {
 		return errors.New("controller: the multicluster block needs a deadline table (WithDeadlines)")
 	}
+	if c.cfg.Multicluster != nil {
+		c.deadlines.TrackCompiled()
+	}
 	c.reader = mgr.GetCache()
 	if err := mgr.Add(&builder{c: c, cache: mgr.GetCache()}); err != nil {
 		return err
@@ -194,8 +197,12 @@ func (b *builder) Start(ctx context.Context) error {
 	if err := c.rebuild(ctx, "startup"); err != nil {
 		return err
 	}
-	runDebounced(ctx, c.trigger, c.debounce, func(int) {
-		_ = c.rebuild(ctx, "event") // keeps the previous snapshot on error; the next event retries
+	runDebounced(ctx, c.trigger, c.debounce, debounceMaxWait*c.debounce, func(int) {
+		if err := c.rebuild(ctx, "event"); err != nil {
+			// The previous snapshot stays. Retry without a new event: with the multicluster block, a spoke
+			// whose spec changed stays expired until a rebuild succeeds, and heartbeats start no rebuild.
+			time.AfterFunc(rebuildRetry, c.notify)
+		}
 	})
 	return nil
 }
@@ -224,6 +231,12 @@ func equalStringMap(a, b map[string]string) bool {
 	}
 	return true
 }
+
+// debounceMaxWait bounds a burst of events, as a multiple of the debounce interval.
+const debounceMaxWait = 8
+
+// rebuildRetry is the delay before a failed rebuild runs again.
+const rebuildRetry = time.Second
 
 // rebuild lists everything from the cache, compiles it and atomically swaps the snapshot.
 func (c *Controller) rebuild(ctx context.Context, trigger string) error {
@@ -268,6 +281,14 @@ func (c *Controller) doRebuild(ctx context.Context, trigger string) error {
 	})
 	snap := policy.NewSnapshot(compiled, c.cfg, c.gen.Add(1))
 	c.current.Store(snap)
+	if c.cfg.Multicluster != nil {
+		// Only now may a spoke whose spec changed become valid again (PLAN §18.6, §18.9).
+		gens := make(map[string]int64, len(scs.Items))
+		for i := range scs.Items {
+			gens[scs.Items[i].Name] = scs.Items[i].Generation
+		}
+		c.deadlines.SetCompiled(gens)
+	}
 
 	invalid := 0
 	for _, r := range compiled.Results {
