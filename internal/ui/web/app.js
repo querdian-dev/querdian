@@ -68,6 +68,8 @@ async function policies() {
   const d = await api("policies");
   const mc = d.policies.some((p) => p.origin);
   const spoke = (p) => mc && !p.origin.hub;
+  // A spoke policy that is not ready has a source that the compiler did not verify.
+  const unverified = (p) => (spoke(p) && p.origin.unverified ? h("span", { class: "muted" }, " (unverified)") : null);
   const heads = mc ? ["Policy", "Origin", "Status", "Subjects", "Backends"] : ["Policy", "Status", "Subjects", "Backends"];
   const open = new Set();
   const body = h("tbody");
@@ -75,8 +77,8 @@ async function policies() {
     body.replaceChildren();
     for (const p of d.policies) {
       const row = h("tr", { class: "row", tabindex: "0", "aria-expanded": String(open.has(p.id)) },
-        h("td", {}, spoke(p) && p.origin.kind ? h("b", { title: p.id }, srcName(p.origin)) : h("b", {}, p.id)),
-        mc ? h("td", {}, spoke(p) ? h("span", { class: "mono" }, p.origin.cluster) : "Hub") : null,
+        h("td", {}, spoke(p) && p.origin.kind ? h("b", { title: p.id }, srcName(p.origin)) : h("b", {}, p.id), unverified(p)),
+        mc ? h("td", {}, spoke(p) ? [p.origin.cluster || "unknown", unverified(p)] : "Hub") : null,
         h("td", { class: p.ready ? "" : "deny" }, h("b", { class: "mono" }, p.ready ? "Ready" : "NotReady"), " ", h("span", { class: "mono muted" }, p.reason),
           p.expired ? h("div", {}, chip("Expired", "deny")) : null),
         h("td", {}, chips(p.groups.concat(p.users.map((u) => "user:" + u)))),
@@ -86,12 +88,14 @@ async function policies() {
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
       body.append(row);
       if (open.has(p.id)) {
-        const origin = spoke(p) ? [h("dt", {}, "Origin"), h("dd", {}, "Spoke ", h("span", { class: "mono" }, p.origin.cluster)),
-          p.origin.kind ? [h("dt", {}, "Source"), h("dd", { class: "mono" }, srcName(p.origin))] : null,
-          h("dt", {}, "Hub object"), h("dd", { class: "mono" }, p.id)] : mc ? [h("dt", {}, "Origin"), h("dd", {}, "Hub")] : null;
+        const origin = spoke(p) ? [h("dt", {}, "Origin"), h("dd", {}, "Spoke " + (p.origin.cluster || "unknown"), unverified(p)),
+          p.origin.kind ? [h("dt", {}, "Source"), h("dd", {}, srcName(p.origin), unverified(p))] : null,
+          h("dt", {}, "Hub object"), h("dd", {}, p.id)] : mc ? [h("dt", {}, "Origin"), h("dd", {}, "Hub")] : null;
         body.append(h("tr", {}, h("td", { colspan: String(heads.length) }, h("div", { class: "drawer" },
-          p.expired ? h("p", { class: "note deny" }, h("b", {}, "Expired. "), "The spoke ", h("span", { class: "mono" }, p.origin.cluster),
+          p.expired ? h("p", { class: "note deny" }, h("b", {}, "Expired. "), "The spoke " + p.origin.cluster +
             " has no valid sync within its time limit, a hub admin suspended it, or its SpokeCluster changed after the last sync. Its rules grant no data now. Their hidden and redacted labels still apply.") : null,
+          spoke(p) && p.origin.unverified ? h("p", { class: "note" }, h("b", {}, "Unverified origin. "),
+            "The cluster and the source come from the hub object, and this object did not pass the checks. Do not use them as fact.") : null,
           p.message ? h("p", { class: "mono" }, p.message) : null,
           h("dl", { class: "kv" }, origin, h("dt", {}, "Generation"), h("dd", {}, p.generation)),
           p.rules.length ? p.rules.map(ruleView) : h("p", { class: "muted" }, "No compiled rules (policy is not in effect).")))));
