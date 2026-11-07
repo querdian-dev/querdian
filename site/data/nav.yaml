@@ -5,6 +5,7 @@
 - title: Operate
   pages:
     - operations
+    - multicluster | Multi-cluster
     - troubleshooting
     - dashboards | Grafana dashboard
 - title: Reference

@@ -1037,6 +1037,9 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
   `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on
   `accesspolicies/status` and `clusteraccesspolicies/status`, and `coordination.k8s.io/leases` in its own
   namespace. It uses leader election, so one agent sends at a time.
+- A spoke runs only the agent, never a standalone Querdian as well. Both would write the `Ready`
+  condition and `status.observedGeneration` of the spoke policies, and the hub is the only enforcement
+  point for spoke policies. The Helm chart refuses to render the agent together with the proxy.
 - `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
   The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
 - The receiver uses leader election, and only the leader reports ready. The write order and the limit on

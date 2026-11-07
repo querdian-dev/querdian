@@ -359,6 +359,9 @@ disjoint are not detected, so such results are marked approximate although they 
 
 These apply only with the `multicluster` block ([multicluster.md](multicluster.md)).
 
+* **A spoke runs only the agent.** A standalone Querdian on a spoke is not supported, also not for
+  local queries: it would write the same status fields of the spoke policies as the agent. Query spoke
+  data through the hub ([multicluster.md](multicluster.md#a-spoke-runs-only-the-agent)).
 * **Cluster scope needs a fixed set of names.** Each rule of a hub `ClusterAccessPolicy` must name a
   fixed set of clusters for each backend: an `Equal` matcher, or a `RegexMatch` that expands to a finite
   set of at most 1024 non-empty names (`mla|cluster-a`, `cluster-(a|b)`, `cluster-[ab]`). An open regex
