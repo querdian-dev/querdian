@@ -150,6 +150,18 @@ type Result struct {
 	Ready   bool
 	Reason  string
 	Message string
+	// Spoke names the source object of a KindSpokePolicy, from the spec of the hub object. It is the zero
+	// value for a hub policy. It is for display only; the compiler does not trust it before its checks.
+	Spoke SpokeSource
+}
+
+// SpokeSource names a policy object in a spoke: the SpokeCluster name, the kind ("ClusterAccessPolicy" or
+// "AccessPolicy"), the namespace (empty for a ClusterAccessPolicy) and the name.
+type SpokeSource struct {
+	Cluster   string
+	Kind      string
+	Namespace string
+	Name      string
 }
 
 // Compiled is the result of compiling all policies. Invalid policies contribute no rules.
