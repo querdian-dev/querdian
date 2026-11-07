@@ -166,37 +166,83 @@ func TestNormaliseDoesNotMutateInput(t *testing.T) {
 
 // --- semantic equivalence -------------------------------------------------------------------------------
 
+// propSpace is the label universe of a property test: the label names, plain values and regexes.
+type propSpace struct {
+	labels, values, regexes []string
+}
+
 var (
 	propLabels  = []string{"a", "b", "c"}
 	propValues  = []string{"", "1", "2", "3", "x.y"}
 	propRegexes = []string{"1", "1|2", "2|3", ".*", "", "x.y", "x\\.y|3"}
 	propTenants = []string{"t1", "t2"}
+
+	baseSpace = propSpace{labels: propLabels, values: propValues, regexes: propRegexes}
+
+	// mixedSpace adds a cluster label, for terms of hub and spoke rules (PLAN §18.3).
+	mixedClusters = []string{"s1", "s2", "mla"}
+	mixedSpace    = propSpace{
+		labels:  []string{"a", "b", "cluster"},
+		values:  append(append([]string(nil), propValues...), mixedClusters...),
+		regexes: append(append([]string(nil), propRegexes...), "s1|s2", "s.*", "mla|s1", "s1.*"),
+	}
 )
 
-func randTerm(r *rand.Rand, tenants []string) Term {
+func randTerm(r *rand.Rand, tenants []string) Term { return baseSpace.randTerm(r, tenants) }
+
+func (s propSpace) randMatcher(r *rand.Rand) Matcher {
+	name := s.labels[r.Intn(len(s.labels))]
+	var op v1.MatchOp
+	var val string
+	switch r.Intn(4) {
+	case 0:
+		op, val = v1.MatchEqual, s.values[r.Intn(len(s.values))]
+	case 1:
+		op, val = v1.MatchNotEqual, s.values[r.Intn(len(s.values))]
+	case 2:
+		op, val = v1.MatchRegexMatch, s.regexes[r.Intn(len(s.regexes))]
+	default:
+		op, val = v1.MatchRegexNoMatch, s.regexes[r.Intn(len(s.regexes))]
+	}
+	m, err := newMatcher(name, op, val)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
+func (s propSpace) randTerm(r *rand.Rand, tenants []string) Term {
 	t := Term{Tenant: tenants[r.Intn(len(tenants))]}
 	n := r.Intn(4) // 0 matchers = unrestricted for that tenant
 	for i := 0; i < n; i++ {
-		name := propLabels[r.Intn(len(propLabels))]
-		var op v1.MatchOp
-		var val string
-		switch r.Intn(4) {
-		case 0:
-			op, val = v1.MatchEqual, propValues[r.Intn(len(propValues))]
-		case 1:
-			op, val = v1.MatchNotEqual, propValues[r.Intn(len(propValues))]
-		case 2:
-			op, val = v1.MatchRegexMatch, propRegexes[r.Intn(len(propRegexes))]
-		default:
-			op, val = v1.MatchRegexNoMatch, propRegexes[r.Intn(len(propRegexes))]
-		}
-		m, err := newMatcher(name, op, val)
-		if err != nil {
-			panic(err)
-		}
-		t.Matchers = append(t.Matchers, m)
+		t.Matchers = append(t.Matchers, s.randMatcher(r))
 	}
 	return t
+}
+
+// randMixedTerm returns the term of a hub rule or of a spoke rule. A spoke term has the implicit matcher
+// cluster="<spoke>" and can have its own matchers on the cluster label too.
+func randMixedTerm(r *rand.Rand, tenants []string) Term {
+	t := mixedSpace.randTerm(r, tenants)
+	if r.Intn(2) == 0 {
+		return t // hub term
+	}
+	implicit, err := newMatcher("cluster", v1.MatchEqual, mixedClusters[r.Intn(2)])
+	if err != nil {
+		panic(err)
+	}
+	t.Matchers = append([]Matcher{implicit}, t.Matchers...)
+	return t
+}
+
+func (s propSpace) randLabels(r *rand.Rand, sometimesAbsent bool) map[string]string {
+	labels := map[string]string{}
+	for _, l := range s.labels {
+		if !sometimesAbsent || r.Intn(4) > 0 {
+			labels[l] = s.values[r.Intn(len(s.values))]
+		}
+	}
+	return labels
 }
 
 func matchTerms(ts []Term, tenant string, labels map[string]string) bool {
@@ -226,6 +272,23 @@ func checkEquivalence(t *testing.T, seed int64) {
 	for i := range in {
 		in[i] = randTerm(r, propTenants)
 	}
+	verifyEquivalence(t, seed, r, baseSpace, in)
+}
+
+// checkMixedEquivalence is checkEquivalence for a mix of hub and spoke terms.
+func checkMixedEquivalence(t *testing.T, seed int64) {
+	t.Helper()
+	r := rand.New(rand.NewSource(seed)) //nolint:gosec // deterministic test data
+	n := 1 + r.Intn(7)
+	in := make([]Term, n)
+	for i := range in {
+		in[i] = randMixedTerm(r, propTenants)
+	}
+	verifyEquivalence(t, seed, r, mixedSpace, in)
+}
+
+func verifyEquivalence(t *testing.T, seed int64, r *rand.Rand, space propSpace, in []Term) {
+	t.Helper()
 	eff, err := Normalise(in, config.Limits{MaxPolicyTerms: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
@@ -235,12 +298,7 @@ func checkEquivalence(t *testing.T, seed int64) {
 		tenantOK[tn] = true
 	}
 	for k := 0; k < 60; k++ {
-		labels := map[string]string{}
-		for _, l := range propLabels {
-			if r.Intn(4) > 0 { // sometimes absent
-				labels[l] = propValues[r.Intn(len(propValues))]
-			}
-		}
+		labels := space.randLabels(r, true)
 		for _, tenant := range propTenants {
 			want := matchTerms(in, tenant, labels)
 			var got bool
@@ -258,10 +316,7 @@ func checkEquivalence(t *testing.T, seed int64) {
 	// Disjoint must be sound: if claimed, no label set matches two normalised terms of one tenant.
 	if eff.Disjoint && !eff.Unrestricted {
 		for k := 0; k < 200; k++ {
-			labels := map[string]string{}
-			for _, l := range propLabels {
-				labels[l] = propValues[r.Intn(len(propValues))]
-			}
+			labels := space.randLabels(r, false)
 			// Terms of different tenants never match the same (tenant, labels), so count per tenant.
 			for _, tenant := range propTenants {
 				c := 0
@@ -281,6 +336,7 @@ func checkEquivalence(t *testing.T, seed int64) {
 func TestNormaliseSemanticEquivalence(t *testing.T) {
 	for seed := int64(0); seed < 3000; seed++ {
 		checkEquivalence(t, seed)
+		checkMixedEquivalence(t, seed)
 	}
 }
 
@@ -288,5 +344,8 @@ func FuzzNormaliseEquivalence(f *testing.F) {
 	for _, s := range []int64{0, 1, 42, 1 << 40} {
 		f.Add(s)
 	}
-	f.Fuzz(func(t *testing.T, seed int64) { checkEquivalence(t, seed) })
+	f.Fuzz(func(t *testing.T, seed int64) {
+		checkEquivalence(t, seed)
+		checkMixedEquivalence(t, seed)
+	})
 }

@@ -23,7 +23,23 @@ const (
 	ReasonTenantRequired              = "TenantRequired"
 	ReasonTenantNotAssigned           = "TenantNotAssigned"
 	ReasonCrossTenantUnionUnsupported = "CrossTenantUnionUnsupported"
+
+	// ReasonInvalidClusterScope: a rule does not state its cluster scope as PLAN §18.3 requires.
+	ReasonInvalidClusterScope = "InvalidClusterScope"
+	// ReasonTenantNotAllowed: a spoke policy uses a tenant that is not in SpokeCluster.spec.tenants (§18.9).
+	ReasonTenantNotAllowed = "TenantNotAllowed"
+	// ReasonMulticlusterDisabled: a SpokePolicy exists, but the static config has no multicluster block.
+	ReasonMulticlusterDisabled = "MulticlusterDisabled"
+	// ReasonSpokeClusterNotFound: no SpokeCluster has the name in SpokePolicy.spec.cluster.
+	ReasonSpokeClusterNotFound = "SpokeClusterNotFound"
+	// ReasonSpokeClusterInvalid: the SpokeCluster cannot be trusted (hub name, identity, duplicate).
+	ReasonSpokeClusterInvalid = "SpokeClusterInvalid"
+	// ReasonInvalidSpokePolicy: the SpokePolicy object itself is malformed (kind, spec, object name).
+	ReasonInvalidSpokePolicy = "InvalidSpokePolicy"
 )
+
+// KindSpokePolicy is the Result kind of a spoke policy. Its Result names the hub SpokePolicy object.
+const KindSpokePolicy = "SpokePolicy"
 
 // Matcher is a compiled label constraint. Regex matchers are fully anchored.
 type Matcher struct {
@@ -66,7 +82,9 @@ func (l *lazyRegexp) get() *regexp.Regexp {
 
 // CompiledRule is one rule of one policy, for exactly one backend.
 type CompiledRule struct {
-	// Policy identifies the source: "ClusterAccessPolicy/<name>" or "AccessPolicy/<namespace>/<name>".
+	// Policy identifies the source: "ClusterAccessPolicy/<name>", "AccessPolicy/<namespace>/<name>" or
+	// "SpokePolicy/<object name>". The object name of a SpokePolicy is a hash of the cluster, kind, namespace
+	// and name of the spoke policy (spokesync.ObjectName), so the names of different clusters cannot collide.
 	Policy string
 	// Backend is the backend name from the static config.
 	Backend string
@@ -76,7 +94,9 @@ type CompiledRule struct {
 	// Tenants is sorted and deduplicated; empty for single-tenant backends.
 	Tenants      []string
 	Unrestricted bool
-	// Matchers are ANDed. For AccessPolicy rules the implicit namespace matcher comes first.
+	// Matchers are ANDed. For AccessPolicy rules the implicit namespace matcher comes first, then the
+	// implicit cluster matcher (PLAN §18.3) of a spoke rule or, with multicluster, of a hub rule. For spoke
+	// ClusterAccessPolicy rules the implicit cluster matcher comes first.
 	Matchers []Matcher
 	// DeniedLabels is sorted and deduplicated. It includes the names of Redactions.
 	DeniedLabels []string
@@ -120,7 +140,9 @@ func Stricter(a, b Redaction) Redaction {
 
 // Result is the per-object outcome used to write status conditions.
 type Result struct {
-	Kind       string // "ClusterAccessPolicy" or "AccessPolicy"
+	// Kind is "ClusterAccessPolicy", "AccessPolicy" or KindSpokePolicy. For KindSpokePolicy, Name and
+	// Generation are those of the hub SpokePolicy object, so the status writer can find it.
+	Kind       string
 	Namespace  string // empty for cluster-scoped objects
 	Name       string
 	Generation int64

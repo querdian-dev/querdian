@@ -567,26 +567,26 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] Shared contracts for the parallel tasks: `internal/spokesync` (wire types, `Digest`,
         `ObjectName`, `IdentityMatchesName`), `CompiledRule.Origin`, and `config.ValidLabelName`.
 
-### [ ] T6.2 — Policy origin in the compiler
+### [x] T6.2 — Policy origin in the compiler
 - **Depends on:** T6.1
 - **Files:** `internal/policy/`
 - **Acceptance:**
-  - [ ] The compiler input keeps the origin of each policy. Namespace labels and policy names do not
+  - [x] The compiler input keeps the origin of each policy. Namespace labels and policy names do not
         collide across clusters.
-  - [ ] Each spoke rule and each hub `AccessPolicy` rule carries the implicit cluster matcher.
-  - [ ] A spoke rule never compiles to `Unrestricted: true`. A test covers spoke `unrestricted: true`,
+  - [x] Each spoke rule and each hub `AccessPolicy` rule carries the implicit cluster matcher.
+  - [x] A spoke rule never compiles to `Unrestricted: true`. A test covers spoke `unrestricted: true`,
         and a `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers. An `AccessPolicy` rule
         with no matchers stays valid.
-  - [ ] A `SpokePolicy` grants nothing in these conditions: no `multicluster` block, no `SpokeCluster`,
+  - [x] A `SpokePolicy` grants nothing in these conditions: no `multicluster` block, no `SpokeCluster`,
         a `SpokeCluster` with the name of `hubCluster`, or a `spec.identity` whose last path segment is
         not equal to the name of the `SpokeCluster`. A test covers a suffix that is not a full path
         segment, such as `.../agent/x-cluster-a` for `cluster-a`.
-  - [ ] The cluster scope rule in §18.3 applies for each backend of a hub rule, with the new reason
+  - [x] The cluster scope rule in §18.3 applies for each backend of a hub rule, with the new reason
         `InvalidClusterScope`. Tests cover `NotEqual` and `RegexNoMatch` on the cluster label, `allClusters`
         with a cluster matcher, a rule with several backends, and a spoke rule with `allClusters`.
-  - [ ] Without the `multicluster` block, `allClusters` has no effect and the policy stays valid.
-  - [ ] The tenant allow-list (§18.9) applies, with the new reason `TenantNotAllowed`.
-  - [ ] A fuzz target shows this property after DNF normalisation: a label set of a different cluster
+  - [x] Without the `multicluster` block, `allClusters` has no effect and the policy stays valid.
+  - [x] The tenant allow-list (§18.9) applies, with the new reason `TenantNotAllowed`.
+  - [x] A fuzz target shows this property after DNF normalisation: a label set of a different cluster
         never matches the terms of a spoke alone, also if the rule has its own cluster matchers. Use
         `FuzzNormaliseEquivalence` for a mix of hub and spoke terms.
 

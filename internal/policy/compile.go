@@ -14,8 +14,12 @@ type Input struct {
 	Config          *config.Config
 	ClusterPolicies []v1.ClusterAccessPolicy
 	Policies        []v1.AccessPolicy
-	// NamespaceLabels maps namespace name to its labels.
+	// NamespaceLabels maps namespace name to its labels. It describes hub namespaces only.
 	NamespaceLabels map[string]map[string]string
+	// SpokeClusters and SpokePolicies are the hub objects of a multi-cluster deployment (PLAN §18.4). Without
+	// the multicluster block, every SpokePolicy grants nothing.
+	SpokeClusters []v1.SpokeCluster
+	SpokePolicies []v1.SpokePolicy
 }
 
 // compileError carries the status reason for a failing policy.
@@ -149,6 +153,19 @@ func Compile(in Input) *Compiled {
 		}
 		c.Results = append(c.Results, res)
 	}
+	spokes := indexSpokeClusters(in.SpokeClusters)
+	for i := range in.SpokePolicies {
+		p := &in.SpokePolicies[i]
+		res := Result{Kind: KindSpokePolicy, Name: p.Name, Generation: p.Generation}
+		rules, subj, err := compileSpokePolicy(in.Config, spokes, p)
+		if err != nil {
+			res.Reason, res.Message = err.reason, err.msg
+		} else {
+			res.Ready, res.Reason, res.Message = true, ReasonCompiled, "policy is active"
+			acc = append(acc, accepted{len(c.Results), rules, subj.Users, subj.Groups})
+		}
+		c.Results = append(c.Results, res)
+	}
 
 	for _, a := range acc {
 		for _, u := range sortedUnique(a.users) {
@@ -263,9 +280,88 @@ func allEqual(perTenant map[string]map[string]bool) bool {
 }
 
 func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*CompiledRule, *compileError) {
-	policy := "ClusterAccessPolicy/" + p.Name
+	return compileClusterRules(cfg, "ClusterAccessPolicy/"+p.Name, p.Spec.Rules, origin{})
+}
+
+func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]string) ([]*CompiledRule, *compileError) {
+	tenant := strings.TrimSpace(nsLabels[TenantLabel])
+	return compileNamespacedRules(cfg, "AccessPolicy/"+p.Namespace+"/"+p.Name, p.Namespace, p.Spec.Rules, tenant, origin{})
+}
+
+// origin is the source of a policy (PLAN §18.3): the hub (zero value) or a trusted spoke.
+type origin struct {
+	// spoke is the SpokeCluster name; empty for a hub policy.
+	spoke string
+	// tenants is the tenant allow-list of the spoke (SpokeCluster.spec.tenants).
+	tenants map[string]bool
+}
+
+// implicitCluster returns the value of the implicit cluster matcher for a rule, if the rule has one: the spoke
+// name for each spoke rule, and hubCluster for a hub AccessPolicy rule under multicluster.
+func implicitCluster(cfg *config.Config, o origin, namespaced bool) (string, bool) {
+	switch {
+	case o.spoke != "":
+		return o.spoke, true
+	case namespaced && cfg.Multicluster != nil:
+		return cfg.Multicluster.HubCluster, true
+	}
+	return "", false
+}
+
+// clusterMatcher builds the implicit matcher clusterLabel="value" for a backend.
+func clusterMatcher(b *config.Backend, value string) (Matcher, *compileError) {
+	if value == "" {
+		// clusterLabel="" also matches data without a cluster label.
+		return Matcher{}, fail(ReasonInvalidClusterScope, "the cluster value for backend %q is empty", b.Name)
+	}
+	return compileMatcher(b.Type, v1.Matcher{Name: b.ClusterLabel, Op: v1.MatchEqual, Value: value})
+}
+
+// checkClusterScope applies the scope rule of PLAN §18.3 to one backend of a ClusterAccessPolicy rule. Without
+// the multicluster block, allClusters has no effect and every rule passes.
+func checkClusterScope(cfg *config.Config, o origin, ri int, b *config.Backend, r *v1.ClusterRule, ms []Matcher) *compileError {
+	if cfg.Multicluster == nil {
+		return nil
+	}
+	if o.spoke != "" {
+		if r.AllClusters {
+			return fail(ReasonInvalidClusterScope, "rules[%d]: allClusters is not allowed in a spoke policy", ri)
+		}
+		return nil // the implicit cluster matcher gives the scope
+	}
+	if r.Unrestricted {
+		if r.AllClusters {
+			return fail(ReasonInvalidClusterScope, "rules[%d]: allClusters and unrestricted are mutually exclusive", ri)
+		}
+		return nil
+	}
+	var named, bounded bool
+	for _, m := range ms {
+		if m.Name != b.ClusterLabel {
+			continue
+		}
+		named = true
+		// NotEqual and RegexNoMatch also match each new spoke, so they do not state a scope.
+		if m.Op == v1.MatchEqual || m.Op == v1.MatchRegexMatch {
+			bounded = true
+		}
+	}
+	if r.AllClusters {
+		if named {
+			return fail(ReasonInvalidClusterScope, "rules[%d]: allClusters must not be used with a matcher on cluster label %q of backend %q", ri, b.ClusterLabel, b.Name)
+		}
+		return nil
+	}
+	if !bounded {
+		return fail(ReasonInvalidClusterScope, "rules[%d]: backend %q: add an Equal or RegexMatch matcher on cluster label %q, or set allClusters", ri, b.Name, b.ClusterLabel)
+	}
+	return nil
+}
+
+func compileClusterRules(cfg *config.Config, policy string, rules []v1.ClusterRule, o origin) ([]*CompiledRule, *compileError) {
 	var out []*CompiledRule
-	for ri, r := range p.Spec.Rules {
+	for ri := range rules {
+		r := &rules[ri]
 		for _, bn := range sortedUnique(r.Backends) {
 			b, ok := cfg.Backend(bn)
 			if !ok {
@@ -277,6 +373,10 @@ func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*Com
 			if r.Unrestricted && len(r.Matchers) > 0 {
 				return nil, fail(ReasonInvalidMatcher, "rules[%d]: unrestricted rules must not have matchers", ri)
 			}
+			if !r.Unrestricted && len(r.Matchers) == 0 {
+				// The CRD rejects this too; the compiler does not rely on CEL (PLAN §18.4).
+				return nil, fail(ReasonInvalidMatcher, "rules[%d]: a rule without matchers must set unrestricted", ri)
+			}
 			ms, err := compileMatchers(b.Type, r.Matchers)
 			if err != nil {
 				return nil, err
@@ -285,9 +385,24 @@ func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*Com
 			if err != nil {
 				return nil, err
 			}
-			cr := &CompiledRule{Policy: policy, Backend: bn, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny, Redactions: red}
+			if err := checkClusterScope(cfg, o, ri, b, r, ms); err != nil {
+				return nil, err
+			}
+			cr := &CompiledRule{Policy: policy, Backend: bn, Origin: o.spoke, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny, Redactions: red}
 			if b.TenantHeader != "" {
 				cr.Tenants = sortedUnique(r.Tenants)
+				if err := checkTenantsAllowed(o, ri, bn, cr.Tenants); err != nil {
+					return nil, err
+				}
+			}
+			if v, ok := implicitCluster(cfg, o, false); ok {
+				cm, err := clusterMatcher(b, v)
+				if err != nil {
+					return nil, err
+				}
+				// A spoke rule never compiles to Unrestricted: its widest grant is the whole spoke.
+				cr.Unrestricted = false
+				cr.Matchers = append([]Matcher{cm}, ms...)
 			}
 			out = append(out, cr)
 		}
@@ -295,10 +410,24 @@ func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*Com
 	return out, nil
 }
 
-func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]string) ([]*CompiledRule, *compileError) {
-	policy := "AccessPolicy/" + p.Namespace + "/" + p.Name
+// checkTenantsAllowed applies the tenant allow-list of a spoke (PLAN §18.9). Hub policies have no allow-list.
+func checkTenantsAllowed(o origin, ri int, bn string, tenants []string) *compileError {
+	if o.spoke == "" {
+		return nil
+	}
+	for _, t := range tenants {
+		if !o.tenants[t] {
+			return fail(ReasonTenantNotAllowed, "rules[%d]: backend %q: tenant %q is not in the tenants of SpokeCluster %q", ri, bn, t, o.spoke)
+		}
+	}
+	return nil
+}
+
+// compileNamespacedRules compiles the rules of an AccessPolicy in namespace ns. tenant is the tenant of the
+// namespace (trimmed; empty if none) and is used only for backends with a tenant header.
+func compileNamespacedRules(cfg *config.Config, policy, ns string, rules []v1.Rule, tenant string, o origin) ([]*CompiledRule, *compileError) {
 	var out []*CompiledRule
-	for ri, r := range p.Spec.Rules {
+	for ri, r := range rules {
 		for _, bn := range sortedUnique(r.Backends) {
 			b, ok := cfg.Backend(bn)
 			if !ok {
@@ -306,15 +435,29 @@ func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]s
 			}
 			var tenants []string
 			if b.TenantHeader != "" {
-				t := strings.TrimSpace(nsLabels[TenantLabel])
-				if t == "" {
-					return nil, fail(ReasonTenantNotAssigned, "rules[%d]: namespace %q lacks label %s required by backend %q", ri, p.Namespace, TenantLabel, bn)
+				if tenant == "" {
+					if o.spoke != "" {
+						return nil, fail(ReasonTenantNotAssigned, "rules[%d]: namespace %q has no label %s and SpokeCluster %q has no defaultTenant, but backend %q requires a tenant", ri, ns, TenantLabel, o.spoke, bn)
+					}
+					return nil, fail(ReasonTenantNotAssigned, "rules[%d]: namespace %q lacks label %s required by backend %q", ri, ns, TenantLabel, bn)
 				}
-				tenants = []string{t}
+				tenants = []string{tenant}
+				if err := checkTenantsAllowed(o, ri, bn, tenants); err != nil {
+					return nil, err
+				}
 			}
-			ns, err := compileMatcher(b.Type, v1.Matcher{Name: b.NamespaceLabel, Op: v1.MatchEqual, Value: p.Namespace})
+			implicit := make([]Matcher, 0, 2)
+			nsm, err := compileMatcher(b.Type, v1.Matcher{Name: b.NamespaceLabel, Op: v1.MatchEqual, Value: ns})
 			if err != nil {
 				return nil, err
+			}
+			implicit = append(implicit, nsm)
+			if v, ok := implicitCluster(cfg, o, true); ok {
+				cm, err := clusterMatcher(b, v)
+				if err != nil {
+					return nil, err
+				}
+				implicit = append(implicit, cm)
 			}
 			ms, err := compileMatchers(b.Type, r.Matchers)
 			if err != nil {
@@ -325,8 +468,8 @@ func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]s
 				return nil, err
 			}
 			out = append(out, &CompiledRule{
-				Policy: policy, Backend: bn, Tenants: tenants,
-				Matchers: append([]Matcher{ns}, ms...), DeniedLabels: deny, Redactions: red,
+				Policy: policy, Backend: bn, Origin: o.spoke, Tenants: tenants,
+				Matchers: append(implicit, ms...), DeniedLabels: deny, Redactions: red,
 			})
 		}
 	}
