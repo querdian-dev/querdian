@@ -140,8 +140,8 @@ hack/                    scripts (quickstart, codegen)
 
 ## 4. API (CRDs) — `policy.querdian.dev/v1alpha1`
 
-Two kinds. Both only **grant** access; there are no deny policies (except `labels.deny`, which
-narrows a grant). An invalid policy therefore grants nothing → fail closed by construction.
+Two kinds (§18 adds hub objects for spoke policies; not implemented). Both only **grant** access;
+there are no deny policies (except `labels.deny`, which narrows a grant). An invalid policy therefore grants nothing → fail closed by construction.
 
 ### 4.1 ClusterAccessPolicy (cluster-scoped, platform admins)
 
@@ -831,6 +831,7 @@ from Janus.
 | M3 LogQL | `pkg/logql`, enforcer, fan-out + merges, tail, tests | 3 weeks |
 | M4 TraceQL | `pkg/traceql`, enforcer, redaction, traceByID filter, tests | 2 weeks |
 | M5 Release 0.1.0 | chart, image, quickstart, docs, dashboard, OpenSSF | 1.5 weeks |
+| M6 Multi-cluster | §18: origin in the compiler, time limit, receiver, agent, tests | not estimated |
 
 M2, M3 and M4 can run in parallel once M1 is done (separate agents).
 
@@ -844,3 +845,294 @@ M2, M3 and M4 can run in parallel once M1 is done (separate agents).
    response fields that expose root span data (`T0.5`).
 4. LogQL: `or`/`and`/`unless` support in metric queries, complete pipeline stage keyword list
    from docs (`T0.5`).
+
+---
+
+## 18. Multi-cluster (design, not implemented)
+
+Status: this section is a design. No code exists yet. The tasks are in `TASKS.md`, milestone M6. The
+other sections of this plan describe the current code. T6.7 changes them when the code exists.
+
+### 18.1 Goal and terms
+
+The **hub** is the central MLA cluster. It runs one Querdian instance and the backends. A **spoke** is
+a cluster that sends telemetry to the hub. Each spoke supplies an mTLS cert at ingest, and the ingest
+gateway sets a `cluster` label from that cert. Querdian must enforce the policies of all clusters.
+
+### 18.2 Main rule
+
+Querdian gets the cluster matcher from the **origin** of a policy, never from the policy text. The
+namespace matcher works the same way (§4.2). The current `AccessPolicy` has no cluster matcher, so a
+central deployment needs this design before teams can use `AccessPolicy` safely.
+
+### 18.3 Trust model
+
+| Policy source | Author | Compiled scope |
+|---|---|---|
+| Hub `ClusterAccessPolicy` | MLA platform admin | Its matchers, as in §4.1. Its scope must be explicit (see below). |
+| Hub `AccessPolicy` | Hub team | `cluster="<hubCluster>"`, `namespace="X"`, plus its matchers |
+| Spoke `ClusterAccessPolicy` | Spoke admin | `cluster="<spoke>"`, plus its matchers |
+| Spoke `AccessPolicy` | Spoke team | `cluster="<spoke>"`, `namespace="X"`, plus its matchers |
+
+- A spoke rule with `unrestricted: true` compiles to the single matcher `cluster="<spoke>"`. A spoke
+  rule must never compile to `Unrestricted: true`, because Querdian does not parse the queries of
+  unrestricted users.
+- Spoke matchers on the cluster label stay ANDed with the implicit matcher, so they can only narrow.
+  `mergeSingleLabel` skips a label that occurs twice in a term. A fuzz target must pin this property.
+- Under `multicluster`, each hub `ClusterAccessPolicy` rule must state its cluster scope, because a new
+  spoke must not silently widen a grant. For each backend of the rule, one of these must be true:
+  - The rule has an `Equal` or `RegexMatch` matcher on the `clusterLabel` of that backend. A `NotEqual`
+    or `RegexNoMatch` matcher does not count, because it also matches each new spoke.
+  - The rule sets `allClusters: true`, and it has no matcher on the `clusterLabel` of that backend.
+  - The rule sets `unrestricted: true`.
+
+  Otherwise, the policy is invalid (new reason `InvalidClusterScope`) and grants nothing. The field exists
+  because `cluster=~".+"` is an open regex, and Tempo tag lookups reject an open regex with `400`.
+- A spoke rule with `allClusters: true` is invalid. Without the `multicluster` block, the field has no
+  effect, so admins can prepare policies before they set the block.
+- A spoke admin can grant the data of that spoke to any subject. The design permits this. All clusters
+  use one OIDC issuer, so group names have the same meaning everywhere.
+
+### 18.4 Configuration
+
+Without the `multicluster` block, Querdian works as it does today. It does not start informers for the
+new kinds, and a `SpokePolicy` grants nothing.
+
+```yaml
+multicluster:
+  hubCluster: mla            # cluster label value of hub telemetry
+  maxStaleness: 48h          # default
+backends:
+  - name: metrics
+    namespaceLabel: namespace
+    clusterLabel: cluster    # required on every backend if multicluster is set
+```
+
+Querdian refuses to start in these conditions:
+
+- `hubCluster` is empty. A matcher `cluster=""` also accepts data with no cluster label.
+- `maxStaleness` is present with a zero or negative value. If it is absent, the default applies.
+- A backend has no `clusterLabel`, or the name is not valid for the backend type.
+- A backend has `clusterLabel`, but the `multicluster` block is absent. Without the block, a hub
+  `AccessPolicy` loses its cluster matcher and also matches namespace X of each spoke. This check stops an
+  accidental rollback.
+
+Querdian reads the static configuration at startup only, so each spoke has a cluster-scoped hub object:
+
+```yaml
+apiVersion: policy.querdian.dev/v1alpha1
+kind: SpokeCluster
+metadata:
+  name: cluster-a            # the cluster label value of this spoke
+spec:
+  identity: spiffe://mla.example.com/agent/cluster-a  # see 18.5
+  tenants: [tenant-a]        # allow-list; see 18.9
+  defaultTenant: tenant-a    # optional
+  maxStaleness: 168h         # optional override
+  suspended: false           # true stops the grants of this spoke; see 18.7
+status:
+  lastSyncTime: "2026-11-05T12:00:00Z"  # hub clock, written by the receiver
+  observedGeneration: 3      # metadata.generation at the last valid sync
+```
+
+- Only hub admins can write `spec`. The kind has a status subresource, and the receiver can write only
+  `status`.
+- If the name of a `SpokeCluster` is equal to `hubCluster`, all policies of that spoke grant nothing.
+  Otherwise, a spoke admin could grant hub data.
+
+The hub stores a spoke policy as a cluster-scoped `SpokePolicy`, one object for each spoke policy.
+
+- Its fields are the cluster, the kind, the namespace, the name, the generation of the spoke object, the
+  policy spec, and the tenant label value of its namespace.
+- The object name is a hash of the cluster, the kind, the namespace and the name, so names cannot collide.
+  The receiver does not change or delete an object with a different `cluster` value.
+- The spec has typed fields and the same CEL rules as the spoke kinds. For a `ClusterAccessPolicy` rule,
+  on the hub and on spokes, the compiler also rejects `unrestricted: false` with no matchers.
+  The compiler does not rely on CEL only. An `AccessPolicy` rule with no matchers stays valid.
+- Only the receiver can write its `spec`. The Querdian leader writes its `status`.
+- The receiver sets an owner reference to the `SpokeCluster`, so a deletion of the `SpokeCluster` also
+  removes its objects. A `SpokePolicy` whose cluster has no `SpokeCluster` grants nothing.
+
+### 18.5 Policy transport
+
+```
+spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePolicy, SpokeCluster.status
+          ^ reads CAP, AP, Namespace                                       | informers
+          | from the spoke API server                                      v
+                                                                       [ querdian ] snapshot
+```
+
+- `querdian agent` runs in each spoke. It only needs an outbound path to the receiver. Its RBAC is
+  `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on
+  `accesspolicies/status` and `clusteraccesspolicies/status`, and `coordination.k8s.io/leases` in its own
+  namespace. It uses leader election, so one agent sends at a time.
+- `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
+  The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
+- The receiver uses leader election, and only the leader reports ready. The write order and the limit on
+  changed syncs hold only if one receiver handles a cluster at a time. The receiver is not in the read
+  path, and the time limit is long, so a short failover does no harm.
+- If a sync for a cluster is in progress, the receiver answers a second sync for that cluster with `409`,
+  and the agent retries. A queue could let an old state overwrite a new state.
+- After a failover, an old leader can still finish some writes. The digest then differs, so the next
+  heartbeat repairs the state.
+- The agent sends a digest at each heartbeat (default each minute) and the full state if the digest
+  differs. The full state replaces the earlier state, which makes each sync idempotent.
+- The receiver calculates its digest from the stored objects. It writes new and changed objects first,
+  then deletes, and sets `lastSyncTime` last. A failed sync leaves a digest that differs, so the
+  next heartbeat cannot renew `lastSyncTime` while a revoked grant stays.
+- The agent sends nothing until it has a complete read of the spoke API server. An empty state from an
+  agent at startup must not delete grants.
+- The sync reply carries the status conditions of each policy. The agent writes them to the spoke
+  objects, so spoke teams can use `kubectl get ap`. The reply keeps messages about the policy itself, for
+  example a bad regex. It omits `CrossTenantUnionUnsupported`, because that condition can show the grants
+  of a shared subject in other tenants.
+- The conditions show the state of the last compile, so a new policy shows its state at the next
+  heartbeat. Each condition carries the generation of the spoke object that it describes.
+
+**Identity.** The receiver terminates mTLS itself and takes the cluster from the cert only. The protocol
+has no cluster field.
+
+1. The receiver has its own required client CA setting. The hub controls this CA, and no spoke can issue
+   certs from it. Otherwise, a spoke admin can issue a cert for a different spoke.
+2. The identity is the URI SAN of the client cert. The receiver rejects a cert with no URI SAN or with
+   several URI SANs.
+3. The receiver compares the identity with `spec.identity` for an exact match. It rejects an unknown
+   identity. It also rejects an identity that occurs on two `SpokeCluster` objects.
+4. The last path segment of `spec.identity` must be equal to the `SpokeCluster` name. Otherwise, the
+   policies of that spoke grant nothing. This check finds an identity on the wrong `SpokeCluster`.
+5. At the start of each sync, the receiver reads the `SpokeCluster` directly from the API server. It uses
+   this value for the checks of identity, suspension and generation. It writes `status` with a
+   `resourceVersion` precondition, so a sync that overlaps a spec change fails and validates nothing.
+
+**Use a dedicated agent cert.** The agent cert must not be the ingest cert, and its identity must not
+occur on an ingest cert. Otherwise, the theft of a write-only telemetry credential also gives the power
+to grant read access. This means that the agent cert and the ingest cert have different identities. The
+`SpokeCluster` object, which only a hub admin can write, is the link between the two.
+
+**Unknown input.** The receiver has one path and one method. It rejects the whole sync for each of these
+conditions, and it does not renew `lastSyncTime`:
+
+- an unknown path, method, kind or field;
+- a kind that does not agree with the spec;
+- an `AccessPolicy` with an empty namespace, or a `ClusterAccessPolicy` with a namespace;
+- a body or an object count above the limit;
+- more than one changed sync from one cluster in 10 seconds;
+- any sync while the `SpokeCluster` is suspended.
+
+### 18.6 Time limit
+
+If a spoke does not sync, its policies stop after `maxStaleness` (default 48 hours). Hub policies do not
+expire.
+
+1. The clock starts at `lastSyncTime`. The receiver sets this value with the hub clock.
+2. An agent syncs only after a direct read of the spoke API server, not a read of its cache. Otherwise, an
+   agent that has lost its API server can renew old policies forever. The receiver cannot verify this rule.
+3. `Resolve` does the check for each request, because expiry makes no event for a snapshot rebuild.
+   The deadlines are in a table outside the snapshot, so a heartbeat does not start a recompile. A
+   replica reports ready only when the table has its first complete state.
+4. Querdian treats a spoke as expired if any of these conditions is true:
+   - The deadline table has no entry for the spoke.
+   - `suspended` is true.
+   - `lastSyncTime` is absent, or more than five minutes in the future.
+   - `status.observedGeneration` differs from `metadata.generation`.
+   - `spec.maxStaleness` is zero or negative.
+5. An expired rule loses its terms but keeps its `labels.deny` and `labels.redact`, so expiry only
+   narrows access.
+6. If no term remains, `Resolve` must return an error. The `ErrNoGrant` check in `Resolve` runs before
+   this filter, and `Normalise` returns no error for an empty term list. This case needs its own
+   check and test. The new reason is `policy_source_expired` with status 403. It does not name the cluster.
+7. The next valid sync restores the grants with no manual work.
+8. Each 10 seconds, a Loki tail checks the deadlines of the spokes that had active terms when the tail
+   started. If one has expired, the tail closes. A suspended spoke can still send logs, so
+   documentation alone is not sufficient here.
+
+Results that operators must accept:
+
+- Revocation of a spoke policy takes up to one heartbeat. During an outage, it takes up to the time limit.
+- The limit on changed syncs applies to the whole spoke, so it can delay a revocation by up to one retry.
+- A failure of an agent cert stops the sync only. The grants continue until the time limit.
+- A failure of the receiver, the network path or the hub API server expires all spokes after the time
+  limit. Hub grants stay active, and a hub admin can add a temporary hub `ClusterAccessPolicy`.
+- A change to `SpokeCluster.spec` stops the grants of that spoke until the next sync. If the spoke is
+  offline, the grants stay stopped until it returns.
+
+Metric: `querdian_cluster_policy_age_seconds{cluster}`. The chart includes an optional alert at 24 hours.
+
+### 18.7 Stolen agent cert
+
+The time limit gives no protection against a stolen agent cert, because the holder can renew
+`lastSyncTime`. The holder can write any grant for that spoke, but not for a different spoke. The first
+version has no certificate revocation list. A hub admin does these steps:
+
+1. Set `suspended: true`. The receiver rejects each sync. New requests stop when the replica sees the
+   change, normally in about one second. Open tails close within 10 seconds.
+2. Issue a new agent cert with a new URI SAN, then change `spec.identity`. The old cert no longer matches.
+3. Delete the `SpokePolicy` objects of the spoke. This also removes `labels.deny` and `labels.redact` of
+   forged rules, which a suspended spoke keeps (§18.6, rule 5).
+4. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+
+### 18.8 Label integrity
+
+§12 applies to the cluster label also. The ingest gateway must **overwrite** the label for all three
+signals, not only add it. Writers on the hub that bypass the gateway, and ruler output, must not be
+able to set the label of a spoke. The `SpokeCluster` name must also be equal to the label value that the
+gateway writes, and cluster names must not change.
+
+Hub telemetry must carry `cluster="<hubCluster>"`, also from ruler output and from hub agents. If it does
+not, hub `AccessPolicy` users see no data, and they get no error.
+
+Querdian cannot verify any of these requirements. A startup check cannot help, because Querdian does not
+query backends at startup, and an empty result does not prove a wrong configuration. The operations guide
+gives a verification step for each signal.
+
+Do these steps in this order. A later step does not repair a mistake in an earlier step:
+
+1. Examine each hub `ClusterAccessPolicy`. Add a cluster matcher or `allClusters: true` where necessary.
+2. Make sure that hub telemetry carries `cluster="<hubCluster>"`.
+3. Set the `multicluster` block and `clusterLabel`.
+4. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
+   namespace X also matches namespace X of that spoke. No check can find this condition.
+
+### 18.9 Tenants
+
+The design does not assume a tenant setup. For a backend with a `tenantHeader`:
+
+- The tenants of a spoke `ClusterAccessPolicy` rule must be a subset of `SpokeCluster.spec.tenants`.
+- The tenant of a spoke `AccessPolicy` comes from its namespace label, then from `defaultTenant`. The
+  value must be in `spec.tenants`.
+- Any other value makes the policy invalid (new reason `TenantNotAllowed`). Because of this, a spoke
+  admin cannot select a tenant that the hub did not allow.
+- A smaller allow-list must remove the grant, so a change to `spec.tenants` starts a recompile.
+
+| Setup | Result |
+|---|---|
+| No tenant header | Terms have no tenant. Terms of several clusters merge where §6.3 permits it. |
+| One tenant for all clusters | The same as above, with one tenant header. |
+| One tenant for each cluster | A user with grants in two clusters has a cross-tenant union, and the cluster matcher makes the terms differ. This needs `tenantFederation: tenantIdLabel`. Otherwise the result is `403 cross_tenant_union_unsupported`. Today this rejection applies to Tempo and to Prometheus/Thanos. |
+| Several tenants for each cluster | The rules of the row above apply if the user's terms span tenants. |
+
+The setups with a cross-tenant union also get the current limits of federated tenants. On Loki,
+tenant-bound metadata endpoints and `tail` have limits, and on Tempo, tenant-bound terms give `400`
+(see `docs/limitations.md`).
+
+### 18.10 Known limits
+
+- **Interference between clusters.** A spoke admin can name a shared group in a policy. Its
+  `labels.deny` and `labels.redact` then apply to the whole request of that group (§6.3), also for other
+  clusters. Too many terms give that group `403 policy_too_complex` everywhere. A rule for one tenant can
+  also change a hub grant across tenants to `403 cross_tenant_union_unsupported`. No data leaks, but one
+  spoke can reduce access to the data of other spokes.
+- **Term growth.** The same namespace in several clusters merges to one term. Different namespaces in
+  different clusters do not merge, and a merge would over-grant. Such users reach `maxPolicyTerms`, the
+  or-lift limits and `maxFanout` more quickly.
+- **Old hub data.** Hub data from before the migration has no cluster label. Hub `AccessPolicy` users lose
+  access to it until it leaves retention. Querdian does not accept `cluster=""` for them, because that adds
+  a grant on all data with no label. A hub rule with `allClusters: true` still matches this data.
+- **Traces across clusters.** Redaction stays safe (§7.4), but partial traces become normal. A user with
+  a grant for one cluster cannot use `rootName`.
+
+### 18.11 Open items
+
+1. Interference: a limit for each cluster on the rules for one subject, or deny rules for each term.
+2. One tenant for each cluster: a term could omit the `__tenant_id__` binding if ingest proves that a
+   tenant holds only one cluster. Querdian cannot verify this, so it stays out of the first version.
