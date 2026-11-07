@@ -140,8 +140,8 @@ hack/                    scripts (quickstart, codegen)
 
 ## 4. API (CRDs) — `policy.querdian.dev/v1alpha1`
 
-Two kinds (§18 adds hub objects for spoke policies; not implemented). Both only **grant** access; there are no deny policies (except `labels.deny`, which
-narrows a grant). An invalid policy therefore grants nothing → fail closed by construction.
+Two kinds (§18 adds hub objects for spoke policies; not implemented). Both only **grant** access;
+there are no deny policies (except `labels.deny`, which narrows a grant). An invalid policy therefore grants nothing → fail closed by construction.
 
 ### 4.1 ClusterAccessPolicy (cluster-scoped, platform admins)
 
@@ -869,7 +869,7 @@ central deployment needs this design before teams can use `AccessPolicy` safely.
 
 | Policy source | Author | Compiled scope |
 |---|---|---|
-| Hub `ClusterAccessPolicy` | MLA platform admin | Global, as in §4.1. It can span clusters. |
+| Hub `ClusterAccessPolicy` | MLA platform admin | Its matchers, as in §4.1. Its scope must be explicit (see below). |
 | Hub `AccessPolicy` | Hub team | `cluster="<hubCluster>"`, `namespace="X"`, plus its matchers |
 | Spoke `ClusterAccessPolicy` | Spoke admin | `cluster="<spoke>"`, plus its matchers |
 | Spoke `AccessPolicy` | Spoke team | `cluster="<spoke>"`, `namespace="X"`, plus its matchers |
@@ -879,6 +879,17 @@ central deployment needs this design before teams can use `AccessPolicy` safely.
   unrestricted users.
 - Spoke matchers on the cluster label stay ANDed with the implicit matcher, so they can only narrow.
   `mergeSingleLabel` skips a label that occurs twice in a term. A fuzz target must pin this property.
+- Under `multicluster`, each hub `ClusterAccessPolicy` rule must state its cluster scope, because a new
+  spoke must not silently widen a grant. For each backend of the rule, one of these must be true:
+  - The rule has an `Equal` or `RegexMatch` matcher on the `clusterLabel` of that backend. A `NotEqual`
+    or `RegexNoMatch` matcher does not count, because it also matches each new spoke.
+  - The rule sets `allClusters: true`, and it has no matcher on the `clusterLabel` of that backend.
+  - The rule sets `unrestricted: true`.
+
+  Otherwise, the policy is invalid (new reason `InvalidClusterScope`) and grants nothing. The field exists
+  because `cluster=~".+"` is an open regex, and Tempo tag lookups reject an open regex with `400`.
+- A spoke rule with `allClusters: true` is invalid. Without the `multicluster` block, the field has no
+  effect, so admins can prepare policies before they set the block.
 - A spoke admin can grant the data of that spoke to any subject. The design permits this. All clusters
   use one OIDC issuer, so group names have the same meaning everywhere.
 
@@ -952,10 +963,18 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
 ```
 
 - `querdian agent` runs in each spoke. It only needs an outbound path to the receiver. Its RBAC is
-  `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on `*/status`, and
-  `coordination.k8s.io/leases` in its own namespace. It uses leader election, so one agent sends at a time.
+  `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on
+  `accesspolicies/status` and `clusteraccesspolicies/status`, and `coordination.k8s.io/leases` in its own
+  namespace. It uses leader election, so one agent sends at a time.
 - `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
   The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
+- The receiver uses leader election, and only the leader reports ready. The write order and the limit on
+  changed syncs hold only if one receiver handles a cluster at a time. The receiver is not in the read
+  path, and the time limit is long, so a short failover does no harm.
+- If a sync for a cluster is in progress, the receiver answers a second sync for that cluster with `409`,
+  and the agent retries. A queue could let an old state overwrite a new state.
+- After a failover, an old leader can still finish some writes. The digest then differs, so the next
+  heartbeat repairs the state.
 - The agent sends a digest at each heartbeat (default each minute) and the full state if the digest
   differs. The full state replaces the earlier state, which makes each sync idempotent.
 - The receiver calculates its digest from the stored objects. It writes new and changed objects first,
@@ -967,6 +986,8 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
   objects, so spoke teams can use `kubectl get ap`. The reply keeps messages about the policy itself, for
   example a bad regex. It omits `CrossTenantUnionUnsupported`, because that condition can show the grants
   of a shared subject in other tenants.
+- The conditions show the state of the last compile, so a new policy shows its state at the next
+  heartbeat. Each condition carries the generation of the spoke object that it describes.
 
 **Identity.** The receiver terminates mTLS itself and takes the cluster from the cert only. The protocol
 has no cluster field.
@@ -1022,7 +1043,8 @@ expire.
    check and test. The new reason is `policy_source_expired` with status 403. It does not name the cluster.
 7. The next valid sync restores the grants with no manual work.
 8. Each 10 seconds, a Loki tail checks the deadlines of the spokes that had active terms when the tail
-   started. If one has expired, the tail closes. A suspended spoke can still send logs, so documentation alone is not sufficient here.
+   started. If one has expired, the tail closes. A suspended spoke can still send logs, so
+   documentation alone is not sufficient here.
 
 Results that operators must accept:
 
@@ -1053,8 +1075,23 @@ version has no certificate revocation list. A hub admin does these steps:
 
 §12 applies to the cluster label also. The ingest gateway must **overwrite** the label for all three
 signals, not only add it. Writers on the hub that bypass the gateway, and ruler output, must not be
-able to set the label of a spoke. Querdian cannot verify this. The `SpokeCluster` name must also be
-equal to the label value that the gateway writes, and cluster names must not change.
+able to set the label of a spoke. The `SpokeCluster` name must also be equal to the label value that the
+gateway writes, and cluster names must not change.
+
+Hub telemetry must carry `cluster="<hubCluster>"`, also from ruler output and from hub agents. If it does
+not, hub `AccessPolicy` users see no data, and they get no error.
+
+Querdian cannot verify any of these requirements. A startup check cannot help, because Querdian does not
+query backends at startup, and an empty result does not prove a wrong configuration. The operations guide
+gives a verification step for each signal.
+
+Do these steps in this order. A later step does not repair a mistake in an earlier step:
+
+1. Examine each hub `ClusterAccessPolicy`. Add a cluster matcher or `allClusters: true` where necessary.
+2. Make sure that hub telemetry carries `cluster="<hubCluster>"`.
+3. Set the `multicluster` block and `clusterLabel`.
+4. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
+   namespace X also matches namespace X of that spoke. No check can find this condition.
 
 ### 18.9 Tenants
 
@@ -1088,6 +1125,9 @@ tenant-bound metadata endpoints and `tail` have limits, and on Tempo, tenant-bou
 - **Term growth.** The same namespace in several clusters merges to one term. Different namespaces in
   different clusters do not merge, and a merge would over-grant. Such users reach `maxPolicyTerms`, the
   or-lift limits and `maxFanout` more quickly.
+- **Old hub data.** Hub data from before the migration has no cluster label. Hub `AccessPolicy` users lose
+  access to it until it leaves retention. Querdian does not accept `cluster=""` for them, because that adds
+  a grant on all data with no label. A hub rule with `allClusters: true` still matches this data.
 - **Traces across clusters.** Redaction stays safe (§7.4), but partial traces become normal. A user with
   a grant for one cluster cannot use `rootName`.
 

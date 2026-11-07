@@ -561,6 +561,7 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [ ] The `multicluster` block and `clusterLabel` exist. A config without the block behaves as today.
   - [ ] Querdian refuses to start for each condition in §18.4. The check finds an explicit
         `maxStaleness: 0s`, which the current default pattern would change to the default.
+  - [ ] `ClusterRule` has the field `allClusters`. A CEL rule rejects it together with `unrestricted: true`.
   - [ ] The `SpokeCluster` and `SpokePolicy` kinds exist, with envtest coverage. Both have a status
         subresource. `SpokePolicy` has typed fields and the CEL rules of the spoke kinds.
 
@@ -575,8 +576,13 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         and a `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers. An `AccessPolicy` rule
         with no matchers stays valid.
   - [ ] A `SpokePolicy` grants nothing in these conditions: no `multicluster` block, no `SpokeCluster`,
-        a `SpokeCluster` with the name of `hubCluster`, or a `spec.identity` that does not end with the
-        name of the `SpokeCluster`.
+        a `SpokeCluster` with the name of `hubCluster`, or a `spec.identity` whose last path segment is
+        not equal to the name of the `SpokeCluster`. A test covers a suffix that is not a full path
+        segment, such as `.../agent/x-cluster-a` for `cluster-a`.
+  - [ ] The cluster scope rule in §18.3 applies for each backend of a hub rule, with the new reason
+        `InvalidClusterScope`. Tests cover `NotEqual` and `RegexNoMatch` on the cluster label, `allClusters`
+        with a cluster matcher, a rule with several backends, and a spoke rule with `allClusters`.
+  - [ ] Without the `multicluster` block, `allClusters` has no effect and the policy stays valid.
   - [ ] The tenant allow-list (§18.9) applies, with the new reason `TenantNotAllowed`.
   - [ ] A fuzz target shows this property after DNF normalisation: a label set of a different cluster
         never matches the terms of a spoke alone, also if the rule has its own cluster matchers. Use
@@ -616,6 +622,8 @@ The design is PLAN §18. Read it completely before you start a task in this mile
 - **Acceptance:**
   - [ ] `querdian receiver` terminates mTLS with its own required client CA and takes the cluster from
         the cert only.
+  - [ ] It uses leader election, and only the leader reports ready. A test shows that a second sync for a
+        cluster gets `409` during a running sync, and that a sync for a different cluster is not affected.
   - [ ] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
         unknown identity, and an identity on two `SpokeCluster` objects.
   - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
@@ -629,7 +637,8 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         sets an owner reference on each `SpokePolicy`.
   - [ ] A test stops a sync between the writes and the deletes. The next digest does not renew
         `lastSyncTime`.
-  - [ ] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`.
+  - [ ] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
+        condition carries the generation of the spoke object.
 
 ### [ ] T6.6 — Agent
 - **Depends on:** T6.5
@@ -639,7 +648,8 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [ ] It sends nothing until it has a complete read, and it reads the API server directly before each
         heartbeat. A test shows that an agent without an API server does not renew `lastSyncTime`.
   - [ ] It retries at least each minute after a failure, and it uses leader election.
-  - [ ] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5.
+  - [ ] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
+        wildcard on `status`. It handles `409` with a retry.
 
 ### [ ] T6.7 — Chart and documentation
 - **Depends on:** T6.4, T6.6
@@ -660,6 +670,9 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         close on expiry and on suspension.
   - [ ] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
         requirements for the agent CA, the removal of a spoke, and the risk of a rollback.
+  - [ ] The operations guide gives the ordered steps in §18.8, including the review of each hub
+        `ClusterAccessPolicy`, and a verification step for hub telemetry on each signal.
+  - [ ] `docs/limitations.md` and the policy guide describe the cluster scope rule and the old hub data.
   - [ ] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
   - [ ] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
   - [ ] The chart README and `CHANGELOG.md` describe the change.
@@ -672,6 +685,8 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [ ] A hub and two spokes on kind. A policy in spoke A never returns data of spoke B on all three
         backends, also for equal namespace names.
   - [ ] The suite covers all setups in §18.9, with the limits of federated tenants.
+  - [ ] A new spoke does not widen a hub rule with a cluster matcher. A hub `AccessPolicy` sees hub
+        telemetry with `cluster="<hubCluster>"`, and it does not see hub data with no cluster label.
   - [ ] Grants stop after the time limit and return after the next sync.
   - [ ] The procedure in §18.7 works. `suspended: true` stops new requests and closes an open Loki tail,
         and grants return only after a new valid sync.
