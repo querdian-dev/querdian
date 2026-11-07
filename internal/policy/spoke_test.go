@@ -123,7 +123,7 @@ func TestSpokeUserMatchersAndedWithClusterMatcher(t *testing.T) {
 		t.Fatalf("own cluster matchers must stay ANDed with the implicit matcher: %s", got)
 	}
 	// The snapshot gives no data of cluster-b: the term needs cluster="cluster-a" and cluster="cluster-b".
-	eff, err := NewSnapshot(c, cfg, 1).Resolve("", []string{"g"}, "metrics")
+	eff, err := NewSnapshot(c, cfg, 1).ResolveAt("", []string{"g"}, "metrics", tableWith("cluster-a"), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestSpokeUnrestrictedIsNeverUnrestricted(t *testing.T) {
 	}
 	snap := NewSnapshot(c, cfg, 1)
 	for b, label := range map[string]string{"metrics": "cluster", "logs": "k8s_cluster_name"} {
-		eff, err := snap.Resolve("", []string{"g"}, b)
+		eff, err := snap.ResolveAt("", []string{"g"}, b, tableWith("cluster-a"), time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
