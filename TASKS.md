@@ -643,15 +643,15 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
         condition carries the generation of the spoke object.
 
-### [ ] T6.6 — Agent
+### [x] T6.6 — Agent
 - **Depends on:** T6.5
 - **Files:** `cmd/querdian/`, new package `internal/agent/`
 - **Acceptance:**
-  - [ ] `querdian agent` sends a digest at each heartbeat and the full state if the digest differs.
-  - [ ] It sends nothing until it has a complete read, and it reads the API server directly before each
+  - [x] `querdian agent` sends a digest at each heartbeat and the full state if the digest differs.
+  - [x] It sends nothing until it has a complete read, and it reads the API server directly before each
         heartbeat. A test shows that an agent without an API server does not renew `lastSyncTime`.
-  - [ ] It retries at least each minute after a failure, and it uses leader election.
-  - [ ] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
+  - [x] It retries at least each minute after a failure, and it uses leader election.
+  - [x] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
         wildcard on `status`. It handles `409` with a retry.
 
 ### [ ] T6.7 — Chart and documentation
