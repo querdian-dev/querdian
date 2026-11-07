@@ -619,28 +619,28 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] An unreachable spoke does not affect startup or readiness.
   - [x] The leader writes status conditions on `SpokePolicy` objects.
 
-### [ ] T6.5 — Receiver
+### [x] T6.5 — Receiver
 - **Depends on:** T6.1
 - **Files:** `cmd/querdian/`, new package `internal/receiver/`
 - **Acceptance:**
-  - [ ] `querdian receiver` terminates mTLS with its own required client CA and takes the cluster from
+  - [x] `querdian receiver` terminates mTLS with its own required client CA and takes the cluster from
         the cert only.
-  - [ ] It uses leader election, and only the leader reports ready. A test shows that a second sync for a
+  - [x] It uses leader election, and only the leader reports ready. A test shows that a second sync for a
         cluster gets `409` during a running sync, and that a sync for a different cluster is not affected.
-  - [ ] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
+  - [x] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
         unknown identity, and an identity on two `SpokeCluster` objects.
-  - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
+  - [x] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
         crafted names such as cluster `a-b` with policy `c`, and cluster `a` with policy `b-c`.
-  - [ ] It reads the `SpokeCluster` directly at the start of each sync and writes `status` with a
+  - [x] It reads the `SpokeCluster` directly at the start of each sync and writes `status` with a
         `resourceVersion` precondition. A test shows that a sync that overlaps a spec change validates
         nothing.
-  - [ ] Tests reject the whole sync for each condition under "Unknown input" in §18.5, and
+  - [x] Tests reject the whole sync for each condition under "Unknown input" in §18.5, and
         `lastSyncTime` does not change.
-  - [ ] It writes changed objects, then deletes, then sets `lastSyncTime` and `observedGeneration`. It
+  - [x] It writes changed objects, then deletes, then sets `lastSyncTime` and `observedGeneration`. It
         sets an owner reference on each `SpokePolicy`.
-  - [ ] A test stops a sync between the writes and the deletes. The next digest does not renew
+  - [x] A test stops a sync between the writes and the deletes. The next digest does not renew
         `lastSyncTime`.
-  - [ ] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
+  - [x] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
         condition carries the generation of the spoke object.
 
 ### [ ] T6.6 — Agent
