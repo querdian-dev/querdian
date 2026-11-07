@@ -235,6 +235,21 @@ querdian_cluster_policy_age_seconds{cluster="cluster-b"} +Inf
 	}
 }
 
+func TestClusterPolicyExpired(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(observability.NewClusterPolicyExpired(func(time.Time) map[string]float64 {
+		return map[string]float64{"cluster-a": 0, "cluster-b": 1}
+	}))
+	want := `# HELP querdian_cluster_policy_expired 1 if the policies of a spoke cluster are expired or suspended, else 0.
+# TYPE querdian_cluster_policy_expired gauge
+querdian_cluster_policy_expired{cluster="cluster-a"} 0
+querdian_cluster_policy_expired{cluster="cluster-b"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "querdian_cluster_policy_expired"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestObserveWithoutSpan(*testing.T) {
 	m := observability.NewMetrics(prometheus.NewRegistry())
 	observability.ObserveWithExemplar(context.Background(), m.UpstreamDuration.WithLabelValues("b"), 1)

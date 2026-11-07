@@ -93,6 +93,7 @@ func run(args []string) error {
 	// incomplete: each spoke rule is expired, and with the multicluster block the replica is not ready.
 	deadlines := policy.NewDeadlines()
 	reg.MustRegister(observability.NewClusterPolicyAge(deadlines.Ages))
+	reg.MustRegister(observability.NewClusterPolicyExpired(deadlines.ExpiredStates))
 
 	scheme := runtime.NewScheme()
 	if err := controller.AddToScheme(scheme); err != nil {

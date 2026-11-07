@@ -212,3 +212,21 @@ func TestDeadlinesConcurrent(*testing.T) {
 	}
 	wg.Wait()
 }
+
+// A suspended spoke has a fresh age but is expired; the expired metric shows it.
+func TestDeadlinesExpiredStates(t *testing.T) {
+	now := time.Now()
+	d := NewDeadlines()
+	fresh := spoke("cluster-a")
+	suspended := spoke("cluster-b")
+	suspended.Spec.Suspended = true
+	d.Update(fresh, defaultStale)
+	d.Update(suspended, defaultStale)
+	got := d.ExpiredStates(now)
+	if len(got) != 2 || got["cluster-a"] != 0 || got["cluster-b"] != 1 {
+		t.Fatalf("ExpiredStates = %v", got)
+	}
+	if (*Deadlines)(nil).ExpiredStates(now) != nil {
+		t.Fatal("nil table")
+	}
+}
