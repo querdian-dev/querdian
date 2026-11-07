@@ -16,9 +16,9 @@
 // the receiver come from files. The agent reads these files again before each request, so a rotated cert
 // takes effect without a restart.
 //
-// The agent writes the Ready condition and status.observedGeneration of the spoke policies. Do not run
-// a Querdian proxy with a status writer on the same spoke objects: the two writers would change the
-// status again and again.
+// The agent writes the Ready condition and status.observedGeneration of the spoke policies. A spoke runs
+// only the agent, never a standalone Querdian proxy as well (PLAN §18.5): the two writers would change
+// the status again and again.
 //
 // # RBAC
 //

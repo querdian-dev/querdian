@@ -121,6 +121,15 @@ The receiver accepts TLS 1.2 or later; the agent connects with TLS 1.3 only. The
 receiver cert with `--tls-ca-file`. A load balancer between agent and receiver must pass TLS through:
 if it terminates TLS, the client cert does not reach the receiver.
 
+### A spoke runs only the agent
+
+Do not run a standalone Querdian on a spoke, not even for local queries. In a multi-cluster deployment
+the hub Querdian is the only enforcement point for the policies of a spoke, and the spoke runs only
+`querdian agent`. A local Querdian on the spoke would write the `Ready` condition and
+`status.observedGeneration` of the same policy objects from its own compile, so the status would change
+again and again and would not show what the hub enforces. The Helm chart refuses to render the agent
+together with the proxy. See also [day-2 operations](#do-not-add-a-standalone-querdian-to-a-spoke).
+
 ## Migration: ordered steps
 
 Do these steps in this order. A later step does not repair a mistake in an earlier step.
@@ -551,9 +560,11 @@ Before such a rollback, delete or narrow the hub `AccessPolicy` objects (for exa
 hub `ClusterAccessPolicy` objects with an explicit cluster matcher), or keep the block until the
 spoke data has left retention. To pause the spokes, suspend them instead of removing the block.
 
-### Do not run a local Querdian and the agent on the same spoke
+### Do not add a standalone Querdian to a spoke
 
-The agent writes the `Ready` condition and `status.observedGeneration` of the spoke policies. A
-Querdian proxy that runs in the same spoke writes the same fields from its own compile. The two
-writers would change the status again and again, and the status would not show what the hub enforces.
-Run either a local Querdian or the agent in a cluster, not both.
+This is a [requirement](#a-spoke-runs-only-the-agent), also after the migration. The agent writes the
+`Ready` condition and `status.observedGeneration` of the spoke policies. A Querdian proxy that runs in
+the same spoke writes the same fields from its own compile. The two writers would change the status
+again and again, and the status would not show what the hub enforces. To turn a spoke back into a
+standalone cluster, first remove the agent and the spoke (see [remove a spoke](#remove-a-spoke)), then
+install Querdian there.
