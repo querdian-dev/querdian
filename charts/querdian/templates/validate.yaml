@@ -1,0 +1,2 @@
+{{- /* Renders nothing. It stops the render if the values have a wrong combination. */ -}}
+{{- include "querdian.validate" . -}}

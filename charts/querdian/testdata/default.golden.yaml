@@ -1,0 +1,336 @@
+---
+# Source: querdian/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: r-querdian
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: querdian
+      app.kubernetes.io/instance: r
+---
+# Source: querdian/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: r-querdian
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+---
+# Source: querdian/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: r-querdian
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+data:
+  config.yaml: |
+    auth:
+      audiences:
+      - querdian
+      claims:
+        groups: groups
+        username: preferred_username
+      issuer: https://keycloak.example.com/realms/observability
+    backends:
+    - name: metrics
+      namespaceLabel: namespace
+      pathPrefix: /prometheus
+      tenantFederation: none
+      type: prometheus
+      url: http://thanos-query.monitoring:10902
+    - name: logs
+      namespaceLabel: k8s_namespace_name
+      pathPrefix: /loki
+      tenantFederation: tenantIdLabel
+      tenantHeader: X-Scope-OrgID
+      type: loki
+      url: http://loki-gateway.monitoring
+    - name: traces
+      namespaceLabel: resource.k8s.namespace.name
+      pathPrefix: /tempo
+      tenantFederation: none
+      tenantHeader: X-Scope-OrgID
+      traceByID: filter
+      type: tempo
+      url: http://tempo-query-frontend.monitoring:3200
+    limits:
+      maxFanout: 16
+      maxMergeBytes: 67108864
+      maxPolicyTerms: 16
+      upstreamTimeout: 5m
+---
+# Source: querdian/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: r-querdian
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+rules:
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies, accesspolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies/status, accesspolicies/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+---
+# Source: querdian/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: r-querdian
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: r-querdian
+subjects:
+  - kind: ServiceAccount
+    name: r-querdian
+    namespace: default
+---
+# Source: querdian/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: r-querdian-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+# Source: querdian/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: r-querdian-leader-election
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: r-querdian-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: r-querdian
+    namespace: default
+---
+# Source: querdian/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: r-querdian
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Source: querdian/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: r-querdian
+  namespace: default
+  labels:
+    helm.sh/chart: querdian-0.0.0-dev
+    app.kubernetes.io/name: querdian
+    app.kubernetes.io/instance: r
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: querdian
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: querdian
+      app.kubernetes.io/instance: r
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      annotations:
+        checksum/config: 3579989e8955ff0075604006816c1c2cdccc39e49ce2c33655fd61873a13bc0f
+      labels:
+        helm.sh/chart: querdian-0.0.0-dev
+        app.kubernetes.io/name: querdian
+        app.kubernetes.io/instance: r
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/part-of: querdian
+    spec:
+      serviceAccountName: r-querdian
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: querdian
+          image: "ghcr.io/querdian-dev/querdian:0.0.0-dev"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/etc/querdian/config.yaml
+            - --listen=:8080
+            - --management-listen=:9090
+            - --leader-elect=true
+            - --log-level=info
+            - --log-format=json
+            - --tracing.record-user=false
+            - --tracing.record-queries=false
+          env:
+            # Downward API values must precede OTEL_RESOURCE_ATTRIBUTES, which references them.
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.pod.name=$(K8S_POD_NAME),k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.node.name=$(K8S_NODE_NAME),service.version=0.0.0-dev"
+            - name: OTEL_SERVICE_NAME
+              value: "querdian"
+            - name: OTEL_TRACES_SAMPLER
+              value: "parentbased_traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "0.1"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: management
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+            failureThreshold: 3
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: config
+              mountPath: /etc/querdian
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: r-querdian
+        - name: tmp
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: querdian
+                    app.kubernetes.io/instance: r

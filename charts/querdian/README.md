@@ -30,8 +30,11 @@ NetworkPolicies need a CNI that enforces them.
 Deployment (2 replicas, leader election, soft pod anti-affinity), Service, ConfigMap with the static
 config (checksum annotation triggers a rollout on change), ServiceAccount, ClusterRole + Role
 (leases, events) with bindings, PodDisruptionBudget, and optionally a management Service,
-ServiceMonitor and NetworkPolicies. The two CRDs live in `crds/` (Helm installs them on first
+ServiceMonitor and NetworkPolicies. The four CRDs live in `crds/` (Helm installs them on first
 install but never upgrades or deletes them; apply `crds/` manually on chart upgrades).
+
+This is `mode: proxy`, the default. For a multi-cluster deployment, see
+[Multi-cluster: hub and spoke](#multi-cluster-hub-and-spoke).
 
 CRD sync: `crds/` is a copy of `config/crd` in the repository. `make chart-crds` refreshes it,
 `make chart-crds-check` (and `go test ./charts/...`) fail when they differ.
@@ -62,7 +65,12 @@ The defaults for `config` are examples. **You must set `config.auth` and `config
 | `topologySpreadConstraints`, `nodeSelector`, `tolerations`, `priorityClassName` | empty | Scheduling. |
 | `podDisruptionBudget.*` | enabled, `minAvailable: 1` | Or set `maxUnavailable`. |
 | `serviceMonitor.enabled` / `.labels` / `.interval` / `.namespace` | `false` / {} / `30s` / release ns | Prometheus Operator scraping of `/metrics`. |
-| `rbac.create`, `serviceAccount.*` | `true`, create | RBAC: get/list/watch on `clusteraccesspolicies`, `accesspolicies`, `namespaces`; update/patch on both `*/status`; leases and events in the release namespace. |
+| `rbac.create`, `serviceAccount.*` | `true`, create | RBAC: get/list/watch on `clusteraccesspolicies`, `accesspolicies`, `namespaces`; update/patch on both `*/status`; leases and events in the release namespace. With `config.multicluster`, also get/list/watch on `spokeclusters`, `spokepolicies` and update/patch on `spokepolicies/status`. |
+| `mode` | `proxy` | `proxy` or `spoke`. See [Multi-cluster: hub and spoke](#multi-cluster-hub-and-spoke). |
+| `config.multicluster`, `config.backends[].clusterLabel` | absent | Hub of a multi-cluster deployment (PLAN 18.4). |
+| `receiver.*` | disabled | Receiver of a hub. |
+| `agent.*` | see values.yaml | Agent of a spoke (only with `mode: spoke`). |
+| `prometheusRule.*` | disabled | Alerts for spoke policies. |
 | `extraArgs`, `extraEnv`, `extraVolumes`, `extraVolumeMounts` | empty | Escape hatches. |
 | `networkPolicy.*` | disabled | See below. |
 
@@ -111,12 +119,109 @@ networkPolicy:
 Selecting backend pods with an ingress policy denies every source that is not listed, so include all
 legitimate writers/scrapers in `allowFrom`. `ci/all-features-values.yaml` is a complete example.
 
+## Multi-cluster: hub and spoke
+
+A multi-cluster deployment (PLAN section 18) has one hub, which runs the proxy and the backends, and
+spokes, which send telemetry to the hub. Install the chart one time on the hub and one time on each
+spoke. `ci/hub-values.yaml` and `ci/spoke-values.yaml` are complete examples.
+
+Before you set `config.multicluster`, do the steps of PLAN section 18.8 in their order. Examine each hub
+`ClusterAccessPolicy` first, and make sure that hub telemetry has `cluster="<hubCluster>"`.
+
+### Hub (`mode: proxy`)
+
+```yaml
+config:
+  multicluster:
+    hubCluster: mla          # cluster label value of hub telemetry
+    maxStaleness: 48h
+  backends:
+    - name: metrics
+      # ...
+      clusterLabel: cluster  # required on each backend with multicluster
+receiver:
+  enabled: true
+  service:
+    type: LoadBalancer
+  tls:
+    existingSecret: querdian-receiver-tls   # tls.crt, tls.key
+  clientCA:
+    existingSecret: querdian-agent-ca       # ca.crt
+prometheusRule:
+  enabled: true
+```
+
+- The schema requires `clusterLabel` on each backend if `config.multicluster` is set. It rejects
+  `clusterLabel` if the block is absent, because Querdian refuses that configuration.
+- With `config.multicluster`, the proxy ClusterRole also gets get/list/watch on `spokeclusters` and
+  `spokepolicies`, and update/patch on `spokepolicies/status` only.
+- `receiver.enabled` adds the receiver (`querdian receiver`) as a separate Deployment with its own
+  ServiceAccount, Service, ClusterRole and Role. The proxy keeps no write path.
+- Receiver RBAC: get/list on `spokeclusters`, update on `spokeclusters/status` only,
+  list/create/update/delete on `spokepolicies`, and get/create/update on leases and create/patch on
+  events in the release namespace. No wildcard.
+- The receiver terminates mTLS itself. A load balancer or an ingress in front of it must pass TLS through.
+- `receiver.clientCA.existingSecret` is the CA of the agent certs. Only the hub may issue certs from this
+  CA. Do not use the CA of the ingest certs.
+- The receiver reads its cert and the client CA at startup only. After a rotation, restart the receiver.
+- The receiver uses leader election, and only the leader reports ready. For this reason, the Deployment
+  uses `strategy: Recreate`, and `receiver.replicaCount` is 1 by default. With more replicas, a standby is
+  ready to take over, but `kubectl rollout status` and `helm --wait` do not finish, because a standby never
+  becomes ready.
+- `networkPolicy.enabled` also adds a NetworkPolicy for the receiver. Set
+  `networkPolicy.ingress.receiverFrom` to the source of the agent connections. Empty means nobody. With a
+  load balancer, the source address that the pod sees can be a node address (for example with
+  `externalTrafficPolicy: Cluster`). Then an `ipBlock` with the agent addresses blocks all agents.
+- `prometheusRule.enabled` adds a PrometheusRule with two alerts. `QuerdianSpokePolicyStale` fires if
+  `querdian_cluster_policy_age_seconds` is more than `prometheusRule.policyAgeThresholdSeconds` (default
+  86400, 24 hours). `QuerdianSpokePolicyExpired` fires if `querdian_cluster_policy_expired` is 1. Both
+  need Prometheus to scrape the proxy, for example with `serviceMonitor.enabled`.
+
+Each spoke also needs a `SpokeCluster` object on the hub. The chart does not create it.
+
+### Spoke (`mode: spoke`)
+
+```yaml
+mode: spoke
+agent:
+  receiverURL: https://querdian-receiver.mla.example.com:8443
+  tls:
+    existingSecret: querdian-agent-tls   # tls.crt, tls.key
+  receiverCA:
+    existingSecret: querdian-agent-tls   # ca.crt
+```
+
+- The chart installs only the agent (`querdian agent`): a Deployment, a ServiceAccount, a ClusterRole, a
+  Role for the lease, and optionally a NetworkPolicy. It installs no proxy, no ConfigMap, no proxy
+  Service and no proxy RBAC. The agent and the proxy are mutually exclusive, because both write the
+  `Ready` condition and `status.observedGeneration` of the spoke policies. If you set `agent.receiverURL`,
+  `agent.tls.existingSecret` or `agent.receiverCA.existingSecret` with `mode: proxy`, the render stops.
+  Do not install a second release with the proxy in a spoke.
+- Agent RBAC (the minimum of PLAN section 18.5): get/list/watch on `clusteraccesspolicies`,
+  `accesspolicies` and `namespaces`, update/patch on `clusteraccesspolicies/status` and
+  `accesspolicies/status`, and get/create/update on leases in the release namespace. No wildcard.
+- Use a dedicated agent cert. It must not be the ingest cert, and its URI SAN must be equal to
+  `spec.identity` of the `SpokeCluster` object on the hub. The agent reads the files again before each
+  request, so a rotated cert takes effect without a restart.
+- `networkPolicy.enabled` adds a NetworkPolicy for the agent. Set `networkPolicy.egress.receiver.to` and
+  `.ports` to the address of the receiver.
+- The chart rejects proxy features in this mode (`receiver`, `prometheusRule`, `config.multicluster`,
+  `ui`, `serviceMonitor`, `dashboards`, `networkPolicy.backendProtection`).
+- Helm installs all CRDs from `crds/`, also `SpokeCluster` and `SpokePolicy`, which a spoke does not use.
+  Nothing on the spoke reads them, and the agent has no access to them. To install only the policy CRDs,
+  use `helm install --skip-crds` and apply `crds/policy.querdian.dev_clusteraccesspolicies.yaml` and
+  `crds/policy.querdian.dev_accesspolicies.yaml` yourself.
+
 ## Development
 
 ```sh
 make chart-crds        # sync crds/ from config/crd
 make chart-lint        # CRD diff, helm lint (default + all features), go test ./charts/...
 ```
+
+`testdata/*.golden.yaml` hold the render with the default values and with `ci/all-features-values.yaml`.
+`TestRenderUnchanged` fails if a change modifies this output. After an intended change, run
+`go test ./charts/querdian -run TestRenderUnchanged -update` and review the diff.
 
 `Chart.yaml` carries `0.0.0-dev` for `version`/`appVersion`; the release pipeline overrides both
 (`helm package --version X --app-version X`). `ci/*-values.yaml` are picked up by chart-testing (`ct`).

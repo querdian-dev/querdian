@@ -1,0 +1,39 @@
+{{- if and (include "querdian.proxyEnabled" .) .Values.prometheusRule.enabled }}
+{{- $p := .Values.prometheusRule }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "querdian.fullname" . }}
+  namespace: {{ default .Release.Namespace $p.namespace }}
+  labels:
+    {{- include "querdian.labels" . | nindent 4 }}
+    {{- with $p.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: querdian-multicluster
+      rules:
+        # The age is +Inf for a spoke that has never synced, so the alert also fires for it.
+        - alert: QuerdianSpokePolicyStale
+          expr: max by (cluster) (querdian_cluster_policy_age_seconds) > {{ int64 $p.policyAgeThresholdSeconds }}
+          for: {{ $p.for }}
+          labels:
+            severity: {{ $p.severity }}
+          annotations:
+            summary: The policies of spoke cluster {{ "{{" }} $labels.cluster {{ "}}" }} did not sync for a long time.
+            description: >-
+              The last valid policy sync of spoke cluster {{ "{{" }} $labels.cluster {{ "}}" }} is older than
+              {{ int64 $p.policyAgeThresholdSeconds }} seconds. The policies of the spoke expire when the age
+              is more than maxStaleness. Examine the agent of the spoke, the receiver and the network path.
+        - alert: QuerdianSpokePolicyExpired
+          expr: max by (cluster) (querdian_cluster_policy_expired) == 1
+          for: {{ $p.for }}
+          labels:
+            severity: {{ $p.severity }}
+          annotations:
+            summary: The policies of spoke cluster {{ "{{" }} $labels.cluster {{ "}}" }} grant no access.
+            description: >-
+              The policies of spoke cluster {{ "{{" }} $labels.cluster {{ "}}" }} are expired, or the
+              SpokeCluster is suspended. The grants of these policies stop until the next valid sync.
+{{- end }}

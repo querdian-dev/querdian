@@ -1,3 +1,4 @@
+{{- if include "querdian.proxyEnabled" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,3 +9,4 @@ metadata:
 data:
   config.yaml: |
     {{- include "querdian.config" . | nindent 4 }}
+{{- end }}

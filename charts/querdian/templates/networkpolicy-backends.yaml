@@ -1,4 +1,4 @@
-{{- if .Values.networkPolicy.backendProtection.enabled }}
+{{- if and (include "querdian.proxyEnabled" .) .Values.networkPolicy.backendProtection.enabled }}
 {{- range $i, $t := .Values.networkPolicy.backendProtection.targets }}
 ---
 # Only querdian pods (plus allowFrom) may reach the selected backend pods.
