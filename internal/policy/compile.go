@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -341,8 +342,7 @@ func checkClusterScope(cfg *config.Config, o origin, ri int, b *config.Backend, 
 			continue
 		}
 		named = true
-		// NotEqual and RegexNoMatch also match each new spoke, so they do not state a scope.
-		if m.Op == v1.MatchEqual || m.Op == v1.MatchRegexMatch {
+		if boundedClusterMatcher(m) {
 			bounded = true
 		}
 	}
@@ -353,9 +353,26 @@ func checkClusterScope(cfg *config.Config, o origin, ri int, b *config.Backend, 
 		return nil
 	}
 	if !bounded {
-		return fail(ReasonInvalidClusterScope, "rules[%d]: backend %q: add an Equal or RegexMatch matcher on cluster label %q, or set allClusters", ri, b.Name, b.ClusterLabel)
+		return fail(ReasonInvalidClusterScope, "rules[%d]: backend %q: add a matcher on cluster label %q that names a fixed set of clusters (Equal, or RegexMatch such as a|b), or set allClusters", ri, b.Name, b.ClusterLabel)
 	}
 	return nil
+}
+
+// maxScopeClusters bounds the cluster names that one RegexMatch of a hub rule may name.
+const maxScopeClusters = 1024
+
+// boundedClusterMatcher reports whether a matcher on the cluster label names a fixed, finite set of non-empty
+// cluster names (PLAN §18.3). NotEqual, RegexNoMatch and an open regex such as .+ or cluster-.* also match
+// each new spoke, and an empty value matches data with no cluster label, so none of them states a scope.
+func boundedClusterMatcher(m Matcher) bool {
+	switch m.Op {
+	case v1.MatchEqual:
+		return m.Value != ""
+	case v1.MatchRegexMatch:
+		set, ok := LiteralSet(m.Value, maxScopeClusters)
+		return ok && !slices.Contains(set, "")
+	}
+	return false
 }
 
 func compileClusterRules(cfg *config.Config, policy string, rules []v1.ClusterRule, o origin) ([]*CompiledRule, *compileError) {
@@ -424,7 +441,8 @@ func checkTenantsAllowed(o origin, ri int, bn string, tenants []string) *compile
 }
 
 // compileNamespacedRules compiles the rules of an AccessPolicy in namespace ns. tenant is the tenant of the
-// namespace (trimmed; empty if none) and is used only for backends with a tenant header.
+// namespace (empty if none; trimmed for hub namespaces, exact for spokes) and is used only for backends with
+// a tenant header.
 func compileNamespacedRules(cfg *config.Config, policy, ns string, rules []v1.Rule, tenant string, o origin) ([]*CompiledRule, *compileError) {
 	var out []*CompiledRule
 	for ri, r := range rules {
