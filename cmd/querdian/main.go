@@ -45,6 +45,9 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "receiver" {
+		return runReceiver(args[1:])
+	}
 	fs := flag.NewFlagSet("querdian", flag.ContinueOnError)
 	flags := config.RegisterFlags(fs)
 	showVersion := fs.Bool("version", false, "print the version and exit")
