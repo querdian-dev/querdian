@@ -128,6 +128,29 @@ func (d *Deadlines) AnyExpired(origins []string, now time.Time) bool {
 	return false
 }
 
+// ExpiredStates returns 1 for each spoke in the table that is expired at now and 0 for the others, for the
+// metric querdian_cluster_policy_expired. The age alone does not show a suspended spoke or a spoke whose
+// generation is not synced.
+func (d *Deadlines) ExpiredStates(now time.Time) map[string]float64 {
+	if d == nil {
+		return nil
+	}
+	d.mu.RLock()
+	names := make([]string, 0, len(d.spokes))
+	for name := range d.spokes {
+		names = append(names, name)
+	}
+	d.mu.RUnlock()
+	out := make(map[string]float64, len(names))
+	for _, name := range names {
+		out[name] = 0
+		if d.Expired(name, now) {
+			out[name] = 1
+		}
+	}
+	return out
+}
+
 // Ages returns the time in seconds since the last sync of each spoke in the table, for the metric
 // querdian_cluster_policy_age_seconds. The value is +Inf for a spoke with no lastSyncTime, and negative
 // for a lastSyncTime in the future.

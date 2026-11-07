@@ -209,6 +209,10 @@ func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Co
 	}
 
 	var revokeTick <-chan time.Time
+	// The dial can take up to DialTimeout, so check one time before the first tick (PLAN §18.6, rule 8).
+	if opt.Revoked != nil && opt.Revoked() {
+		failWith(websocket.StatusPolicyViolation, "policy source expired")
+	}
 	if opt.Revoked != nil {
 		t := time.NewTicker(opt.RevokeCheckInterval)
 		defer t.Stop()

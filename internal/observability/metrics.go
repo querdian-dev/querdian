@@ -99,6 +99,17 @@ func NewClusterPolicyAge(ages func(now time.Time) map[string]float64) prometheus
 	}
 }
 
+// NewClusterPolicyExpired returns the collector of querdian_cluster_policy_expired{cluster} (PLAN §18.6):
+// 1 if the policies of the spoke are expired or suspended, else 0. policy.Deadlines.ExpiredStates
+// implements states.
+func NewClusterPolicyExpired(states func(now time.Time) map[string]float64) prometheus.Collector {
+	return &clusterPolicyAge{
+		desc: prometheus.NewDesc("querdian_cluster_policy_expired",
+			"1 if the policies of a spoke cluster are expired or suspended, else 0.", []string{"cluster"}, nil),
+		ages: states,
+	}
+}
+
 // Describe implements prometheus.Collector.
 func (c *clusterPolicyAge) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
 
