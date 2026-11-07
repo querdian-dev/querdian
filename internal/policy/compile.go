@@ -157,7 +157,8 @@ func Compile(in Input) *Compiled {
 	spokes := indexSpokeClusters(in.SpokeClusters)
 	for i := range in.SpokePolicies {
 		p := &in.SpokePolicies[i]
-		res := Result{Kind: KindSpokePolicy, Name: p.Name, Generation: p.Generation}
+		res := Result{Kind: KindSpokePolicy, Name: p.Name, Generation: p.Generation, Spoke: SpokeSource{
+			Cluster: p.Spec.Cluster, Kind: string(p.Spec.Kind), Namespace: p.Spec.Namespace, Name: p.Spec.Name}}
 		rules, subj, err := compileSpokePolicy(in.Config, spokes, p)
 		if err != nil {
 			res.Reason, res.Message = err.reason, err.msg

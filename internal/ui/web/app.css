@@ -47,6 +47,9 @@ tbody tr.row { cursor: pointer; } tbody tr.row:hover td { background: rgba(16,20
 .chip { display: inline-block; font-family: var(--mono); font-size: .8rem; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 3px; background: rgba(16,20,24,.07); }
 .chip.deny { background: repeating-linear-gradient(135deg, var(--paper) 0 8px, #dcdcd6 8px 16px); font-weight: 700; }
 .chip.redact { background: var(--ink); color: var(--paper); font-weight: 700; }
+.chip.void { color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.note { padding: 10px 12px; margin: 0 0 14px; max-width: 72ch; }
+.fine { font-size: .85rem; line-height: 1.45; color: var(--ink-2); margin: 6px 0 0; max-width: 46ch; }
 .stamp { border-radius: 3px; font-weight: 700; padding: 1px 3px; }
 .z-prometheus { background: var(--metrics); color: var(--ink); } .z-loki { background: var(--logs); color: #fff; } .z-tempo { background: var(--traces); color: var(--ink); }
 
@@ -83,7 +86,7 @@ textarea { font-family: var(--mono); font-size: .9rem; min-height: 120px; resize
 
 .drawer { border-top: 3px solid var(--ink); background: var(--card); padding: 20px; margin: 0 0 8px; }
 .rule { border-top: 1px solid var(--rule); padding: 12px 0; }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; } .kv dt { color: var(--ink-3); } .kv dd { margin: 0; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; } .kv dt { color: var(--ink-3); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 860px) { .strip { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .pass .name { font-size: 1.5rem; } .btn { width: 100%; } }

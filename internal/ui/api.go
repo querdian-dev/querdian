@@ -38,6 +38,68 @@ type ruleJSON struct {
 	Matchers     []matcherJSON   `json:"matchers"`
 	DeniedLabels []string        `json:"deniedLabels"` // includes the redacted names
 	Redactions   []redactionJSON `json:"redactions"`
+	// Origin and Expired are set only with the multicluster block. Origin has Hub or Cluster only. An
+	// expired rule grants no data, but its denied and redacted labels still apply (PLAN §18.6, rule 5).
+	Origin  *originJSON `json:"origin,omitempty"`
+	Expired bool        `json:"expired,omitempty"`
+}
+
+// originJSON tells where a policy comes from: the hub, or a policy object in a spoke. The dashboard sets it
+// only with the multicluster block, so without the block the API is the same as before.
+type originJSON struct {
+	Hub bool `json:"hub"`
+	// Cluster is the SpokeCluster name. Kind, Namespace and Name identify the source object in the spoke.
+	Cluster   string `json:"cluster,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+func originOf(src policy.SpokeSource) originJSON {
+	if src.Cluster == "" {
+		return originJSON{Hub: true}
+	}
+	return originJSON{Cluster: src.Cluster, Kind: src.Kind, Namespace: src.Namespace, Name: src.Name}
+}
+
+// sourceJSON is a policy that has rules for a request or a backend, with its origin. Expired is true if
+// the policy comes from a spoke that is expired or suspended now.
+type sourceJSON struct {
+	ID      string     `json:"id"`
+	Origin  originJSON `json:"origin"`
+	Expired bool       `json:"expired"`
+}
+
+// multicluster reports whether the static config has the multicluster block.
+func (h *handler) multicluster() bool { return h.d.Config.Multicluster != nil }
+
+// expired reports whether the rules of a spoke grant nothing at now. Hub rules (no origin) never expire.
+func (h *handler) expired(origin string, now time.Time) bool {
+	return origin != "" && h.d.Deadlines.Expired(origin, now)
+}
+
+// spokeSources maps each policy ID of the snapshot to its spoke source (the zero value for a hub policy).
+func spokeSources(s *policy.Snapshot) map[string]policy.SpokeSource {
+	byID := map[string]policy.SpokeSource{}
+	for _, v := range s.Policies() {
+		byID[v.ID] = v.Result.Spoke
+	}
+	return byID
+}
+
+// sources returns the policies of refs with their origins and expiry state, in the order of refs. byID
+// comes from spokeSources.
+func (h *handler) sources(byID map[string]policy.SpokeSource, refs []policy.Ref, now time.Time) []sourceJSON {
+	out := make([]sourceJSON, 0, len(refs))
+	for _, ref := range refs {
+		src := byID[ref.ID]
+		if src.Cluster != ref.Origin {
+			// The rules are the truth. This occurs only for rules with no compile result, as in tests.
+			src = policy.SpokeSource{Cluster: ref.Origin}
+		}
+		out = append(out, sourceJSON{ID: ref.ID, Origin: originOf(src), Expired: h.expired(ref.Origin, now)})
+	}
+	return out
 }
 
 // redactionJSON describes one labels.redact entry, with an example of its effect on a value.
@@ -73,6 +135,10 @@ type policyJSON struct {
 	Users      []string   `json:"users"`
 	Groups     []string   `json:"groups"`
 	Rules      []ruleJSON `json:"rules"`
+	// Origin and Expired are set only with the multicluster block. Expired is true for a ready spoke policy
+	// whose spoke is expired or suspended now.
+	Origin  *originJSON `json:"origin,omitempty"`
+	Expired bool        `json:"expired,omitempty"`
 }
 
 func nz(s []string) []string {
@@ -89,17 +155,27 @@ func (h *handler) backendType(name string) string {
 	return ""
 }
 
-func (h *handler) policyViews(s *policy.Snapshot) []policyJSON {
+func (h *handler) policyViews(s *policy.Snapshot, now time.Time) []policyJSON {
 	views := s.Policies()
+	mc := h.multicluster()
 	out := make([]policyJSON, 0, len(views))
 	for _, v := range views {
 		p := policyJSON{ID: v.ID, Kind: v.Result.Kind, Namespace: v.Result.Namespace, Name: v.Result.Name,
 			Generation: v.Result.Generation, Ready: v.Result.Ready, Reason: v.Result.Reason, Message: v.Result.Message,
 			Users: nz(v.Users), Groups: nz(v.Groups), Rules: []ruleJSON{}}
+		if mc {
+			o := originOf(v.Result.Spoke)
+			p.Origin = &o
+			p.Expired = v.Result.Ready && h.expired(v.Result.Spoke.Cluster, now)
+		}
 		for _, r := range v.Rules {
 			rj := ruleJSON{Backend: r.Backend, Type: h.backendType(r.Backend), Tenants: nz(r.Tenants),
 				Unrestricted: r.Unrestricted, DeniedLabels: nz(r.DeniedLabels), Matchers: []matcherJSON{},
 				Redactions: redactionViews(r.Redactions)}
+			if mc {
+				rj.Origin = &originJSON{Hub: r.Origin == "", Cluster: r.Origin}
+				rj.Expired = h.expired(r.Origin, now)
+			}
 			for _, m := range r.Matchers {
 				rj.Matchers = append(rj.Matchers, matcherJSON{Name: m.Name, Op: opSymbol[string(m.Op)], Value: m.Value})
 			}
@@ -107,7 +183,28 @@ func (h *handler) policyViews(s *policy.Snapshot) []policyJSON {
 		}
 		out = append(out, p)
 	}
+	if mc {
+		slices.SortStableFunc(out, compareByOrigin)
+	}
 	return out
+}
+
+// compareByOrigin puts hub policies first, by ID, and then spoke policies by cluster, kind, namespace and
+// name, because their IDs are hashes. Both policies must have an origin.
+func compareByOrigin(a, b policyJSON) int {
+	if a.Origin.Hub != b.Origin.Hub {
+		if a.Origin.Hub {
+			return -1
+		}
+		return 1
+	}
+	for _, c := range [][2]string{{a.Origin.Cluster, b.Origin.Cluster}, {a.Origin.Kind, b.Origin.Kind},
+		{a.Origin.Namespace, b.Origin.Namespace}, {a.Origin.Name, b.Origin.Name}, {a.ID, b.ID}} {
+		if n := strings.Compare(c[0], c[1]); n != 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
@@ -124,12 +221,25 @@ func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	users, groups := s.Subjects()
-	writeJSON(w, http.StatusOK, map[string]any{
+	res := map[string]any{
 		"version": h.d.Version, "generation": s.Generation,
 		"policies": map[string]int{"total": ready + notReady, "ready": ready, "notReady": notReady},
 		"subjects": map[string]int{"users": len(users), "groups": len(groups)},
 		"backends": len(h.d.Config.Backends),
-	})
+	}
+	if h.multicluster() {
+		var spoke, expired int
+		for _, p := range h.policyViews(s, time.Now()) {
+			if !p.Origin.Hub {
+				spoke++
+			}
+			if p.Expired {
+				expired++
+			}
+		}
+		res["spokePolicies"] = map[string]int{"total": spoke, "expired": expired}
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *handler) policies(w http.ResponseWriter, _ *http.Request) {
@@ -137,7 +247,7 @@ func (h *handler) policies(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"generation": s.Generation, "policies": h.policyViews(s)})
+	writeJSON(w, http.StatusOK, map[string]any{"generation": s.Generation, "policies": h.policyViews(s, time.Now())})
 }
 
 func (h *handler) subjects(w http.ResponseWriter, _ *http.Request) {
@@ -165,6 +275,10 @@ type accessJSON struct {
 	DeniedLabels []string        `json:"deniedLabels"` // includes the redacted names
 	Redactions   []redactionJSON `json:"redactions"`
 	Policies     []string        `json:"policies"`
+	// Sources is set only with the multicluster block, and is absent if it is empty: each policy with rules
+	// for the request on this backend, also if its spoke is expired. Expired rules give no terms, but their
+	// labels stay in DeniedLabels and Redactions.
+	Sources []sourceJSON `json:"sources,omitempty"`
 }
 
 func resolveReason(err error) string {
@@ -200,12 +314,20 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 	}
 	user := r.URL.Query().Get("user")
 	groups := splitGroups(r.URL.Query().Get("groups"))
+	now := time.Now()
+	var byID map[string]policy.SpokeSource
+	if h.multicluster() {
+		byID = spokeSources(s)
+	}
 	out := make([]accessJSON, 0, len(h.d.Config.Backends))
 	for i := range h.d.Config.Backends {
 		b := &h.d.Config.Backends[i]
 		a := accessJSON{Backend: b.Name, Type: string(b.Type), Tenants: []string{}, Terms: []termJSON{},
 			DeniedLabels: []string{}, Redactions: []redactionJSON{}, Policies: []string{}}
-		eff, err := s.ResolveAt(user, groups, b.Name, h.d.Deadlines, time.Now())
+		if byID != nil {
+			a.Sources = h.sources(byID, s.PoliciesFor(user, groups, b.Name), now)
+		}
+		eff, err := s.ResolveAt(user, groups, b.Name, h.d.Deadlines, now)
 		if err != nil {
 			a.Reason = resolveReason(err)
 			out = append(out, a)
@@ -232,10 +354,14 @@ func (h *handler) backends(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	reach := map[string][]string{}
+	refs := map[string][]policy.Ref{}
+	byID := map[string]policy.SpokeSource{}
 	for _, p := range s.Policies() {
+		byID[p.ID] = p.Result.Spoke
 		for _, r := range p.Rules {
 			if !slices.Contains(reach[r.Backend], p.ID) {
 				reach[r.Backend] = append(reach[r.Backend], p.ID)
+				refs[r.Backend] = append(refs[r.Backend], policy.Ref{ID: p.ID, Origin: r.Origin})
 			}
 		}
 	}
@@ -246,11 +372,19 @@ func (h *handler) backends(w http.ResponseWriter, _ *http.Request) {
 		TenantHeader   string   `json:"tenantHeader"`
 		Federation     string   `json:"tenantFederation"`
 		Policies       []string `json:"policies"`
+		// Sources is set only with the multicluster block, and is absent if it is empty: Policies with their
+		// origins and expiry state.
+		Sources []sourceJSON `json:"sources,omitempty"`
 	}
+	now := time.Now()
 	out := make([]backendJSON, 0, len(h.d.Config.Backends))
 	for _, b := range h.d.Config.Backends {
-		out = append(out, backendJSON{Name: b.Name, Type: string(b.Type), NamespaceLabel: b.NamespaceLabel,
-			TenantHeader: b.TenantHeader, Federation: string(b.TenantFederation), Policies: nz(reach[b.Name])})
+		bj := backendJSON{Name: b.Name, Type: string(b.Type), NamespaceLabel: b.NamespaceLabel,
+			TenantHeader: b.TenantHeader, Federation: string(b.TenantFederation), Policies: nz(reach[b.Name])}
+		if h.multicluster() {
+			bj.Sources = h.sources(byID, refs[b.Name], now)
+		}
+		out = append(out, bj)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backends": out})
 }
