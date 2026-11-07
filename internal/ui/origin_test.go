@@ -27,14 +27,30 @@ type mcFixture struct {
 }
 
 func spokeAP(cluster, ns, name string, groups ...string) v1.SpokePolicy {
-	src := v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: ns, Name: name, Generation: 1,
+	return spokeAPFor(cluster, ns, name, "", "metrics", groups...)
+}
+
+// spokeAPFor is a SpokePolicy for an AccessPolicy with one rule on one backend. The rule denies "secret"
+// ("span.secret" on traces).
+func spokeAPFor(cluster, ns, name, tenant, backend string, groups ...string) v1.SpokePolicy {
+	deny := "secret"
+	if backend == "traces" {
+		deny = "span.secret"
+	}
+	src := v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: ns, Name: name, Generation: 1, TenantLabel: tenant,
 		AccessPolicy: &v1.AccessPolicySpec{Subjects: v1.Subjects{Groups: groups},
-			Rules: []v1.Rule{{Backends: []string{"metrics"}, Labels: &v1.LabelFilter{Deny: []string{"secret"}}}}}}
+			Rules: []v1.Rule{{Backends: []string{backend}, Labels: &v1.LabelFilter{Deny: []string{deny}}}}}}
 	return v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{Name: spokesync.ObjectName(cluster, &src), Generation: 1},
 		Spec: v1.SpokePolicySpec{Cluster: cluster, SpokePolicySource: src}}
 }
 
 func newMCFixture(t *testing.T) *mcFixture {
+	t.Helper()
+	return newMCFixtureWith(t, nil, nil)
+}
+
+// newMCFixtureWith is newMCFixture with more hub and spoke policies. cluster-a allows the tenant "t1".
+func newMCFixtureWith(t *testing.T, hubs []v1.ClusterAccessPolicy, spokes []v1.SpokePolicy) *mcFixture {
 	t.Helper()
 	cfg, err := config.Load("../config/testdata/example.yaml")
 	if err != nil {
@@ -56,10 +72,15 @@ func newMCFixture(t *testing.T) *mcFixture {
 	read := spokeAP("cluster-a", "shop", "read", "team", "spoke-only")
 	lost := spokeAP("cluster-x", "shop", "lost", "team")
 	sc := v1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Generation: 1},
-		Spec:   v1.SpokeClusterSpec{Identity: "spiffe://mla.example.com/agent/cluster-a"},
+		Spec:   v1.SpokeClusterSpec{Identity: "spiffe://mla.example.com/agent/cluster-a", Tenants: []string{"t1"}},
 		Status: v1.SpokeClusterStatus{LastSyncTime: &metav1.Time{Time: time.Now()}, ObservedGeneration: 1}}
-	c := policy.Compile(policy.Input{Config: cfg, ClusterPolicies: []v1.ClusterAccessPolicy{hub},
-		SpokeClusters: []v1.SpokeCluster{sc}, SpokePolicies: []v1.SpokePolicy{read, lost}})
+	c := policy.Compile(policy.Input{Config: cfg, ClusterPolicies: append([]v1.ClusterAccessPolicy{hub}, hubs...),
+		SpokeClusters: []v1.SpokeCluster{sc}, SpokePolicies: append([]v1.SpokePolicy{read, lost}, spokes...)})
+	for _, r := range c.Results {
+		if r.Kind == policy.KindSpokePolicy && r.Spoke.Cluster == "cluster-a" && !r.Ready {
+			t.Fatalf("fixture: %+v", r)
+		}
+	}
 	dl := policy.NewDeadlines()
 	dl.Update(&sc, time.Hour)
 	f := &mcFixture{dl: dl, sc: &sc, hubID: "ClusterAccessPolicy/hub-read",
@@ -117,6 +138,10 @@ func TestPoliciesShowOriginAndExpiry(t *testing.T) {
 	// A policy that grants nothing has no expired state, but its origin shows where it comes from.
 	if lost.Ready || lost.Origin.Cluster != "cluster-x" || lost.Origin.Name != "lost" || lost.Expired || len(lost.Rules) != 0 {
 		t.Fatalf("spoke policy of an unknown cluster: %+v", lost)
+	}
+	// The compiler did not verify the source of a policy that is not ready, so the dashboard marks it.
+	if !lost.Origin.Unverified || read.Origin.Unverified || hub.Origin.Unverified {
+		t.Fatalf("unverified: hub %+v, read %+v, lost %+v", hub.Origin, read.Origin, lost.Origin)
 	}
 
 	// The dashboard uses the expiry check of the table as it is: a spoke is also expired while the snapshot
@@ -201,6 +226,117 @@ func TestAccessShowsExpiredSources(t *testing.T) {
 	if s := b.Backends[0].Sources; b.Backends[0].Name != "metrics" || len(s) != 2 || s[0] != hubSrc || s[1] != readSrc {
 		t.Fatalf("backends: %+v", b.Backends)
 	}
+}
+
+func accessFor(t *testing.T, h http.Handler, groups string) map[string]accessJSON {
+	t.Helper()
+	var a struct {
+		Access []accessJSON `json:"access"`
+	}
+	getJSON(t, h, "/api/access?groups="+groups, &a)
+	out := map[string]accessJSON{}
+	for _, x := range a.Access {
+		out[x.Backend] = x
+	}
+	return out
+}
+
+// TestRefusedBackendListsOnlyExpiredSources: a backend that ResolveAt refuses for a different reason lists no
+// policies, as without the multicluster block. An expired policy stays listed.
+func TestRefusedBackendListsOnlyExpiredSources(t *testing.T) {
+	tenantRule := func(name, tenant, ns string) v1.ClusterAccessPolicy {
+		return v1.ClusterAccessPolicy{ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
+			Spec: v1.ClusterAccessPolicySpec{Subjects: v1.Subjects{Groups: []string{"split"}},
+				Rules: []v1.ClusterRule{{Backends: []string{"traces"}, Tenants: []string{tenant}, AllClusters: true,
+					Matchers: []v1.Matcher{{Name: "resource.k8s.namespace.name", Op: v1.MatchEqual, Value: ns}}}}}}
+	}
+	trace := spokeAPFor("cluster-a", "shop", "trace", "t1", "traces", "split")
+	f := newMCFixtureWith(t, []v1.ClusterAccessPolicy{tenantRule("split-1", "t1", "a"), tenantRule("split-2", "t2", "b")},
+		[]v1.SpokePolicy{trace})
+
+	// Two tenants with different terms on a backend without __tenant_id__ support.
+	a := accessFor(t, f.h, "split")["traces"]
+	if a.Granted || a.Reason != "cross_tenant_union_unsupported" || len(a.Sources) != 0 || len(a.Policies) != 0 {
+		t.Fatalf("refused backend: %+v", a)
+	}
+
+	f.suspend()
+	a = accessFor(t, f.h, "split")["traces"]
+	want := sourceJSON{ID: policy.KindSpokePolicy + "/" + trace.Name, Expired: true,
+		Origin: originJSON{Cluster: "cluster-a", Kind: "AccessPolicy", Namespace: "shop", Name: "trace"}}
+	if a.Granted || a.Reason != "cross_tenant_union_unsupported" || len(a.Sources) != 1 || a.Sources[0] != want {
+		t.Fatalf("refused backend with an expired spoke: %+v", a)
+	}
+}
+
+// TestSourcesUseThePolicyOrder: sources are in the order of the Policies view, not in the order of the hash IDs.
+func TestSourcesUseThePolicyOrder(t *testing.T) {
+	read := spokeAP("cluster-a", "shop", "read")
+	// Find a namespace that sorts before "shop" but whose hash ID sorts after the ID of shop/read.
+	var early v1.SpokePolicy
+	for _, ns := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		if early = spokeAP("cluster-a", ns, "read", "team"); early.Name > read.Name {
+			break
+		}
+	}
+	if early.Name < read.Name {
+		t.Fatal("no namespace found for the test")
+	}
+	f := newMCFixtureWith(t, nil, []v1.SpokePolicy{early})
+	earlyID := policy.KindSpokePolicy + "/" + early.Name
+
+	var p struct {
+		Policies []policyJSON `json:"policies"`
+	}
+	getJSON(t, f.h, "/api/policies", &p)
+	var want []string
+	for _, x := range p.Policies {
+		if len(x.Rules) > 0 {
+			want = append(want, x.ID)
+		}
+	}
+	if strings.Join(want, ",") != strings.Join([]string{f.hubID, earlyID, f.readID}, ",") {
+		t.Fatalf("policies order: %v", want)
+	}
+	ids := func(ss []sourceJSON) string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(accessFor(t, f.h, "team")["metrics"].Sources); got != strings.Join(want, ",") {
+		t.Fatalf("access sources: %s", got)
+	}
+	var b struct {
+		Backends []struct {
+			Sources []sourceJSON `json:"sources"`
+		} `json:"backends"`
+	}
+	getJSON(t, f.h, "/api/backends", &b)
+	if got := ids(b.Backends[0].Sources); got != strings.Join(want, ",") {
+		t.Fatalf("backend sources: %s", got)
+	}
+}
+
+// TestInvalidSpokePolicyIsNotHub: a spoke policy with no cluster in its spec is still a spoke policy, and its
+// origin is unverified.
+func TestInvalidSpokePolicyIsNotHub(t *testing.T) {
+	bad := spokeAP("", "shop", "bad", "team")
+	f := newMCFixtureWith(t, nil, []v1.SpokePolicy{bad})
+	var p struct {
+		Policies []policyJSON `json:"policies"`
+	}
+	getJSON(t, f.h, "/api/policies", &p)
+	for _, x := range p.Policies {
+		if x.ID == policy.KindSpokePolicy+"/"+bad.Name {
+			if x.Ready || x.Origin.Hub || !x.Origin.Unverified || x.Origin.Name != "bad" {
+				t.Fatalf("invalid spoke policy: %+v", x)
+			}
+			return
+		}
+	}
+	t.Fatal("invalid spoke policy not listed")
 }
 
 // TestNoMulticlusterKeepsTheAPI: without the multicluster block, the answers have none of the new fields.

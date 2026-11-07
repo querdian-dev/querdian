@@ -53,13 +53,37 @@ type originJSON struct {
 	Kind      string `json:"kind,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name,omitempty"`
+	// Unverified is true for a spoke policy that is not ready. Its source comes from the spec of the hub
+	// object, and the compiler rejected the object before or during its checks, so the dashboard must not
+	// present the cluster and the source as fact.
+	Unverified bool `json:"unverified,omitempty"`
 }
 
-func originOf(src policy.SpokeSource) originJSON {
-	if src.Cluster == "" {
+// originOf returns the origin of a compile result.
+func originOf(r policy.Result) originJSON {
+	if r.Kind != policy.KindSpokePolicy {
 		return originJSON{Hub: true}
 	}
-	return originJSON{Cluster: src.Cluster, Kind: src.Kind, Namespace: src.Namespace, Name: src.Name}
+	return originJSON{Cluster: r.Spoke.Cluster, Kind: r.Spoke.Kind, Namespace: r.Spoke.Namespace, Name: r.Spoke.Name,
+		Unverified: !r.Ready}
+}
+
+// compareOrigin orders policies as the Policies view does: hub policies first, by ID, and then spoke policies
+// by cluster, kind, namespace and name, because their IDs are hashes.
+func compareOrigin(a originJSON, aID string, b originJSON, bID string) int {
+	if a.Hub != b.Hub {
+		if a.Hub {
+			return -1
+		}
+		return 1
+	}
+	for _, c := range [][2]string{{a.Cluster, b.Cluster}, {a.Kind, b.Kind}, {a.Namespace, b.Namespace},
+		{a.Name, b.Name}, {aID, bID}} {
+		if n := strings.Compare(c[0], c[1]); n != 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // sourceJSON is a policy that has rules for a request or a backend, with its origin. Expired is true if
@@ -78,26 +102,38 @@ func (h *handler) expired(origin string, now time.Time) bool {
 	return origin != "" && h.d.Deadlines.Expired(origin, now)
 }
 
-// spokeSources maps each policy ID of the snapshot to its spoke source (the zero value for a hub policy).
-func spokeSources(s *policy.Snapshot) map[string]policy.SpokeSource {
-	byID := map[string]policy.SpokeSource{}
+// compileResults maps each policy ID of the snapshot to its compile result.
+func compileResults(s *policy.Snapshot) map[string]policy.Result {
+	byID := map[string]policy.Result{}
 	for _, v := range s.Policies() {
-		byID[v.ID] = v.Result.Spoke
+		byID[v.ID] = v.Result
 	}
 	return byID
 }
 
-// sources returns the policies of refs with their origins and expiry state, in the order of refs. byID
-// comes from spokeSources.
-func (h *handler) sources(byID map[string]policy.SpokeSource, refs []policy.Ref, now time.Time) []sourceJSON {
+// sources returns the policies of refs with their origins and expiry state, in the order of the Policies
+// view. byID comes from compileResults.
+func (h *handler) sources(byID map[string]policy.Result, refs []policy.Ref, now time.Time) []sourceJSON {
 	out := make([]sourceJSON, 0, len(refs))
 	for _, ref := range refs {
-		src := byID[ref.ID]
-		if src.Cluster != ref.Origin {
+		o := originOf(byID[ref.ID])
+		if o.Hub != (ref.Origin == "") || o.Cluster != ref.Origin {
 			// The rules are the truth. This occurs only for rules with no compile result, as in tests.
-			src = policy.SpokeSource{Cluster: ref.Origin}
+			o = originJSON{Hub: ref.Origin == "", Cluster: ref.Origin}
 		}
-		out = append(out, sourceJSON{ID: ref.ID, Origin: originOf(src), Expired: h.expired(ref.Origin, now)})
+		out = append(out, sourceJSON{ID: ref.ID, Origin: o, Expired: h.expired(ref.Origin, now)})
+	}
+	slices.SortStableFunc(out, func(a, b sourceJSON) int { return compareOrigin(a.Origin, a.ID, b.Origin, b.ID) })
+	return out
+}
+
+// expiredOnly keeps the expired sources.
+func expiredOnly(in []sourceJSON) []sourceJSON {
+	out := make([]sourceJSON, 0, len(in))
+	for _, s := range in {
+		if s.Expired {
+			out = append(out, s)
+		}
 	}
 	return out
 }
@@ -164,7 +200,7 @@ func (h *handler) policyViews(s *policy.Snapshot, now time.Time) []policyJSON {
 			Generation: v.Result.Generation, Ready: v.Result.Ready, Reason: v.Result.Reason, Message: v.Result.Message,
 			Users: nz(v.Users), Groups: nz(v.Groups), Rules: []ruleJSON{}}
 		if mc {
-			o := originOf(v.Result.Spoke)
+			o := originOf(v.Result)
 			p.Origin = &o
 			p.Expired = v.Result.Ready && h.expired(v.Result.Spoke.Cluster, now)
 		}
@@ -184,27 +220,9 @@ func (h *handler) policyViews(s *policy.Snapshot, now time.Time) []policyJSON {
 		out = append(out, p)
 	}
 	if mc {
-		slices.SortStableFunc(out, compareByOrigin)
+		slices.SortStableFunc(out, func(a, b policyJSON) int { return compareOrigin(*a.Origin, a.ID, *b.Origin, b.ID) })
 	}
 	return out
-}
-
-// compareByOrigin puts hub policies first, by ID, and then spoke policies by cluster, kind, namespace and
-// name, because their IDs are hashes. Both policies must have an origin.
-func compareByOrigin(a, b policyJSON) int {
-	if a.Origin.Hub != b.Origin.Hub {
-		if a.Origin.Hub {
-			return -1
-		}
-		return 1
-	}
-	for _, c := range [][2]string{{a.Origin.Cluster, b.Origin.Cluster}, {a.Origin.Kind, b.Origin.Kind},
-		{a.Origin.Namespace, b.Origin.Namespace}, {a.Origin.Name, b.Origin.Name}, {a.ID, b.ID}} {
-		if n := strings.Compare(c[0], c[1]); n != 0 {
-			return n
-		}
-	}
-	return 0
 }
 
 func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
@@ -275,9 +293,10 @@ type accessJSON struct {
 	DeniedLabels []string        `json:"deniedLabels"` // includes the redacted names
 	Redactions   []redactionJSON `json:"redactions"`
 	Policies     []string        `json:"policies"`
-	// Sources is set only with the multicluster block, and is absent if it is empty: each policy with rules
-	// for the request on this backend, also if its spoke is expired. Expired rules give no terms, but their
-	// labels stay in DeniedLabels and Redactions.
+	// Sources is set only with the multicluster block, and is absent if it is empty. For a granted backend,
+	// it is each policy with rules for the request, also if its spoke is expired: expired rules give no
+	// terms, but their labels stay in DeniedLabels and Redactions. For a refused backend, it is only the
+	// expired policies. The order is that of the Policies view.
 	Sources []sourceJSON `json:"sources,omitempty"`
 }
 
@@ -315,9 +334,9 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
 	groups := splitGroups(r.URL.Query().Get("groups"))
 	now := time.Now()
-	var byID map[string]policy.SpokeSource
+	var byID map[string]policy.Result
 	if h.multicluster() {
-		byID = spokeSources(s)
+		byID = compileResults(s)
 	}
 	out := make([]accessJSON, 0, len(h.d.Config.Backends))
 	for i := range h.d.Config.Backends {
@@ -330,6 +349,9 @@ func (h *handler) access(w http.ResponseWriter, r *http.Request) {
 		eff, err := s.ResolveAt(user, groups, b.Name, h.d.Deadlines, now)
 		if err != nil {
 			a.Reason = resolveReason(err)
+			// A refused backend lists no policies, as without the block. Only the expired sources stay,
+			// because they explain a refusal with policy_source_expired.
+			a.Sources = expiredOnly(a.Sources)
 			out = append(out, a)
 			continue
 		}
@@ -355,9 +377,9 @@ func (h *handler) backends(w http.ResponseWriter, _ *http.Request) {
 	}
 	reach := map[string][]string{}
 	refs := map[string][]policy.Ref{}
-	byID := map[string]policy.SpokeSource{}
+	byID := map[string]policy.Result{}
 	for _, p := range s.Policies() {
-		byID[p.ID] = p.Result.Spoke
+		byID[p.ID] = p.Result
 		for _, r := range p.Rules {
 			if !slices.Contains(reach[r.Backend], p.ID) {
 				reach[r.Backend] = append(reach[r.Backend], p.ID)
@@ -373,7 +395,7 @@ func (h *handler) backends(w http.ResponseWriter, _ *http.Request) {
 		Federation     string   `json:"tenantFederation"`
 		Policies       []string `json:"policies"`
 		// Sources is set only with the multicluster block, and is absent if it is empty: Policies with their
-		// origins and expiry state.
+		// origins and expiry state, in the order of the Policies view.
 		Sources []sourceJSON `json:"sources,omitempty"`
 	}
 	now := time.Now()
