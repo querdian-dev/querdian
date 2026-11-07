@@ -1,9 +1,11 @@
 // Package controller watches policies and namespaces, compiles them into immutable snapshots and writes
-// status conditions (PLAN §3, §6.1).
+// status conditions (PLAN §3, §6.1). With the multicluster block, it also watches the SpokeCluster and
+// SpokePolicy kinds and feeds the table of spoke deadlines (PLAN §18).
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -34,6 +36,10 @@ type Controller struct {
 
 	onRebuild func(snap *policy.Snapshot, err error)
 
+	// deadlines is the table of spoke deadlines. The SpokeCluster informer feeds it if the multicluster
+	// block is set.
+	deadlines *policy.Deadlines
+
 	reader  client.Reader
 	writer  *statusWriter
 	current atomic.Pointer[policy.Snapshot]
@@ -58,6 +64,10 @@ func WithTracerProvider(tp trace.TracerProvider) Option {
 func WithRebuildHook(f func(snap *policy.Snapshot, err error)) Option {
 	return func(c *Controller) { c.onRebuild = f }
 }
+
+// WithDeadlines sets the table of spoke deadlines (PLAN §18.6). The SpokeCluster informer feeds it. With the
+// multicluster block, SetupWithManager fails if no table is set.
+func WithDeadlines(d *policy.Deadlines) Option { return func(c *Controller) { c.deadlines = d } }
 
 const tracerName = "github.com/querdian-dev/querdian/internal/controller"
 
@@ -87,12 +97,21 @@ func AddToScheme(s *runtime.Scheme) error {
 // Snapshot returns the current snapshot, or nil before the first one was built.
 func (c *Controller) Snapshot() *policy.Snapshot { return c.current.Load() }
 
-// Ready reports whether the caches are synced and a first snapshot exists.
-func (c *Controller) Ready() bool { return c.current.Load() != nil }
+// Ready reports whether the caches are synced and a first snapshot exists. With the multicluster block, the
+// deadline table must also have its first complete state (PLAN §18.6, rule 3).
+func (c *Controller) Ready() bool {
+	if c.current.Load() == nil {
+		return false
+	}
+	return c.cfg.Multicluster == nil || c.deadlines.Complete()
+}
 
 // SetupWithManager registers the snapshot builder (runs on every replica) and the status writer
 // (leader only) with the manager.
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
+	if c.cfg.Multicluster != nil && c.deadlines == nil {
+		return errors.New("controller: the multicluster block needs a deadline table (WithDeadlines)")
+	}
 	c.reader = mgr.GetCache()
 	if err := mgr.Add(&builder{c: c, cache: mgr.GetCache()}); err != nil {
 		return err
@@ -129,7 +148,12 @@ func (b *builder) NeedLeaderElection() bool { return false }
 // Start implements manager.Runnable.
 func (b *builder) Start(ctx context.Context) error {
 	c := b.c
-	for _, obj := range []client.Object{&v1.ClusterAccessPolicy{}, &v1.AccessPolicy{}, &corev1.Namespace{}} {
+	kinds := []client.Object{&v1.ClusterAccessPolicy{}, &v1.AccessPolicy{}, &corev1.Namespace{}}
+	if c.cfg.Multicluster != nil {
+		// Without the block, the new kinds get no informer, so their CRDs can be absent (PLAN §18.4).
+		kinds = append(kinds, &v1.SpokePolicy{})
+	}
+	for _, obj := range kinds {
 		inf, err := b.cache.GetInformer(ctx, obj)
 		if err != nil {
 			return fmt.Errorf("informer for %T: %w", obj, err)
@@ -146,8 +170,26 @@ func (b *builder) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	var spokes toolscache.ResourceEventHandlerRegistration
+	if c.cfg.Multicluster != nil {
+		inf, err := b.cache.GetInformer(ctx, &v1.SpokeCluster{})
+		if err != nil {
+			return fmt.Errorf("informer for %T: %w", &v1.SpokeCluster{}, err)
+		}
+		if spokes, err = inf.AddEventHandler(newSpokeClusterHandler(ctx, c)); err != nil {
+			return err
+		}
+	}
 	if !b.cache.WaitForCacheSync(ctx) {
 		return fmt.Errorf("cache did not sync")
+	}
+	if spokes != nil {
+		// The cache can be synced before the handler has received each object of the first list. The table is
+		// complete only after the handler has received all of them.
+		if !toolscache.WaitForCacheSync(ctx.Done(), spokes.HasSynced) {
+			return fmt.Errorf("spoke deadline table did not sync")
+		}
+		c.deadlines.MarkComplete()
 	}
 	if err := c.rebuild(ctx, "startup"); err != nil {
 		return err
@@ -204,7 +246,13 @@ func (c *Controller) doRebuild(ctx context.Context, trigger string) error {
 	var cps v1.ClusterAccessPolicyList
 	var aps v1.AccessPolicyList
 	var nss corev1.NamespaceList
-	for _, l := range []client.ObjectList{&cps, &aps, &nss} {
+	var scs v1.SpokeClusterList
+	var sps v1.SpokePolicyList
+	lists := []client.ObjectList{&cps, &aps, &nss}
+	if c.cfg.Multicluster != nil {
+		lists = append(lists, &scs, &sps)
+	}
+	for _, l := range lists {
 		if err := c.reader.List(ctx, l); err != nil {
 			span.RecordError(err)
 			return fmt.Errorf("list %T: %w", l, err)
@@ -214,7 +262,10 @@ func (c *Controller) doRebuild(ctx context.Context, trigger string) error {
 	for i := range nss.Items {
 		labels[nss.Items[i].Name] = nss.Items[i].Labels
 	}
-	compiled := policy.Compile(policy.Input{Config: c.cfg, ClusterPolicies: cps.Items, Policies: aps.Items, NamespaceLabels: labels})
+	compiled := policy.Compile(policy.Input{
+		Config: c.cfg, ClusterPolicies: cps.Items, Policies: aps.Items, NamespaceLabels: labels,
+		SpokeClusters: scs.Items, SpokePolicies: sps.Items,
+	})
 	snap := policy.NewSnapshot(compiled, c.cfg, c.gen.Add(1))
 	c.current.Store(snap)
 
