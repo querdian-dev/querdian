@@ -554,16 +554,18 @@ picking up any task — section references (§) point there.
 
 The design is PLAN §18. Read it completely before you start a task in this milestone.
 
-### [ ] T6.1 — Configuration and CRDs
+### [x] T6.1 — Configuration and CRDs
 - **Depends on:** —
 - **Files:** `api/v1alpha1/`, `internal/config/`, `config/crd/`, `charts/querdian/crds/`
 - **Acceptance:**
-  - [ ] The `multicluster` block and `clusterLabel` exist. A config without the block behaves as today.
-  - [ ] Querdian refuses to start for each condition in §18.4. The check finds an explicit
+  - [x] The `multicluster` block and `clusterLabel` exist. A config without the block behaves as today.
+  - [x] Querdian refuses to start for each condition in §18.4. The check finds an explicit
         `maxStaleness: 0s`, which the current default pattern would change to the default.
-  - [ ] `ClusterRule` has the field `allClusters`. A CEL rule rejects it together with `unrestricted: true`.
-  - [ ] The `SpokeCluster` and `SpokePolicy` kinds exist, with envtest coverage. Both have a status
+  - [x] `ClusterRule` has the field `allClusters`. A CEL rule rejects it together with `unrestricted: true`.
+  - [x] The `SpokeCluster` and `SpokePolicy` kinds exist, with envtest coverage. Both have a status
         subresource. `SpokePolicy` has typed fields and the CEL rules of the spoke kinds.
+  - [x] Shared contracts for the parallel tasks: `internal/spokesync` (wire types, `Digest`,
+        `ObjectName`, `IdentityMatchesName`), `CompiledRule.Origin`, and `config.ValidLabelName`.
 
 ### [ ] T6.2 — Policy origin in the compiler
 - **Depends on:** T6.1

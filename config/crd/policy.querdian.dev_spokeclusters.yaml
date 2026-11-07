@@ -1,0 +1,168 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: spokeclusters.policy.querdian.dev
+spec:
+  group: policy.querdian.dev
+  names:
+    kind: SpokeCluster
+    listKind: SpokeClusterList
+    plural: spokeclusters
+    shortNames:
+    - spoke
+    singular: spokecluster
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.suspended
+      name: Suspended
+      type: boolean
+    - jsonPath: .status.lastSyncTime
+      name: LastSync
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SpokeCluster registers a spoke cluster on the hub; its name is the cluster label value of the spoke.
+          The name is also a Kubernetes label value on SpokePolicy objects, hence the length limit.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SpokeClusterSpec is the desired state of a SpokeCluster.
+              Only hub admins write it (PLAN §18.4).
+            properties:
+              defaultTenant:
+                description: DefaultTenant is used for spoke AccessPolicy objects
+                  whose namespace has no tenant label.
+                type: string
+              identity:
+                description: |-
+                  Identity is the URI SAN of the agent cert of this spoke. Its last path segment must equal the
+                  SpokeCluster name.
+                minLength: 1
+                type: string
+              maxStaleness:
+                description: MaxStaleness overrides multicluster.maxStaleness of the
+                  static config for this spoke.
+                type: string
+              suspended:
+                default: false
+                description: Suspended stops the grants of this spoke and makes the
+                  receiver reject its syncs.
+                type: boolean
+              tenants:
+                default: []
+                description: Tenants is the allow-list of tenants that policies of
+                  this spoke may use.
+                items:
+                  type: string
+                type: array
+            required:
+            - identity
+            type: object
+            x-kubernetes-validations:
+            - message: defaultTenant must be in tenants
+              rule: '!has(self.defaultTenant) || self.defaultTenant in self.tenants'
+          status:
+            description: SpokeClusterStatus is written by the receiver after each
+              valid sync.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastSyncTime:
+                description: LastSyncTime is the hub time of the last valid sync.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is metadata.generation at the last
+                  valid sync.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: name must be at most 63 characters
+          rule: size(self.metadata.name) <= 63
+    served: true
+    storage: true
+    subresources:
+      status: {}

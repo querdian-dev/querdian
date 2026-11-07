@@ -2,7 +2,6 @@ package policy
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -19,12 +18,6 @@ type Input struct {
 	NamespaceLabels map[string]map[string]string
 }
 
-var (
-	promLabelName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
-	// tempoAttrName is a deliberately conservative subset that needs no quoting when rendered.
-	tempoAttrName = regexp.MustCompile(`^(resource|span)\.[a-zA-Z0-9_][a-zA-Z0-9_.\-/]*$`)
-)
-
 // compileError carries the status reason for a failing policy.
 type compileError struct {
 	reason string
@@ -38,14 +31,7 @@ func fail(reason, format string, a ...any) *compileError {
 }
 
 // validName checks a label (Prometheus/Loki) or attribute (Tempo) name for the backend type.
-func validName(t config.BackendType, name string) bool {
-	switch t {
-	case config.BackendTempo:
-		return tempoAttrName.MatchString(name)
-	default:
-		return name != TenantIDLabel && promLabelName.MatchString(name)
-	}
-}
+func validName(t config.BackendType, name string) bool { return config.ValidLabelName(t, name) }
 
 func compileMatcher(t config.BackendType, m v1.Matcher) (Matcher, *compileError) {
 	if !validName(t, m.Name) {

@@ -8,6 +8,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +52,18 @@ type Config struct {
 	Auth     AuthConfig `json:"auth"`
 	Backends []Backend  `json:"backends"`
 	Limits   Limits     `json:"limits"`
+	// Multicluster enables central enforcement for several clusters (PLAN §18); nil keeps the
+	// single-cluster behaviour.
+	Multicluster *Multicluster `json:"multicluster"`
+}
+
+// Multicluster configures the hub of a multi-cluster deployment (PLAN §18.4).
+type Multicluster struct {
+	// HubCluster is the cluster label value of the hub's own telemetry.
+	HubCluster string `json:"hubCluster"`
+	// MaxStaleness is how long the policies of a spoke stay active without a valid sync. A pointer, so
+	// that an explicit zero is rejected instead of replaced by the default.
+	MaxStaleness *Duration `json:"maxStaleness"`
 }
 
 // AuthConfig configures OIDC verification (PLAN §10).
@@ -70,11 +83,14 @@ type ClaimsConfig struct {
 
 // Backend is one upstream.
 type Backend struct {
-	Name             string           `json:"name"`
-	Type             BackendType      `json:"type"`
-	URL              string           `json:"url"`
-	PathPrefix       string           `json:"pathPrefix"`
-	NamespaceLabel   string           `json:"namespaceLabel"`
+	Name           string      `json:"name"`
+	Type           BackendType `json:"type"`
+	URL            string      `json:"url"`
+	PathPrefix     string      `json:"pathPrefix"`
+	NamespaceLabel string      `json:"namespaceLabel"`
+	// ClusterLabel is the label (attribute on Tempo) that carries the cluster; required with multicluster
+	// and forbidden without it (PLAN §18.4).
+	ClusterLabel     string           `json:"clusterLabel"`
 	TenantHeader     string           `json:"tenantHeader"`
 	TenantFederation TenantFederation `json:"tenantFederation"`
 	TraceByID        TraceByID        `json:"traceByID"`
@@ -144,7 +160,27 @@ const (
 	DefaultMaxFanout       = 16
 	DefaultMaxMergeBytes   = 64 << 20
 	DefaultUpstreamTimeout = 5 * time.Minute
+	DefaultMaxStaleness    = 48 * time.Hour
 )
+
+// tenantIDLabel is the reserved federation label (policy.TenantIDLabel); it is never a valid policy label.
+const tenantIDLabel = "__tenant_id__"
+
+var (
+	promLabelName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	// tempoAttrName is a deliberately conservative subset that needs no quoting when rendered.
+	tempoAttrName = regexp.MustCompile(`^(resource|span)\.[a-zA-Z0-9_][a-zA-Z0-9_.\-/]*$`)
+)
+
+// ValidLabelName checks a label (Prometheus/Loki) or attribute (Tempo) name for the backend type.
+func ValidLabelName(t BackendType, name string) bool {
+	switch t {
+	case BackendTempo:
+		return tempoAttrName.MatchString(name)
+	default:
+		return name != tenantIDLabel && promLabelName.MatchString(name)
+	}
+}
 
 // Load reads, decodes (unknown fields are an error), defaults and validates the file at path.
 func Load(path string) (*Config, error) {
@@ -187,6 +223,10 @@ func (c *Config) applyDefaults() {
 	if c.Limits.UpstreamTimeout == 0 {
 		c.Limits.UpstreamTimeout = Duration(DefaultUpstreamTimeout)
 	}
+	if c.Multicluster != nil && c.Multicluster.MaxStaleness == nil {
+		d := Duration(DefaultMaxStaleness)
+		c.Multicluster.MaxStaleness = &d
+	}
 	for i := range c.Backends {
 		b := &c.Backends[i]
 		if b.TenantFederation == "" {
@@ -227,6 +267,15 @@ func (c *Config) Validate() error {
 	if len(c.Backends) == 0 {
 		add("at least one backend is required")
 	}
+	if m := c.Multicluster; m != nil {
+		if m.HubCluster == "" {
+			// cluster="" would also match data without a cluster label.
+			add("multicluster.hubCluster must not be empty")
+		}
+		if m.MaxStaleness == nil || *m.MaxStaleness <= 0 {
+			add("multicluster.maxStaleness must be positive")
+		}
+	}
 
 	names := map[string]bool{}
 	for i := range c.Backends {
@@ -252,6 +301,17 @@ func (c *Config) Validate() error {
 		}
 		if b.NamespaceLabel == "" {
 			add("%s.namespaceLabel must not be empty", p)
+		}
+		switch {
+		case c.Multicluster == nil && b.ClusterLabel != "":
+			// A rollback that keeps clusterLabel would turn every hub AccessPolicy global (PLAN §18.4).
+			add("%s.clusterLabel requires the multicluster block", p)
+		case c.Multicluster != nil && b.ClusterLabel == "":
+			add("%s.clusterLabel is required with multicluster", p)
+		case c.Multicluster != nil && !ValidLabelName(b.Type, b.ClusterLabel):
+			add("%s.clusterLabel %q is not a valid name for a %s backend", p, b.ClusterLabel, b.Type)
+		case c.Multicluster != nil && b.ClusterLabel == b.NamespaceLabel:
+			add("%s.clusterLabel must differ from namespaceLabel", p)
 		}
 		switch b.TenantFederation {
 		case FederationNone:

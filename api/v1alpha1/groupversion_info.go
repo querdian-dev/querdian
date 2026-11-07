@@ -24,6 +24,8 @@ func addKnownTypes(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion,
 		&ClusterAccessPolicy{}, &ClusterAccessPolicyList{},
 		&AccessPolicy{}, &AccessPolicyList{},
+		&SpokeCluster{}, &SpokeClusterList{},
+		&SpokePolicy{}, &SpokePolicyList{},
 	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil

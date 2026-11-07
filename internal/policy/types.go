@@ -69,6 +69,9 @@ type CompiledRule struct {
 	Policy string
 	// Backend is the backend name from the static config.
 	Backend string
+	// Origin is the SpokeCluster name for a rule from a spoke policy, and empty for a hub rule (PLAN §18).
+	// Rules of a spoke expire with it; hub rules never expire.
+	Origin string
 	// Tenants is sorted and deduplicated; empty for single-tenant backends.
 	Tenants      []string
 	Unrestricted bool

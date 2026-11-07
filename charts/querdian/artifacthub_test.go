@@ -133,6 +133,10 @@ func TestArtifactHubCRDs(t *testing.T) {
 			obj = &v1alpha1.ClusterAccessPolicy{}
 		case "AccessPolicy":
 			obj = &v1alpha1.AccessPolicy{}
+		case "SpokeCluster":
+			obj = &v1alpha1.SpokeCluster{}
+		case "SpokePolicy":
+			obj = &v1alpha1.SpokePolicy{}
 		default:
 			t.Errorf("example of unknown kind %v", ex["kind"])
 			continue

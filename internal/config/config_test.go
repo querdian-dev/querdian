@@ -146,6 +146,77 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+func TestMulticluster(t *testing.T) {
+	mc := func(block, backendExtra string) string {
+		in := base
+		if backendExtra != "" {
+			in = strings.Replace(in, "namespaceLabel: namespace", "namespaceLabel: namespace, "+backendExtra, 1)
+		}
+		return in + block
+	}
+	c, err := Parse([]byte(mc("multicluster: {hubCluster: mla}\n", "clusterLabel: cluster")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Multicluster.HubCluster != "mla" || c.Multicluster.MaxStaleness.Std() != 48*time.Hour || c.Backends[0].ClusterLabel != "cluster" {
+		t.Fatalf("multicluster defaults: %+v", c.Multicluster)
+	}
+	c, err = Parse([]byte(mc("multicluster: {hubCluster: mla, maxStaleness: 168h}\n", "clusterLabel: cluster")))
+	if err != nil || c.Multicluster.MaxStaleness.Std() != 168*time.Hour {
+		t.Fatalf("explicit maxStaleness: %v %+v", err, c)
+	}
+	c, err = Parse([]byte(base))
+	if err != nil || c.Multicluster != nil {
+		t.Fatalf("without the block nothing changes: %v %+v", err, c)
+	}
+	tempo := strings.Replace(base, "type: prometheus", "type: tempo", 1)
+	if _, err := Parse([]byte(strings.Replace(tempo, "namespaceLabel: namespace", "namespaceLabel: resource.k8s.namespace.name, clusterLabel: resource.k8s.cluster.name", 1) + "multicluster: {hubCluster: mla}\n")); err != nil {
+		t.Fatalf("tempo cluster attribute: %v", err)
+	}
+
+	for _, tc := range []struct{ name, in, want string }{
+		{"empty hubCluster", mc("multicluster: {hubCluster: \"\"}\n", "clusterLabel: cluster"), "hubCluster must not be empty"},
+		{"no hubCluster", mc("multicluster: {}\n", "clusterLabel: cluster"), "hubCluster must not be empty"},
+		{"zero maxStaleness", mc("multicluster: {hubCluster: mla, maxStaleness: 0s}\n", "clusterLabel: cluster"), "maxStaleness must be positive"},
+		{"negative maxStaleness", mc("multicluster: {hubCluster: mla, maxStaleness: -1h}\n", "clusterLabel: cluster"), "maxStaleness must be positive"},
+		{"bad maxStaleness", mc("multicluster: {hubCluster: mla, maxStaleness: soon}\n", "clusterLabel: cluster"), "invalid duration"},
+		{"missing clusterLabel", mc("multicluster: {hubCluster: mla}\n", ""), "clusterLabel is required"},
+		{"clusterLabel without block", mc("", "clusterLabel: cluster"), "requires the multicluster block"},
+		{"invalid clusterLabel", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: k8s.cluster"), "not a valid name"},
+		{"tenant id label", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: __tenant_id__"), "not a valid name"},
+		{"tempo unscoped", strings.Replace(tempo, "namespaceLabel: namespace", "namespaceLabel: namespace, clusterLabel: cluster", 1) + "multicluster: {hubCluster: mla}\n", "not a valid name"},
+		{"same as namespaceLabel", mc("multicluster: {hubCluster: mla}\n", "clusterLabel: namespace"), "must differ from namespaceLabel"},
+		{"unknown field", mc("multicluster: {hubCluster: mla, spokes: []}\n", "clusterLabel: cluster"), "unknown field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.in))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestValidLabelName(t *testing.T) {
+	for _, tc := range []struct {
+		typ  BackendType
+		name string
+		want bool
+	}{
+		{BackendPrometheus, "cluster", true},
+		{BackendLoki, "k8s_cluster_name", true},
+		{BackendPrometheus, "__tenant_id__", false},
+		{BackendPrometheus, "1cluster", false},
+		{BackendTempo, "resource.k8s.cluster.name", true},
+		{BackendTempo, "cluster", false},
+		{BackendTempo, ".cluster", false},
+	} {
+		if got := ValidLabelName(tc.typ, tc.name); got != tc.want {
+			t.Errorf("ValidLabelName(%s, %q) = %v, want %v", tc.typ, tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestFlags(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	f := RegisterFlags(fs)

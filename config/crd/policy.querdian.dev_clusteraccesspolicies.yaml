@@ -53,6 +53,12 @@ spec:
                 items:
                   description: ClusterRule is a rule of a ClusterAccessPolicy.
                   properties:
+                    allClusters:
+                      default: false
+                      description: |-
+                        AllClusters states that the rule applies to every cluster, including spokes added later (PLAN §18.3).
+                        It has no effect without the multicluster config block and is invalid on spoke policies.
+                      type: boolean
                     backends:
                       description: Backends are backend names from the static config.
                       items:
@@ -155,6 +161,8 @@ spec:
                   x-kubernetes-validations:
                   - message: set either unrestricted or matchers
                     rule: self.unrestricted == (size(self.matchers) == 0)
+                  - message: allClusters and unrestricted are mutually exclusive
+                    rule: '!(self.allClusters && self.unrestricted)'
                 minItems: 1
                 type: array
               subjects:
