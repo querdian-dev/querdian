@@ -165,10 +165,12 @@ quickstart (demo-only credentials), documentation tooling, Grafana panels.
   the repository.
 * **CI** ([.github/workflows](../../.github/workflows)): `lint` (golangci-lint with gosec, errorlint,
   revive, misspell, unconvert), `test-race`, `envtest` (controller tests against a real API server),
-  `fuzz` (30 s per target), `govulncheck`, `licenses`, `generate` (drift check), `dco`, `codeql (go)`,
-  Scorecard. Workflows run with minimal `permissions:` and all actions are pinned by SHA.
-* **Not in CI:** `make e2e` (differential and equivalence suites), `make chart-lint`,
-  `make release-check`, coverage measurement, long-running or nightly fuzzing. They are run by hand.
+  `fuzz` (30 s per target), `govulncheck`, `licenses`, `generate` (drift check), `chart` (CRD sync
+  check, `make chart-lint`, chart tests), `e2e` (`make e2e`, the differential and equivalence suites),
+  `dco`, `codeql (go)`, Scorecard. `chart` and `e2e` run on every pull request but are not required
+  checks yet. Workflows run with minimal `permissions:` and all actions are pinned by SHA.
+* **Not in CI:** `make release-check`, coverage measurement, long-running or nightly fuzzing. They
+  are run by hand.
 * **Dependencies:** Renovate configuration (Go modules, actions, test images, GoReleaser); unverified
   until the Renovate app is installed.
 * **Build and release:** reproducible-leaning flags (`-trimpath`, `CGO_ENABLED=0`); the image is built
@@ -239,7 +241,7 @@ to this repository.
 | `1bfe673` | Fan-out merge incorrect for Loki branches answering with an empty vector (correctness, not disclosure). |
 
 Residual and known risks that remain are enumerated in
-[threat model, section 12](threat-model.md#12-summary-of-residual-risks) and the Loki findings in
+[threat model, section 13](threat-model.md#13-summary-of-residual-risks) and the Loki findings in
 [limitations](../limitations.md#logql) ("Findings from the end-to-end suite").
 
 ### OpenSSF Best Practices
@@ -308,6 +310,6 @@ Engineering
 * Product limitations with security relevance: no rate limiting, unauthenticated management port, no
   TLS termination, tokens valid until expiry, namespace-label integrity is the operator's
   responsibility, clean-room parsers may diverge from the backends in unexplored corners,
-  eventually consistent revocation ([threat model, section 12](threat-model.md#12-summary-of-residual-risks)).
+  eventually consistent revocation ([threat model, section 13](threat-model.md#13-summary-of-residual-risks)).
 * Tested only against the backend versions in the E2E suites; Thanos and Mimir federation are not
   tested end to end.

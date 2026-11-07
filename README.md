@@ -50,6 +50,8 @@ The website (landing page and rendered documentation) is built from [site/](site
   conditions. Includes the requirement that the namespace label is set by your telemetry pipeline.
 * [Policy dashboard](docs/dashboard.md): optional read-only view of active policies and a query test bench.
 * [Operations](docs/operations.md): configuration reference, flags, limits, metrics, tracing, logging.
+* [Multi-cluster](docs/multicluster.md): one hub Querdian for the policies of several clusters, with the
+  receiver, the agent, the migration steps and the procedures for certs and spokes.
 * [Troubleshooting](docs/troubleshooting.md): decision reason codes and ready-made PromQL/TraceQL queries.
 * [Known limitations](docs/limitations.md): strictness choices and unsupported syntax.
 * [Threat model](docs/security/threat-model.md) and [security policy](SECURITY.md).
