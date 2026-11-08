@@ -103,6 +103,10 @@ func newHarness(t *testing.T, o Options, opts ...func(*Receiver)) *harness {
 	ca := newCA(t, "hub agent CA")
 	clock := &fakeClock{t: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)}
 	o.Client, o.Logger, o.Now = direct, quiet, clock.Now
+	if o.RequestBurst == 0 {
+		// The fake clock does not refill the buckets. TestRequestLimit tests the limit.
+		o.RequestBurst = 1 << 20
+	}
 	r := New(o)
 	for _, f := range opts {
 		f(r)
@@ -855,7 +859,7 @@ func TestLeaderElection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rp := &replica{srv: NewServer("127.0.0.1:0", TLSConfig(ca.issue(t, true), ca.pool()), New(Options{Client: direct, Logger: quiet}), quiet), done: make(chan struct{})}
+		rp := &replica{srv: NewServer("127.0.0.1:0", TLSConfig(ca.issue(t, true), ca.pool()), New(Options{Client: direct, Logger: quiet, RequestBurst: 1 << 20}), quiet), done: make(chan struct{})}
 		if err := mgr.Add(rp.srv); err != nil {
 			t.Fatal(err)
 		}

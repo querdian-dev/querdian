@@ -1026,6 +1026,19 @@ conditions, and it does not renew `lastSyncTime`:
 - more than one changed sync from one cluster in 10 seconds;
 - any sync while the `SpokeCluster` is suspended.
 
+**Load limits.** One spoke must not be able to stop the receiver, because then all spokes expire. The
+receiver applies these limits:
+
+- Each identity has a burst of six requests, then one request each 5 seconds. This limit applies to
+  heartbeats and full syncs, also from an identity that is not registered. The receiver applies it
+  before it reads the body and before it reads the API server, and it answers `429` with `Retry-After`.
+  An agent with the lowest heartbeat interval (10 seconds) sends at most a heartbeat and a full sync
+  each 10 seconds, and it retries with backoff, so the limit does not stop it.
+- The body has a size limit, and the number of JSON values in it has a limit that depends on the policy
+  limit. The receiver checks the keys and counts the values in one pass over the tokens, before the typed
+  decode. Thus the memory of one request has a fixed upper limit, also for a body of small values.
+- A fixed number of requests can be in progress at the same time.
+
 ### 18.6 Time limit
 
 If a spoke does not sync, its policies stop after `maxStaleness` (default 48 hours). Hub policies do not

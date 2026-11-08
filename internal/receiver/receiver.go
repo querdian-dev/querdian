@@ -37,6 +37,12 @@ const (
 	DefaultMaxBodyBytes = 8 << 20
 	DefaultMaxPolicies  = 2000
 	DefaultMaxInFlight  = 16
+	// DefaultRequestBurst and DefaultRequestInterval limit the requests of one identity (PLAN §18.5): a burst
+	// of DefaultRequestBurst requests, then one request for each DefaultRequestInterval. An agent with the
+	// lowest heartbeat interval (10 seconds) and a change at each heartbeat sends a heartbeat and a full sync
+	// each 10 seconds. Its retries back off from one second up to one minute.
+	DefaultRequestBurst    = 6
+	DefaultRequestInterval = 5 * time.Second
 	// ChangeInterval is the minimum time between two changed syncs of one cluster (PLAN §18.5).
 	ChangeInterval = 10 * time.Second
 )
@@ -50,8 +56,15 @@ type Options struct {
 	// MaxPolicies is the maximum number of policies in a full sync (default DefaultMaxPolicies).
 	MaxPolicies int
 	// MaxInFlight is the maximum number of requests that the receiver reads and handles at the same time
-	// (default DefaultMaxInFlight). It limits the memory for request bodies.
+	// (default DefaultMaxInFlight). With the limit on the JSON values of one request, which depends on
+	// MaxPolicies (valueLimit), it limits the memory for request bodies.
 	MaxInFlight int
+	// RequestBurst and RequestInterval limit the requests of one identity: heartbeats, full syncs and the
+	// requests of an identity that is not registered (defaults DefaultRequestBurst and
+	// DefaultRequestInterval). The limit applies before the body is read and before any read of the API
+	// server.
+	RequestBurst    int
+	RequestInterval time.Duration
 	// Logger receives one line for each rejected sync (default slog.Default()).
 	Logger *slog.Logger
 	// Now is the hub clock (default time.Now).
@@ -69,10 +82,15 @@ type Receiver struct {
 
 	slots chan struct{} // one entry for each request in progress
 
+	burst    int
+	interval time.Duration
+
 	mu         sync.Mutex
 	callers    map[string]bool      // identities with a request in progress
 	running    map[string]bool      // clusters with a sync in progress
 	lastChange map[string]time.Time // start of the last changed sync for each cluster
+	buckets    map[string]bucket    // request tokens of each identity
+	lastPrune  time.Time            // last removal of full buckets
 
 	// afterWrites runs between the writes and the deletes of a changed sync. Only tests set it.
 	afterWrites func(ctx context.Context, cluster string) error
@@ -89,6 +107,15 @@ func New(o Options) *Receiver {
 		callers:     map[string]bool{},
 		running:     map[string]bool{},
 		lastChange:  map[string]time.Time{},
+		buckets:     map[string]bucket{},
+		burst:       o.RequestBurst,
+		interval:    o.RequestInterval,
+	}
+	if r.burst <= 0 {
+		r.burst = DefaultRequestBurst
+	}
+	if r.interval <= 0 {
+		r.interval = DefaultRequestInterval
 	}
 	if o.MaxInFlight <= 0 {
 		o.MaxInFlight = DefaultMaxInFlight
@@ -192,7 +219,11 @@ func (r *Receiver) handle(w http.ResponseWriter, req *http.Request) (string, *sp
 		return "", nil, fmt.Errorf("%w: %w", reject(http.StatusForbidden, "client certificate not accepted"), err)
 	}
 	// The limits apply before the body is read, so that a cert whose identity is no longer registered
-	// cannot use all the memory.
+	// cannot use all the memory, and before the reads of the API server, so that one spoke cannot load the
+	// API server or keep the receiver busy for the other spokes.
+	if err := r.allowRequest(identity); err != nil {
+		return identity, nil, err
+	}
 	select {
 	case r.slots <- struct{}{}:
 		defer func() { <-r.slots }()
@@ -211,7 +242,7 @@ func (r *Receiver) handle(w http.ResponseWriter, req *http.Request) (string, *sp
 		}
 		return identity, nil, fmt.Errorf("%w: %w", reject(http.StatusBadRequest, "cannot read the body"), err)
 	}
-	sreq, err := decodeRequest(body)
+	sreq, err := decodeRequest(body, valueLimit(r.maxPolicies))
 	if err != nil {
 		return identity, nil, reject(http.StatusBadRequest, "invalid request: "+err.Error())
 	}
@@ -283,8 +314,57 @@ func (r *Receiver) release(set map[string]bool, key string) {
 	delete(set, key)
 }
 
+// bucket is the token bucket of one identity.
+type bucket struct {
+	tokens float64
+	at     time.Time // time of the last update of tokens
+}
+
+// allowRequest takes one token from the bucket of identity. A bucket holds up to r.burst tokens and gets one
+// token for each r.interval. It rejects the request if the bucket is empty.
+func (r *Receiver) allowRequest(identity string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	b, ok := r.buckets[identity]
+	if !ok {
+		b = bucket{tokens: float64(r.burst), at: now}
+	}
+	if elapsed := now.Sub(b.at); elapsed > 0 {
+		b.tokens = min(float64(r.burst), b.tokens+float64(elapsed)/float64(r.interval))
+	}
+	b.at = now
+	allowed := b.tokens >= 1
+	if allowed {
+		b.tokens--
+	}
+	r.buckets[identity] = b
+	r.pruneBuckets(now)
+	if !allowed {
+		return reject(http.StatusTooManyRequests, "too many requests")
+	}
+	return nil
+}
+
+// pruneBuckets removes the buckets that are full again at now: a new bucket has the same state. It runs at
+// most once for each time that an empty bucket needs to become full, so the map holds only the identities
+// of that time. The caller holds r.mu.
+func (r *Receiver) pruneBuckets(now time.Time) {
+	full := time.Duration(r.burst) * r.interval
+	if now.Sub(r.lastPrune) < full {
+		return
+	}
+	r.lastPrune = now
+	for id, b := range r.buckets {
+		if b.tokens+float64(now.Sub(b.at))/float64(r.interval) >= float64(r.burst) {
+			delete(r.buckets, id)
+		}
+	}
+}
+
 // allowChange records the start of a changed sync. It rejects the sync if the last changed sync of the
-// cluster started less than ChangeInterval ago.
+// cluster started less than ChangeInterval ago. It records the time before apply on purpose: a sync that
+// then fails, for example with 409, also delays the retry. PLAN §18.5 accepts this delay of one retry.
 func (r *Receiver) allowChange(cluster string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
