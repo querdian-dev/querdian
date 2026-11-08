@@ -420,8 +420,10 @@ func startHub(t testing.TB, api *apiServer, b *backends) *hub {
 		t.Fatal(err)
 	}
 	rmgr := newMgr()
+	// The heartbeat of the suite is one second, which is more than the request limit of an identity
+	// permits. The receiver tests cover that limit.
 	rsrv := receiver.NewServer("127.0.0.1:0", receiver.TLSConfig(cert, pool),
-		receiver.New(receiver.Options{Client: direct, Logger: logger}), logger)
+		receiver.New(receiver.Options{Client: direct, Logger: logger, RequestBurst: 1 << 20}), logger)
 	if err := rmgr.Add(rsrv); err != nil {
 		t.Fatal(err)
 	}
