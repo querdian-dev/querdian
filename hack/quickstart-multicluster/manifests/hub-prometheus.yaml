@@ -1,0 +1,110 @@
+# Prometheus of the hub. It is hack/quickstart/manifests/prometheus.yaml with three changes:
+#  * the scrape config writes the target label cluster="hub" (multicluster.hubCluster), so hub
+#    telemetry carries the hub cluster label (docs/multicluster.md, step 2);
+#  * --web.enable-otlp-receiver: the ingest gateway writes the metrics of the spokes over OTLP;
+#  * no backfill init container (this demo has no history).
+#
+# CLUSTER-LABEL INTEGRITY: a scraped series that has its own cluster="..." label keeps the value of the
+# target label, and Prometheus renames the series label to exported_cluster (honor_labels: false).
+# DEMO LIMIT: the OTLP endpoint has no authentication. Each pod of the hub can write to it, also with
+# the cluster label of a spoke. Only the ingest gateway must write to it (PLAN 18.8); in a real hub,
+# restrict it with a NetworkPolicy (for example the backendProtection values of the chart).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: prometheus, namespace: observability}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: quickstart-prometheus}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: quickstart-prometheus}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: quickstart-prometheus}
+subjects: [{kind: ServiceAccount, name: prometheus, namespace: observability}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus, namespace: observability}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+    scrape_configs:
+      - job_name: annotated-pods
+        honor_labels: false
+        fallback_scrape_protocol: PrometheusText0.0.4
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+);(.+)
+            replacement: $1:$2
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: job
+          # The hub cluster label (multicluster.hubCluster in hub-values.yaml).
+          - action: replace
+            target_label: cluster
+            replacement: "@@HUB_NAME@@"
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: observability}
+spec:
+  selector: {app: prometheus}
+  ports: [{name: http, port: 9090, targetPort: 9090}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: observability}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata:
+      labels: {app: prometheus}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9090", prometheus.io/path: /metrics}
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: docker.io/prom/prometheus:v3.15.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=24h
+            - --web.enable-otlp-receiver
+          ports: [{containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /-/ready, port: 9090}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 400Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: data, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus}
+        - name: data
+          emptyDir: {}

@@ -1,0 +1,152 @@
+# DEMO PATTERN, NOT A PRODUCT FEATURE. The ingest gateway of the multi-cluster quickstart: an
+# OpenTelemetry Collector on the hub that receives the metrics, logs and traces of the spokes over
+# mTLS OTLP/HTTP and writes them to Prometheus, Loki and Tempo. Querdian does not include an ingest
+# gateway. Querdian cannot verify the cluster label, so the label is only as good as this pipeline
+# (PLAN 18.8, docs/multicluster.md "cluster label integrity").
+#
+# How the gateway sets the cluster label:
+#  * One OTLP receiver for each spoke, on its own port. Each receiver requires a client cert and trusts
+#    only the ingest CA of its spoke (client_ca_file). A cert of spoke-a fails the TLS handshake on the
+#    port of spoke-b. The hub controls the ingest CAs, so the port and its CA identify the spoke.
+#  * Each pipeline has one receiver and the processors of that spoke. They OVERWRITE the cluster label
+#    with `upsert`, for all three signals, independent of what the spoke sends:
+#      resource attributes  k8s.cluster.name, cluster          (Loki label k8s_cluster_name, Tempo
+#                                                              resource.k8s.cluster.name)
+#      data point, log record and span attributes  cluster     (Prometheus label cluster)
+#    and they delete the attribute k8s.cluster.name of data points, log records and spans, so no second
+#    label with a value of the spoke exists.
+#
+# Limits of this demo (see docs/quickstart-multicluster.md):
+#  * The gateway checks the CA only, not the URI SAN of the client cert. This is correct only because
+#    each spoke has its own CA and the hub keeps the CA keys. In the demo all keys are on the laptop.
+#  * No certificate revocation. One port for each spoke does not scale to many spokes.
+#  * The mapping from attributes to backend labels is that of Prometheus (OTLP receiver), Loki (default
+#    otlp_config) and Tempo in this demo. A different mapping needs a new review of the processors.
+#  * The backends have no write authentication. Other pods of the hub can bypass the gateway.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: ingest-gateway, namespace: observability}
+data:
+  config.yaml: |
+    receivers:
+      otlp/spoke-a:
+        protocols:
+          http:
+            endpoint: "0.0.0.0:14318"
+            tls:
+              cert_file: /etc/ingest-gateway/tls.crt
+              key_file: /etc/ingest-gateway/tls.key
+              client_ca_file: /etc/ingest-gateway/ca-spoke-a.crt
+      otlp/spoke-b:
+        protocols:
+          http:
+            endpoint: "0.0.0.0:24318"
+            tls:
+              cert_file: /etc/ingest-gateway/tls.crt
+              key_file: /etc/ingest-gateway/tls.key
+              client_ca_file: /etc/ingest-gateway/ca-spoke-b.crt
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 160
+      resource/spoke-a:
+        attributes:
+          - {key: k8s.cluster.name, value: spoke-a, action: upsert}
+          - {key: cluster, value: spoke-a, action: upsert}
+      attributes/spoke-a:
+        actions:
+          - {key: cluster, value: spoke-a, action: upsert}
+          - {key: k8s.cluster.name, action: delete}
+      resource/spoke-b:
+        attributes:
+          - {key: k8s.cluster.name, value: spoke-b, action: upsert}
+          - {key: cluster, value: spoke-b, action: upsert}
+      attributes/spoke-b:
+        actions:
+          - {key: cluster, value: spoke-b, action: upsert}
+          - {key: k8s.cluster.name, action: delete}
+      batch:
+        timeout: 2s
+    exporters:
+      otlphttp/prometheus:
+        metrics_endpoint: http://prometheus.observability:9090/api/v1/otlp/v1/metrics
+        tls: {insecure: true}
+      otlphttp/loki:
+        endpoint: http://loki.observability:3100/otlp
+        headers: {X-Scope-OrgID: "@@TENANT@@"}
+        tls: {insecure: true}
+      otlphttp/tempo:
+        endpoint: http://tempo.observability:4318
+        headers: {X-Scope-OrgID: "@@TENANT@@"}
+        tls: {insecure: true}
+    extensions:
+      health_check: {endpoint: "0.0.0.0:13133"}
+    service:
+      extensions: [health_check]
+      telemetry:
+        metrics: {level: none}
+      pipelines:
+        metrics/spoke-a:
+          receivers: [otlp/spoke-a]
+          processors: [memory_limiter, resource/spoke-a, attributes/spoke-a, batch]
+          exporters: [otlphttp/prometheus]
+        logs/spoke-a:
+          receivers: [otlp/spoke-a]
+          processors: [memory_limiter, resource/spoke-a, attributes/spoke-a, batch]
+          exporters: [otlphttp/loki]
+        traces/spoke-a:
+          receivers: [otlp/spoke-a]
+          processors: [memory_limiter, resource/spoke-a, attributes/spoke-a, batch]
+          exporters: [otlphttp/tempo]
+        metrics/spoke-b:
+          receivers: [otlp/spoke-b]
+          processors: [memory_limiter, resource/spoke-b, attributes/spoke-b, batch]
+          exporters: [otlphttp/prometheus]
+        logs/spoke-b:
+          receivers: [otlp/spoke-b]
+          processors: [memory_limiter, resource/spoke-b, attributes/spoke-b, batch]
+          exporters: [otlphttp/loki]
+        traces/spoke-b:
+          receivers: [otlp/spoke-b]
+          processors: [memory_limiter, resource/spoke-b, attributes/spoke-b, batch]
+          exporters: [otlphttp/tempo]
+---
+# NodePorts on the hub node: the spokes reach https://<hub node IP>:<nodePort> on the Docker network
+# "kind". up.sh reads the nodePort of each spoke from this Service.
+apiVersion: v1
+kind: Service
+metadata: {name: ingest-gateway, namespace: observability}
+spec:
+  type: NodePort
+  selector: {app: ingest-gateway}
+  ports:
+    - {name: spoke-a, port: 14318, targetPort: 14318, nodePort: 31001}
+    - {name: spoke-b, port: 24318, targetPort: 24318, nodePort: 31002}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: ingest-gateway, namespace: observability}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: ingest-gateway}}
+  template:
+    metadata:
+      labels: {app: ingest-gateway}
+    spec:
+      containers:
+        - name: collector
+          image: docker.io/otel/opentelemetry-collector-contrib:0.164.0
+          args: [--config=/etc/otelcol/config.yaml]
+          ports: [{containerPort: 14318}, {containerPort: 24318}, {containerPort: 13133}]
+          readinessProbe: {httpGet: {path: /, port: 13133}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 50m, memory: 80Mi}
+            limits: {memory: 250Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otelcol}
+            - {name: tls, mountPath: /etc/ingest-gateway, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: ingest-gateway}
+        - name: tls
+          secret: {secretName: ingest-gateway-tls}

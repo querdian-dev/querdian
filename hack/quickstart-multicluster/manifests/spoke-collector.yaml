@@ -1,0 +1,186 @@
+# OpenTelemetry Collector of a spoke (DaemonSet `otel-collector`, so the sample workloads of
+# hack/quickstart/workload.sh find it at the default OTLP URL). It collects the three signals of the
+# sample namespaces and sends them over mTLS OTLP/HTTP to the ingest gateway of the hub, with the
+# ingest client cert of this spoke (Secret ingest-tls). The spoke needs only this outbound path.
+#
+#  * metrics: the prometheus receiver scrapes the annotated pods. As on the hub, the namespace label
+#    comes from service discovery (honor_labels: false), never from the workload.
+#  * logs: filelog, namespace from the log file path (as in hack/quickstart/manifests/otel-collector.yaml).
+#  * traces: OTLP from the workloads; k8s.* attributes of the sender are deleted, then k8sattributes
+#    sets them from the pod IP of the connection.
+#
+# HOSTILE ON PURPOSE: resource/claim and attributes/claim write a FALSE cluster label (@@CLAIM@@) on
+# every signal. The gateway must overwrite it; verify.sh checks that each team sees only the pods of
+# its own spoke. A spoke admin controls this pipeline, so the hub must never trust its cluster label.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: otel-collector, namespace: observability}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: quickstart-otel-collector}
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: quickstart-otel-collector}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: quickstart-otel-collector}
+subjects: [{kind: ServiceAccount, name: otel-collector, namespace: observability}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: otel-collector, namespace: observability}
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http: {endpoint: "0.0.0.0:4318"}
+      filelog:
+        include:
+          - /var/log/pods/order-service_*/*/*.log
+          - /var/log/pods/payment-service_*/*/*.log
+        start_at: beginning
+        include_file_path: true
+        operators:
+          - type: container
+            id: container-parser
+      prometheus:
+        config:
+          global:
+            scrape_interval: 10s
+          scrape_configs:
+            - job_name: annotated-pods
+              honor_labels: false
+              fallback_scrape_protocol: PrometheusText0.0.4
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces: {names: [order-service, payment-service]}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                # `$$` is a literal `$` in a collector config.
+                - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  target_label: __address__
+                  regex: (.+);(.+)
+                  replacement: $$1:$$2
+                - source_labels: [__meta_kubernetes_namespace]
+                  action: replace
+                  target_label: namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: pod
+                - source_labels: [__meta_kubernetes_pod_label_app]
+                  action: replace
+                  target_label: job
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 160
+      resource/strip-k8s:
+        attributes:
+          - {key: k8s.namespace.name, action: delete}
+          - {key: k8s.pod.name, action: delete}
+          - {key: k8s.pod.uid, action: delete}
+          - {key: k8s.node.name, action: delete}
+          - {key: k8s.container.name, action: delete}
+      k8sattributes/connection:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: connection}]
+      k8sattributes/uid:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: resource_attribute, name: k8s.pod.uid}]
+      resource/service-name:
+        attributes:
+          - {key: service.name, from_attribute: k8s.namespace.name, action: upsert}
+      # The false claim (see the header). The gateway overwrites it.
+      resource/claim:
+        attributes:
+          - {key: k8s.cluster.name, value: "@@CLAIM@@", action: upsert}
+          - {key: cluster, value: "@@CLAIM@@", action: upsert}
+      attributes/claim:
+        actions:
+          - {key: cluster, value: "@@CLAIM@@", action: upsert}
+          - {key: k8s.cluster.name, value: "@@CLAIM@@", action: upsert}
+      batch:
+        timeout: 2s
+    exporters:
+      otlphttp/hub:
+        endpoint: "@@GATEWAY_URL@@"
+        tls:
+          ca_file: /etc/ingest/ca.crt
+          cert_file: /etc/ingest/tls.crt
+          key_file: /etc/ingest/tls.key
+    service:
+      telemetry:
+        metrics: {level: none}
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, resource/claim, attributes/claim, batch]
+          exporters: [otlphttp/hub]
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8sattributes/uid, resource/service-name, resource/claim, attributes/claim, batch]
+          exporters: [otlphttp/hub]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/strip-k8s, k8sattributes/connection, resource/claim, attributes/claim, batch]
+          exporters: [otlphttp/hub]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {app: otel-collector}
+  ports: [{name: otlp-http, port: 4318, targetPort: 4318}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {matchLabels: {app: otel-collector}}
+  template:
+    metadata: {labels: {app: otel-collector}}
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        - name: collector
+          image: docker.io/otel/opentelemetry-collector-contrib:0.164.0
+          args: [--config=/etc/otelcol/config.yaml]
+          ports: [{containerPort: 4318}]
+          securityContext: {runAsUser: 0}  # reads root-owned container log files
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 250Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otelcol}
+            - {name: varlogpods, mountPath: /var/log/pods, readOnly: true}
+            - {name: ingest, mountPath: /etc/ingest, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: otel-collector}
+        - name: varlogpods
+          hostPath: {path: /var/log/pods}
+        - name: ingest
+          secret: {secretName: ingest-tls}

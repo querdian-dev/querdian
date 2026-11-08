@@ -1,0 +1,13 @@
+# Registration of a spoke on the hub (docs/multicluster.md, step 4). Only a hub admin writes it.
+#  * The name is the cluster label value that the ingest gateway writes for this spoke.
+#  * identity is the URI SAN of the agent cert. Its last path segment must be the name.
+#  * suspended: true. The spoke grants nothing, and the receiver rejects its syncs, until the
+#    forged-label test of the gateway passes (steps 5 and 6). up.sh then sets suspended: false.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: SpokeCluster
+metadata: {name: "@@SPOKE@@"}
+spec:
+  identity: "@@IDENTITY@@"
+  tenants: ["@@TENANT@@"]
+  defaultTenant: "@@TENANT@@"
+  suspended: true

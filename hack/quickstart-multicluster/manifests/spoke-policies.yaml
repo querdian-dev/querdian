@@ -1,0 +1,16 @@
+# Spoke policy of the multi-cluster quickstart. up.sh applies it in each spoke, with the team of that
+# spoke (spoke-a: team-a, alice; spoke-b: team-b, bob). Both spokes use the SAME namespace name
+# order-service, and the hub has a namespace order-service too.
+#
+# The spoke team writes this object in its own cluster. The agent sends it to the hub receiver, and the
+# hub stores it as a SpokePolicy. Querdian takes the cluster from the agent cert, never from this text,
+# and compiles the rule to namespace="order-service" AND cluster="@@SPOKE@@" (PLAN 18.3). The tenant
+# comes from the namespace label policy.querdian.dev/tenant in the spoke (up.sh sets it to "demo"); the
+# SpokeCluster object on the hub must allow it.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: AccessPolicy
+metadata: {name: "@@TEAM@@", namespace: order-service}
+spec:
+  subjects: {groups: ["@@TEAM@@"]}
+  rules:
+    - backends: [metrics, logs, traces]

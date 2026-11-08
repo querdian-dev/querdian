@@ -1,0 +1,50 @@
+# Hub policies of the multi-cluster quickstart (apply on the hub after the chart, which installs the
+# CRDs). The groups come from the `groups` claim of the Keycloak token:
+#   hana -> team-hub, sam -> sre, carol -> platform-admins (see realm-users.json).
+#
+# A hub AccessPolicy gets the implicit matchers <namespaceLabel>="<its namespace>" AND
+# <clusterLabel>="hub" (PLAN 18.3). team-hub therefore sees the namespace order-service of the hub
+# only, and NOT the namespace order-service of the spokes, which has the same name.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: AccessPolicy
+metadata: {name: team-hub, namespace: order-service}
+spec:
+  subjects: {groups: [team-hub]}
+  rules:
+    - backends: [metrics, logs, traces]
+---
+# SRE sees all namespaces of a FIXED SET of clusters: the two spokes. Under the multicluster block each
+# hub ClusterAccessPolicy rule must state its cluster scope for each backend (PLAN 18.3): a matcher on
+# the clusterLabel of that backend with a fixed set of names, `allClusters: true`, or
+# `unrestricted: true`. The cluster label has a different name on each backend, so there is one rule
+# for each backend. A third spoke added later is NOT in this grant; `allClusters: true` would include it.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: ClusterAccessPolicy
+metadata: {name: sre}
+spec:
+  subjects: {groups: [sre]}
+  rules:
+    - backends: [metrics]
+      matchers:
+        - {name: cluster, op: RegexMatch, value: "spoke-a|spoke-b"}
+    - backends: [logs]
+      tenants: [demo]
+      matchers:
+        - {name: k8s_cluster_name, op: RegexMatch, value: "spoke-a|spoke-b"}
+    - backends: [traces]
+      tenants: [demo]
+      matchers:
+        - {name: resource.k8s.cluster.name, op: RegexMatch, value: "spoke-a|spoke-b"}
+---
+# Platform admins see everything in tenant "demo": all clusters, also the hub and new spokes. An
+# unrestricted rule needs no cluster matcher. Hub policies never expire, so this grant also works while
+# a spoke is suspended; up.sh and verify.sh use it to check that data arrives.
+apiVersion: policy.querdian.dev/v1alpha1
+kind: ClusterAccessPolicy
+metadata: {name: platform-admins}
+spec:
+  subjects: {groups: [platform-admins]}
+  rules:
+    - backends: [metrics, logs, traces]
+      tenants: [demo]
+      unrestricted: true

@@ -1,0 +1,138 @@
+# OpenTelemetry Collector of the hub (DaemonSet): the logs and traces of the hub itself. It is
+# hack/quickstart/manifests/otel-collector.yaml with one change: the processor resource/hub-cluster
+# writes k8s.cluster.name="hub" (and cluster="hub") on each log and span with `upsert`, so hub
+# telemetry carries the hub cluster label (docs/multicluster.md, step 2). Loki indexes
+# k8s.cluster.name as the label k8s_cluster_name; Tempo keeps it as resource.k8s.cluster.name.
+#
+# The data of the spokes does not go through this collector. It goes through the ingest gateway
+# (ingest-gateway.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: otel-collector, namespace: observability}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: quickstart-otel-collector}
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: quickstart-otel-collector}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: quickstart-otel-collector}
+subjects: [{kind: ServiceAccount, name: otel-collector, namespace: observability}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: otel-collector, namespace: observability}
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http: {endpoint: "0.0.0.0:4318"}
+      filelog:
+        include:
+          - /var/log/pods/order-service_*/*/*.log
+          - /var/log/pods/payment-service_*/*/*.log
+          - /var/log/pods/querdian_*/*/*.log
+        start_at: beginning
+        include_file_path: true
+        operators:
+          - type: container
+            id: container-parser
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 160
+      resource/strip-k8s:
+        attributes:
+          - {key: k8s.namespace.name, action: delete}
+          - {key: k8s.pod.name, action: delete}
+          - {key: k8s.pod.uid, action: delete}
+          - {key: k8s.node.name, action: delete}
+          - {key: k8s.container.name, action: delete}
+      k8sattributes/connection:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: connection}]
+      k8sattributes/uid:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.node.name]
+        pod_association:
+          - sources: [{from: resource_attribute, name: k8s.pod.uid}]
+      resource/service-name:
+        attributes:
+          - {key: service.name, from_attribute: k8s.namespace.name, action: upsert}
+      # The hub cluster label (multicluster.hubCluster). upsert overwrites a value of the sender.
+      resource/hub-cluster:
+        attributes:
+          - {key: k8s.cluster.name, value: "@@HUB_NAME@@", action: upsert}
+          - {key: cluster, value: "@@HUB_NAME@@", action: upsert}
+      batch:
+        timeout: 2s
+    exporters:
+      otlphttp/loki:
+        endpoint: http://loki.observability:3100/otlp
+        headers: {X-Scope-OrgID: "@@TENANT@@"}
+        tls: {insecure: true}
+      otlphttp/tempo:
+        endpoint: http://tempo.observability:4318
+        headers: {X-Scope-OrgID: "@@TENANT@@"}
+        tls: {insecure: true}
+    service:
+      telemetry:
+        metrics: {level: none}
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8sattributes/uid, resource/service-name, resource/hub-cluster, batch]
+          exporters: [otlphttp/loki]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/strip-k8s, k8sattributes/connection, resource/hub-cluster, batch]
+          exporters: [otlphttp/tempo]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {app: otel-collector}
+  ports: [{name: otlp-http, port: 4318, targetPort: 4318}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: otel-collector, namespace: observability}
+spec:
+  selector: {matchLabels: {app: otel-collector}}
+  template:
+    metadata: {labels: {app: otel-collector}}
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        - name: collector
+          image: docker.io/otel/opentelemetry-collector-contrib:0.164.0
+          args: [--config=/etc/otelcol/config.yaml]
+          ports: [{containerPort: 4318}]
+          securityContext: {runAsUser: 0}  # reads root-owned container log files
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 250Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otelcol}
+            - {name: varlogpods, mountPath: /var/log/pods, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: otel-collector}
+        - name: varlogpods
+          hostPath: {path: /var/log/pods}

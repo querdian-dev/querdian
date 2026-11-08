@@ -1,0 +1,41 @@
+{
+  "groups": [
+    {"name": "team-a"},
+    {"name": "team-b"},
+    {"name": "team-hub"},
+    {"name": "sre"},
+    {"name": "platform-admins"}
+  ],
+  "users": [
+    {
+      "username": "alice", "enabled": true, "emailVerified": true,
+      "email": "alice@demo.querdian.dev", "firstName": "Alice", "lastName": "Spoke A",
+      "groups": ["/team-a"],
+      "credentials": [{"type": "password", "value": "alice-demo", "temporary": false}]
+    },
+    {
+      "username": "bob", "enabled": true, "emailVerified": true,
+      "email": "bob@demo.querdian.dev", "firstName": "Bob", "lastName": "Spoke B",
+      "groups": ["/team-b"],
+      "credentials": [{"type": "password", "value": "bob-demo", "temporary": false}]
+    },
+    {
+      "username": "hana", "enabled": true, "emailVerified": true,
+      "email": "hana@demo.querdian.dev", "firstName": "Hana", "lastName": "Hub",
+      "groups": ["/team-hub"],
+      "credentials": [{"type": "password", "value": "hana-demo", "temporary": false}]
+    },
+    {
+      "username": "sam", "enabled": true, "emailVerified": true,
+      "email": "sam@demo.querdian.dev", "firstName": "Sam", "lastName": "SRE",
+      "groups": ["/sre"],
+      "credentials": [{"type": "password", "value": "sam-demo", "temporary": false}]
+    },
+    {
+      "username": "carol", "enabled": true, "emailVerified": true,
+      "email": "carol@demo.querdian.dev", "firstName": "Carol", "lastName": "Platform",
+      "groups": ["/platform-admins"],
+      "credentials": [{"type": "password", "value": "carol-demo", "temporary": false}]
+    }
+  ]
+}
