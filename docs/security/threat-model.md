@@ -457,16 +457,11 @@ protection against a stolen agent cert.
   to the cluster name.
 * An identity on two `SpokeCluster` objects, or one whose last path segment is not the name of its
   `SpokeCluster`, is rejected; a suffix of a segment does not match.
-* There is no certificate revocation list. A hub admin handles a stolen agent cert with this
-  procedure:
-  1. Set `suspended: true` on the `SpokeCluster`. The receiver rejects each sync. New requests stop
-     when each replica sees the change, normally in about one second, and open tails close within
-     10 seconds.
-  2. Issue a new agent cert with a new URI SAN (the last segment stays the cluster name), then change
-     `spec.identity`. The old cert no longer matches.
-  3. Delete the `SpokePolicy` objects of the spoke. This also removes the `labels.deny` and
-     `labels.redact` of forged rules, which a suspended spoke keeps.
-  4. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+* There is no certificate revocation list. A hub admin handles a stolen agent cert with the
+  procedure in [multicluster.md](../multicluster.md#stolen-agent-cert): suspend the spoke, find the
+  cause of the theft, issue a cert with a new identity, delete the `SpokePolicy` objects of the spoke,
+  and only then unsuspend it. Grants return only after a new valid sync. The time limit gives no
+  protection here, because the holder of the cert can renew `lastSyncTime`.
 
 **The spoke admin.** A spoke admin can grant the data of that spoke to any subject; this is by
 design. These rules prevent more:

@@ -128,11 +128,25 @@ the hub Querdian is the only enforcement point for the policies of a spoke, and 
 `querdian agent`. A local Querdian on the spoke would write the `Ready` condition and
 `status.observedGeneration` of the same policy objects from its own compile, so the status would change
 again and again and would not show what the hub enforces. The Helm chart refuses to render the agent
-together with the proxy. See also [day-2 operations](#do-not-add-a-standalone-querdian-to-a-spoke).
+together with the proxy in one release; it cannot see a second release or a proxy that you install
+by other means. See also [day-2 operations](#do-not-add-a-standalone-querdian-to-a-spoke).
 
 ## Migration: ordered steps
 
 Do these steps in this order. A later step does not repair a mistake in an earlier step.
+
+### 0. Upgrade Querdian and the CRDs, without the multicluster block
+
+Upgrade Querdian to a version with multi-cluster support and apply its CRDs, but do not set the
+`multicluster` block yet. The new CRDs add the `allClusters` field to `ClusterAccessPolicy` and the kinds
+`SpokeCluster` and `SpokePolicy`. With an older CRD, the API server prunes `allClusters` or `kubectl`
+rejects it, so step 1 would have no effect and the rules would become `InvalidClusterScope` in step 3.
+Without the block, the new version behaves as before.
+
+```sh
+kubectl get crd spokeclusters.policy.querdian.dev spokepolicies.policy.querdian.dev
+kubectl explain clusteraccesspolicy.spec.rules.allClusters
+```
 
 ### 1. Review each hub ClusterAccessPolicy
 
@@ -169,8 +183,9 @@ spec:
         - {name: k8s_namespace_name, op: Equal, value: kube-system}
 ```
 
-Without the `multicluster` block, `allClusters` has no effect and the policy stays valid. You can
-therefore add `allClusters: true` or cluster matchers to the hub policies before you set the block.
+Without the `multicluster` block, `allClusters` has no effect and the policy stays valid. After step 0
+you can therefore add `allClusters: true` or cluster matchers to the hub policies before you set the
+block.
 Find the policies to change with:
 
 ```sh
@@ -191,10 +206,11 @@ Querdian as an unrestricted user), for each tenant on a multi-tenant backend. Th
 return no data (Prometheus, Loki) or two equal values (Tempo).
 
 * **Metrics** (PromQL). `!=` also matches series without the label. This includes recording-rule
-  output:
+  output. Use a range, because an instant query finds only series with a sample in the lookback window
+  (5 minutes by default) and can miss recording rules with a long interval:
 
   ```promql
-  count by (__name__) ({__name__=~".+", cluster!="mla"})
+  count by (__name__) (last_over_time({__name__=~".+", cluster!="mla"}[1h]))
   ```
 
 * **Logs** (LogQL). A stream selector needs a matcher that does not match the empty string; use a
@@ -208,7 +224,10 @@ return no data (Prometheus, Loki) or two equal values (Tempo).
   label are also checked.
 
 * **Traces** (TraceQL metrics). A span without the attribute matches neither `=` nor `!=`, so compare
-  two counts. They must be equal:
+  two counts over the same time range (`start` and `end`). They must be equal. TraceQL metrics queries
+  need the Tempo metrics generator or local blocks; without them, search `{ resource.k8s.cluster.name != "mla" }`
+  and `{ !(resource.k8s.cluster.name = "mla") }` over the same range and check that the second search
+  finds no trace that the first does not:
 
   ```traceql
   {} | count_over_time()
@@ -221,8 +240,10 @@ until it leaves retention (see [limitations](limitations.md#multi-cluster)).
 ### 3. Set the multicluster block and clusterLabel
 
 Add the block and a `clusterLabel` on each backend to the hub configuration (see
-[hub configuration](#hub-static-configuration)), apply the new CRDs, and restart the proxy. Then
-check that no hub policy has become invalid:
+[hub configuration](#hub-static-configuration)). Give the proxy the additional RBAC for the new kinds
+(see [hub configuration](#hub-static-configuration); the Helm chart adds it with `config.multicluster`).
+Without it, the new pods never become ready and the rollout stops. Then restart the proxy and check that
+no hub policy has become invalid:
 
 ```sh
 kubectl get cap,ap -A    # look for InvalidClusterScope
@@ -246,6 +267,13 @@ kubectl get spokepolicies       # one object for each policy of each spoke
 Connect a spoke to the ingest gateway only after step 3. If spoke data arrives before the block is
 set, each hub `AccessPolicy` for namespace `X` also matches namespace `X` of that spoke. No check can
 find this condition.
+
+Before a spoke connects, configure the gateway to **overwrite** the cluster label for all three signals
+(see [the ingest gateway](#cluster-label-integrity-the-ingest-gateway)). For each new spoke, do the
+forged-label test before any user of that spoke gets access: send one sample, one log line and one
+span with the cluster label of a different spoke, and with the hub name, and query the backend
+directly. The stored value must be the cluster of the credential. Isolation between spokes depends on
+this overwrite, and Querdian cannot check it.
 
 ## Configuration reference
 
@@ -359,7 +387,7 @@ the stored `SpokePolicy` objects directly from the API server, never from a cach
 | `--management-listen` | `:9090` | `/healthz` and `/readyz`. No `/metrics`. |
 | `--tls-cert-file`, `--tls-key-file` | required | Server cert and key. |
 | `--client-ca-file` | required | CA bundle for agent certs. Only the hub may issue from it. |
-| `--leader-elect` | `true` | Lease `querdian-receiver-leader-election`. Only the leader serves syncs. |
+| `--leader-elect` | `true` | Lease `querdian-receiver-leader-election`. Only the leader serves syncs. With `false`, run only one replica: the lock for one sync for each cluster and the `429` limit work only within one process. |
 | `--leader-election-namespace` | pod namespace | Namespace of the lease. |
 | `--max-body-bytes` | `8388608` (8 MiB) | Maximum size of a sync body (`413`). |
 | `--max-policies` | `2000` | Maximum number of policies in one full sync (`413`). |
@@ -367,8 +395,9 @@ the stored `SpokePolicy` objects directly from the API server, never from a cach
 | `--log-level`, `--log-format` | `info`, `json` | As for the proxy. |
 
 * **Readiness.** `/readyz` returns 200 only on the leader. A Service in front of the receiver
-  therefore sends traffic only to the leader. Run two replicas for a fast failover; the receiver is
-  not in the read path, and the time limit is long, so a short failover does no harm.
+  therefore sends traffic only to the leader. One replica is the default. A second replica gives a
+  faster failover, but it is never ready, so `helm --wait` and `kubectl rollout status` do not finish.
+  The receiver is not in the read path, and the time limit is long, so a short failover does no harm.
 * **One sync per cluster.** A second sync for a cluster while one runs gets `409`, and the agent
   retries. More than one changed sync from one cluster in 10 seconds gets `429`.
 * **Write order.** A changed sync writes new and changed objects first, then deletes, and sets
@@ -514,11 +543,14 @@ The time limit gives no protection against a stolen agent cert, because the hold
 no certificate revocation list. Do these steps on the hub:
 
 1. Suspend the spoke (see above). The receiver rejects each sync, new requests stop in about one
-   second and open tails close within 10 seconds.
-2. Issue a new agent cert with a **new URI SAN** (the last segment stays the cluster name, for example
+   second and open tails close within 10 seconds. The spoke stays suspended until step 5.
+2. Find out how the cert was stolen. If the spoke itself leaked it, fix the cause first, because a new
+   cert on that spoke would be exposed in the same way. If the CA key itself is exposed, replace the CA
+   (see [certificate rotation](#certificate-rotation)) and issue new certs for all spokes.
+3. Issue a new agent cert with a **new URI SAN** (the last segment stays the cluster name, for example
    `spiffe://mla.example.com/agent/2/cluster-a`), then change `spec.identity`. The old cert no longer
    matches. Install the new cert in the spoke.
-3. Delete the `SpokePolicy` objects of the spoke. This also removes the `labels.deny` and
+4. Delete the `SpokePolicy` objects of the spoke. This also removes the `labels.deny` and
    `labels.redact` of forged rules, which stay active while the spoke is suspended:
 
    ```sh
@@ -527,11 +559,10 @@ no certificate revocation list. Do these steps on the hub:
      | xargs -r kubectl delete spokepolicy
    ```
 
-4. Set `suspended: false`. The generation changed, so grants return only after a new valid sync from
+5. Set `suspended: false`. The generation changed, so grants return only after a new valid sync from
    the agent with the new cert.
 
-Find out how the cert was stolen before step 4. If the CA key itself is exposed, replace the CA (see
-[certificate rotation](#certificate-rotation)) and issue new certs for all spokes.
+This guide is the reference for the procedure. The threat model and PLAN §18.7 refer to it.
 
 ### Remove a spoke
 

@@ -125,8 +125,10 @@ A multi-cluster deployment (PLAN section 18) has one hub, which runs the proxy a
 spokes, which send telemetry to the hub. Install the chart one time on the hub and one time on each
 spoke. `ci/hub-values.yaml` and `ci/spoke-values.yaml` are complete examples.
 
-Before you set `config.multicluster`, do the steps of PLAN section 18.8 in their order. Examine each hub
-`ClusterAccessPolicy` first, and make sure that hub telemetry has `cluster="<hubCluster>"`.
+Before you set `config.multicluster`, do the migration steps of the
+[multi-cluster guide](../../docs/multicluster.md#migration-ordered-steps) in their order. First upgrade the
+chart and its CRDs without the block, then examine each hub `ClusterAccessPolicy` and make sure that hub
+telemetry has `cluster="<hubCluster>"`.
 
 ### Hub (`mode: proxy`)
 

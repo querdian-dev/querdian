@@ -281,7 +281,7 @@ before any HTTP status; the agent logs it as a connection error.
 | 405 | `unknown method` | A method other than `POST`. | retries at the next heartbeat |
 | 409 | `a request with this identity is in progress`, `a sync for this cluster is in progress`, `the SpokeCluster changed during the sync`, `the stored state changed during the sync` | Two agents with the same cert (leader election off), an overlapping sync, or a `SpokeCluster` or `SpokePolicy` changed during the sync. | retries with backoff |
 | 413 | `the body is too large`, `too many policies` | Above `--max-body-bytes` or `--max-policies`. Raise the limit or reduce the policies of the spoke. | retries at the next heartbeat |
-| 415 | `unknown content type` | A content type other than `application/json`, or a content encoding. | retries at the next heartbeat |
+| 415 | `unknown content type` | A content type other than `application/json`, or a `Content-Encoding` other than `identity`. | retries at the next heartbeat |
 | 429 | `too many changed syncs` | More than one changed sync of a cluster in 10 seconds (`Retry-After: 10`). | retries after `Retry-After` |
 | 500 | `internal error` | An API server error or an inconsistent stored state; the cause is in the receiver log. | retries at the next heartbeat |
 | 503 | `too many requests in progress` | More than `--max-in-flight` requests at once (`Retry-After: 1`). | retries at the next heartbeat |

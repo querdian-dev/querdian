@@ -1044,7 +1044,7 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
   namespace. It uses leader election, so one agent sends at a time.
 - A spoke runs only the agent, never a standalone Querdian as well. Both would write the `Ready`
   condition and `status.observedGeneration` of the spoke policies, and the hub is the only enforcement
-  point for spoke policies. The Helm chart refuses to render the agent together with the proxy.
+  point for spoke policies. The Helm chart refuses to render the agent together with the proxy in one release.
 - `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
   The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
 - The receiver uses leader election, and only the leader reports ready. The write order and the limit on
@@ -1161,10 +1161,14 @@ version has no certificate revocation list. A hub admin does these steps:
 
 1. Set `suspended: true`. The receiver rejects each sync. New requests stop when the replica sees the
    change, normally in about one second. Open tails close within 10 seconds.
-2. Issue a new agent cert with a new URI SAN, then change `spec.identity`. The old cert no longer matches.
-3. Delete the `SpokePolicy` objects of the spoke. This also removes `labels.deny` and `labels.redact` of
+2. Find the cause of the theft. If the spoke leaked the cert, fix the cause first, because a new cert on
+   that spoke would be exposed in the same way. The spoke stays suspended.
+3. Issue a new agent cert with a new URI SAN, then change `spec.identity`. The old cert no longer matches.
+4. Delete the `SpokePolicy` objects of the spoke. This also removes `labels.deny` and `labels.redact` of
    forged rules, which a suspended spoke keeps (§18.6, rule 5).
-4. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+5. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+
+`docs/multicluster.md` is the reference for the operator procedure.
 
 ### 18.8 Label integrity
 
@@ -1182,11 +1186,16 @@ gives a verification step for each signal.
 
 Do these steps in this order. A later step does not repair a mistake in an earlier step:
 
+0. Upgrade Querdian and its CRDs without the `multicluster` block, so that the `allClusters` field exists.
 1. Examine each hub `ClusterAccessPolicy`. Add a cluster matcher or `allClusters: true` where necessary.
 2. Make sure that hub telemetry carries `cluster="<hubCluster>"`.
-3. Set the `multicluster` block and `clusterLabel`.
-4. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
+3. Set the `multicluster` block and `clusterLabel`, with the additional proxy RBAC.
+4. Configure the ingest gateway to overwrite the cluster label for all three signals, and test it with a
+   forged label for each new spoke before its users get access.
+5. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
    namespace X also matches namespace X of that spoke. No check can find this condition.
+
+`docs/multicluster.md` gives the full procedure for these steps and for a stolen agent cert (§18.7).
 
 ### 18.9 Tenants
 
@@ -1257,7 +1266,7 @@ The code adds these points to the design above:
 - **Debounce.** A rebuild waits at most 8 debounce intervals in a stream of events, and a failed
   rebuild runs again after one second, because heartbeats start no rebuild.
 - **Receiver (§18.5).** It also rejects: a query string or a content type other than
-  `application/json` (with any content encoding), a second request with the same identity while one
+  `application/json` (or with a `Content-Encoding` other than `identity`), a second request with the same identity while one
   runs (`409`), more requests in progress than `--max-in-flight` (`503`), a `SpokeCluster` name that is
   not a valid label value, and a `SpokeCluster` with a deletion timestamp. It reads its TLS files only
   at startup, so a cert rotation needs a restart. It has no `/metrics` endpoint.
