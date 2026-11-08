@@ -70,11 +70,11 @@ e2e: e2e-single
 # The single-cluster suites against real Prometheus, Loki and Tempo containers (needs docker).
 e2e-single:
 	pkgs="$$(go list -tags e2e ./test/e2e/... | grep -v '/test/e2e/multicluster$$')" && test -n "$$pkgs" && \
-		go test -tags e2e -count=1 -timeout 20m $$pkgs
+		go test -tags e2e -count=1 -timeout 15m $$pkgs
 
 # The multicluster suite: envtest API servers for the hub and the spokes, and real backend containers.
 e2e-multicluster:
-	$(ENVTEST_ASSETS) go test -tags e2e -count=1 -timeout 10m -v -run TestMultiCluster ./test/e2e/multicluster/
+	$(ENVTEST_ASSETS) go test -tags e2e -count=1 -timeout 8m -v -run TestMultiCluster ./test/e2e/multicluster/
 
 fmt:
 	gofmt -s -w .

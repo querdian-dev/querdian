@@ -158,11 +158,15 @@ func testStolenCert(t *testing.T, f *fixture) {
 		f.isDenied(t, team, ref, msgExpired)
 		f.sees(t, groupBoth, ref, []rec{{clusterB, nsTeam}})
 	}
-	// The close time comes from the reader of the tail, so the polls above do not count.
-	select {
-	case <-tl.done:
-	case <-time.After(time.Until(suspended.Add(15 * time.Second))):
-		t.Fatal("the tail is still open 15s after the suspension")
+	// The close time comes from the reader of the tail, so the polls above do not count. Check the close
+	// first: if the polls took longer than the limit, both select cases are ready, and select picks one at
+	// random.
+	if _, ok, _ := tl.closed(); !ok {
+		select {
+		case <-tl.done:
+		case <-time.After(time.Until(suspended.Add(15 * time.Second))):
+			t.Fatal("the tail is still open 15s after the suspension")
+		}
 	}
 	at, _, err := tl.closed()
 	var ce websocket.CloseError
