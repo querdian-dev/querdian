@@ -654,32 +654,32 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
         wildcard on `status`. It handles `409` with a retry.
 
-### [ ] T6.7 — Chart and documentation
+### [x] T6.7 — Chart and documentation
 - **Depends on:** T6.4, T6.6
 - **Files:** `charts/querdian/`, `docs/`, `PLAN.md`, `CHANGELOG.md`
 - **Acceptance:**
-  - [ ] The chart can install the hub with the receiver, or the agent only for a spoke. It includes the
+  - [x] The chart can install the hub with the receiver, or the agent only for a spoke. It includes the
         optional alert at 24 hours.
-  - [ ] The chart RBAC gives the receiver write access to `SpokePolicy` and `spokeclusters/status` only.
+  - [x] The chart RBAC gives the receiver write access to `SpokePolicy` and `spokeclusters/status` only.
         The proxy gets read access and `spokepolicies/status` only. A test covers this.
-  - [ ] The threat model covers these items:
+  - [x] The threat model covers these items:
         - the spoke admin as an actor, and the cluster label in section 1;
         - the receiver as a new attack surface, because a compromised receiver can grant the data of all
           spokes;
         - the agent cert, the procedure in §18.7, and the time limit in section 10;
         - the policies of all spokes in the dashboard, and the changes to the trusted set.
-  - [ ] `docs/limitations.md` lists the limits in §18.10, and the statement about TLS covers the receiver.
-  - [ ] The statements about open tails in `docs/limitations.md` and in the threat model describe the
+  - [x] `docs/limitations.md` lists the limits in §18.10, and the statement about TLS covers the receiver.
+  - [x] The statements about open tails in `docs/limitations.md` and in the threat model describe the
         close on expiry and on suspension.
-  - [ ] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
+  - [x] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
         requirements for the agent CA, the removal of a spoke, and the risk of a rollback.
-  - [ ] The operations guide gives the ordered steps in §18.8, including the review of each hub
+  - [x] The operations guide gives the ordered steps in §18.8, including the review of each hub
         `ClusterAccessPolicy`, and a verification step for hub telemetry on each signal.
-  - [ ] `docs/limitations.md` and the policy guide describe the cluster scope rule and the old hub data.
-  - [ ] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
-  - [ ] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
-  - [ ] The chart README and `CHANGELOG.md` describe the change.
-  - [ ] The policy dashboard shows the origin and the expired state of a policy.
+  - [x] `docs/limitations.md` and the policy guide describe the cluster scope rule and the old hub data.
+  - [x] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
+  - [x] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
+  - [x] The chart README and `CHANGELOG.md` describe the change.
+  - [x] The policy dashboard shows the origin and the expired state of a policy.
 
 ### [ ] T6.8 — End-to-end tests
 - **Depends on:** T6.7
