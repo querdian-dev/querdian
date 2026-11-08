@@ -314,6 +314,9 @@ receiver:
   service:
     type: ClusterIP # ClusterIP | NodePort | LoadBalancer
     port: 8443
+    # Only with type NodePort: a fixed node port (30000-32767), so that the receiver URL of the agents stays
+    # the same after a reinstall. Empty means a port that Kubernetes selects.
+    nodePort: null
     annotations: {}
     # Only with type LoadBalancer.
     loadBalancerSourceRanges: []

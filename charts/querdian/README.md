@@ -163,6 +163,9 @@ prometheusRule:
   list/create/update/delete on `spokepolicies`, and get/create/update on leases and create/patch on
   events in the release namespace. No wildcard.
 - The receiver terminates mTLS itself. A load balancer or an ingress in front of it must pass TLS through.
+- With `receiver.service.type: NodePort`, set `receiver.service.nodePort` (30000 to 32767) to keep the same
+  port after a reinstall. Otherwise Kubernetes selects a port, and the `agent.receiverURL` of each spoke can
+  become incorrect.
 - `receiver.clientCA.existingSecret` is the CA of the agent certs. Only the hub may issue certs from this
   CA. Do not use the CA of the ingest certs.
 - The receiver reads its cert and the client CA at startup only. After a rotation, restart the receiver.

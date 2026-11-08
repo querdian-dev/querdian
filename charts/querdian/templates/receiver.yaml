@@ -38,6 +38,9 @@ spec:
     - name: receiver
       port: {{ $r.service.port }}
       targetPort: receiver
+      {{- if and (eq $r.service.type "NodePort") $r.service.nodePort }}
+      nodePort: {{ $r.service.nodePort }}
+      {{- end }}
       protocol: TCP
 ---
 apiVersion: apps/v1

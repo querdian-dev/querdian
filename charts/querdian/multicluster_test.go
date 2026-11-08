@@ -379,6 +379,28 @@ func TestReceiverDeployment(t *testing.T) {
 	}
 }
 
+// A NodePort receiver can have a fixed node port, so that the receiver URL of the agents stays the same after a
+// reinstall (the multi-cluster kind quickstart uses it). The port is set only with type NodePort.
+func TestReceiverNodePort(t *testing.T) {
+	port := func(args ...string) any {
+		objs := objects(helmTemplate(t, append([]string{"-f", "ci/hub-values.yaml"}, args...)...))
+		svc := objs["Service/r-querdian-receiver"]
+		if svc == nil {
+			t.Fatal("no receiver Service")
+		}
+		return svc["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["nodePort"]
+	}
+	if got := port("--set", "receiver.service.type=NodePort", "--set", "receiver.service.nodePort=30443"); got != float64(30443) {
+		t.Errorf("NodePort: nodePort = %v, want 30443", got)
+	}
+	if got := port("--set", "receiver.service.type=NodePort"); got != nil {
+		t.Errorf("NodePort without a value: nodePort = %v, want none", got)
+	}
+	if got := port("--set", "receiver.service.type=ClusterIP", "--set", "receiver.service.nodePort=30443"); got != nil {
+		t.Errorf("ClusterIP: nodePort = %v, want none", got)
+	}
+}
+
 // The selectors of the proxy must not select the receiver pods, and the reverse. Otherwise the proxy Service
 // sends queries to the receiver, or the receiver Service sends syncs to the proxy.
 func TestSelectorsAreDisjoint(t *testing.T) {
