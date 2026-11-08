@@ -33,6 +33,9 @@ func helmRaw(t *testing.T, args ...string) []byte {
 // Without the values of the multi-cluster mode, the rendered output must stay the same as before the mode
 // existed. The golden files are the output of the chart before T6.7. Update them only for an intended change
 // to the default output: go test ./charts/... -run TestRenderUnchanged -update
+//
+// The test ignores empty lines: helm versions differ in them (v4.2.0 adds some in the config.yaml block of
+// the ConfigMap), and an empty line does not change what the chart deploys.
 func TestRenderUnchanged(t *testing.T) {
 	for name, args := range map[string][]string{
 		"default":      nil,
@@ -51,11 +54,22 @@ func TestRenderUnchanged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(got) != string(want) {
+			if withoutEmptyLines(got) != withoutEmptyLines(want) {
 				t.Errorf("the render differs from %s; a change to the default output needs -update and a review", golden)
 			}
 		})
 	}
+}
+
+// withoutEmptyLines returns b without the lines that are empty or contain only spaces.
+func withoutEmptyLines(b []byte) string {
+	var out []string
+	for line := range strings.Lines(string(b)) {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, strings.TrimRight(line, "\n"))
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 type rbacRule struct {

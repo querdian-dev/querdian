@@ -223,7 +223,8 @@ make chart-lint        # CRD diff, helm lint (default + all features), go test .
 
 `testdata/*.golden.yaml` hold the render with the default values and with `ci/all-features-values.yaml`.
 `TestRenderUnchanged` fails if a change modifies this output. After an intended change, run
-`go test ./charts/querdian -run TestRenderUnchanged -update` and review the diff.
+`go test ./charts/querdian -run TestRenderUnchanged -update` and review the diff. The test ignores empty
+lines, because helm versions differ in them.
 
 `Chart.yaml` carries `0.0.0-dev` for `version`/`appVersion`; the release pipeline overrides both
 (`helm package --version X --app-version X`). `ci/*-values.yaml` are picked up by chart-testing (`ct`).
