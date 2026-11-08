@@ -295,6 +295,8 @@ type origin struct {
 	spoke string
 	// tenants is the tenant allow-list of the spoke (SpokeCluster.spec.tenants).
 	tenants map[string]bool
+	// version is the SpokeCluster version that tenants comes from.
+	version SpokeVersion
 }
 
 // implicitCluster returns the value of the implicit cluster matcher for a rule, if the rule has one: the spoke
@@ -405,7 +407,7 @@ func compileClusterRules(cfg *config.Config, policy string, rules []v1.ClusterRu
 			if err := checkClusterScope(cfg, o, ri, b, r, ms); err != nil {
 				return nil, err
 			}
-			cr := &CompiledRule{Policy: policy, Backend: bn, Origin: o.spoke, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny, Redactions: red}
+			cr := &CompiledRule{Policy: policy, Backend: bn, Origin: o.spoke, OriginVersion: o.version, Unrestricted: r.Unrestricted, Matchers: ms, DeniedLabels: deny, Redactions: red}
 			if b.TenantHeader != "" {
 				cr.Tenants = sortedUnique(r.Tenants)
 				if err := checkTenantsAllowed(o, ri, bn, cr.Tenants); err != nil {
@@ -486,7 +488,7 @@ func compileNamespacedRules(cfg *config.Config, policy, ns string, rules []v1.Ru
 				return nil, err
 			}
 			out = append(out, &CompiledRule{
-				Policy: policy, Backend: bn, Origin: o.spoke, Tenants: tenants,
+				Policy: policy, Backend: bn, Origin: o.spoke, OriginVersion: o.version, Tenants: tenants,
 				Matchers: append(implicit, ms...), DeniedLabels: deny, Redactions: red,
 			})
 		}

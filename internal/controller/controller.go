@@ -283,11 +283,11 @@ func (c *Controller) doRebuild(ctx context.Context, trigger string) error {
 	c.current.Store(snap)
 	if c.cfg.Multicluster != nil {
 		// Only now may a spoke whose spec changed become valid again (PLAN §18.6, §18.9).
-		gens := make(map[string]int64, len(scs.Items))
+		versions := make(map[string]policy.SpokeVersion, len(scs.Items))
 		for i := range scs.Items {
-			gens[scs.Items[i].Name] = scs.Items[i].Generation
+			versions[scs.Items[i].Name] = policy.SpokeVersion{UID: scs.Items[i].UID, Generation: scs.Items[i].Generation}
 		}
-		c.deadlines.SetCompiled(gens)
+		c.deadlines.SetCompiled(versions)
 	}
 
 	invalid := 0

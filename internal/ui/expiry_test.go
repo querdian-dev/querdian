@@ -29,11 +29,12 @@ func TestDashboardUsesSpokeExpiry(t *testing.T) {
 	}}
 	c := policy.Compile(policy.Input{Config: cfg, ClusterPolicies: cps})
 	for _, r := range c.ByGroup["team"] {
-		r.Origin = "cluster-a" // as the compiler sets it for a SpokePolicy
+		// As the compiler sets them for a SpokePolicy of the SpokeCluster below.
+		r.Origin, r.OriginVersion = "cluster-a", policy.SpokeVersion{UID: "uid-a", Generation: 1}
 	}
 	snap := policy.NewSnapshot(c, cfg, 1)
 	dl := policy.NewDeadlines()
-	sc := &v1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Generation: 1},
+	sc := &v1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", UID: "uid-a", Generation: 1},
 		Status: v1.SpokeClusterStatus{LastSyncTime: &metav1.Time{Time: time.Now()}, ObservedGeneration: 1}}
 	dl.Update(sc, time.Hour)
 	h := Handler(Deps{Config: cfg, Snapshots: provider{snap}, Deadlines: dl,

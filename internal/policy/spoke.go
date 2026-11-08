@@ -51,7 +51,7 @@ func spokeOrigin(cfg *config.Config, spokes map[string]*spokeEntry, cluster stri
 			allowed[t] = true
 		}
 	}
-	return origin{spoke: cluster, tenants: allowed}, e.sc, nil
+	return origin{spoke: cluster, tenants: allowed, version: SpokeVersion{UID: e.sc.UID, Generation: e.sc.Generation}}, e.sc, nil
 }
 
 // checkSpokeSource checks the structure of a SpokePolicy. The CRD has CEL rules for most of these checks, but

@@ -91,6 +91,9 @@ type CompiledRule struct {
 	// Origin is the SpokeCluster name for a rule from a spoke policy, and empty for a hub rule (PLAN §18).
 	// Rules of a spoke expire with it; hub rules never expire.
 	Origin string
+	// OriginVersion is the version of the SpokeCluster that the rule was compiled from. The rule expires
+	// when the SpokeCluster in the deadline table has a different version.
+	OriginVersion SpokeVersion
 	// Tenants is sorted and deduplicated; empty for single-tenant backends.
 	Tenants      []string
 	Unrestricted bool
@@ -178,6 +181,9 @@ type Effective struct {
 	Redactions map[string]Redaction
 	Policies   []string // names, for tracing and logging
 	// Origins are the spoke clusters whose rules gave terms, sorted and deduplicated; empty if only hub rules
-	// gave terms. An open Loki tail closes when one of them expires (PLAN §18.6, rule 8).
+	// gave terms.
 	Origins []string
+	// OriginVersions maps each of Origins to the SpokeCluster version that its rules were compiled from. An
+	// open Loki tail closes when one of them expires or gets a new version (PLAN §18.6 rule 8, §18.9).
+	OriginVersions map[string]SpokeVersion
 }

@@ -13,9 +13,14 @@ import (
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 )
 
-// rule builds a compiled rule by hand. specs use the syntax of tm, for example "namespace=a".
+// rule builds a compiled rule by hand. specs use the syntax of tm, for example "namespace=a". A spoke rule
+// gets the version of spoke(origin), as if the compiler had compiled it from that object.
 func rule(policyID, backend, origin string, specs ...string) *CompiledRule {
-	return &CompiledRule{Policy: policyID, Backend: backend, Origin: origin, Matchers: tm("", specs...).Matchers}
+	r := &CompiledRule{Policy: policyID, Backend: backend, Origin: origin, Matchers: tm("", specs...).Matchers}
+	if origin != "" {
+		r.OriginVersion = versionOf(spoke(origin))
+	}
+	return r
 }
 
 func withLabels(r *CompiledRule, deny []string, red map[string]Redaction) *CompiledRule {
@@ -150,16 +155,28 @@ func TestResolveAtEachExpiryCondition(t *testing.T) {
 			t.Errorf("%s: want ErrPolicySourceExpired, got %v", name, err)
 		}
 	}
-	// Deleted and re-created: expired until the next valid sync, then the grant returns (rule 7).
+	// Deleted and re-created: expired until the next valid sync and a snapshot compiled from the new object,
+	// then the grant returns (rule 7).
 	d := tableWith("cluster-a")
 	d.Delete("cluster-a")
-	d.Update(spoke("cluster-a", func(sc *v1.SpokeCluster) { sc.Generation, sc.Status = 1, v1.SpokeClusterStatus{} }), defaultStale)
+	recreated := func(sc *v1.SpokeCluster) { sc.UID = "uid-recreated" }
+	d.Update(spoke("cluster-a", recreated, func(sc *v1.SpokeCluster) { sc.Status = v1.SpokeClusterStatus{} }), defaultStale)
 	if _, err := s.ResolveAt("u", []string{"g"}, "metrics", d, testNow); !errors.Is(err, ErrPolicySourceExpired) {
 		t.Fatalf("re-created: want ErrPolicySourceExpired, got %v", err)
 	}
-	d.Update(spoke("cluster-a", func(sc *v1.SpokeCluster) { sc.Generation, sc.Status.ObservedGeneration = 1, 1 }), defaultStale)
-	if _, err := s.ResolveAt("u", []string{"g"}, "metrics", d, testNow); err != nil {
-		t.Fatalf("re-synced: %v", err)
+	// The new object has the same generation as the old one, but the snapshot is from the old object.
+	d.Update(spoke("cluster-a", recreated), defaultStale)
+	if _, err := s.ResolveAt("u", []string{"g"}, "metrics", d, testNow); !errors.Is(err, ErrPolicySourceExpired) {
+		t.Fatalf("re-synced, old snapshot: want ErrPolicySourceExpired, got %v", err)
+	}
+	r := rule("SpokePolicy/cluster-a/x", "metrics", "cluster-a", "cluster=cluster-a", "namespace=b")
+	r.OriginVersion = versionOf(spoke("cluster-a", recreated))
+	eff, err := handSnap(t, r).ResolveAt("u", []string{"g"}, "metrics", d, testNow)
+	if err != nil {
+		t.Fatalf("re-synced, new snapshot: %v", err)
+	}
+	if want := map[string]SpokeVersion{"cluster-a": r.OriginVersion}; !maps.Equal(eff.OriginVersions, want) {
+		t.Fatalf("OriginVersions = %v, want %v", eff.OriginVersions, want)
 	}
 }
 
