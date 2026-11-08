@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -45,7 +47,7 @@ func TestDecodeRequest(t *testing.T) {
 	d := digestOf(t)
 	good := `{"digest":"` + d + `","full":true,"policies":[{"kind":"ClusterAccessPolicy","name":"a","generation":1,` +
 		`"clusterAccessPolicy":{"subjects":{"groups":["g"],"users":[]},"rules":[{"backends":["m"],"unrestricted":true,"allClusters":false,"matchers":[]}]}}]}`
-	if _, err := decodeRequest([]byte(good)); err != nil {
+	if _, err := decodeRequest([]byte(good), testLimit); err != nil {
 		t.Fatalf("good request: %v", err)
 	}
 	for name, body := range map[string]string{
@@ -64,7 +66,7 @@ func TestDecodeRequest(t *testing.T) {
 		"empty":                ``,
 		"deep nesting":         strings.Repeat("[", 40) + strings.Repeat("]", 40),
 	} {
-		if _, err := decodeRequest([]byte(body)); err == nil {
+		if _, err := decodeRequest([]byte(body), testLimit); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -256,6 +258,65 @@ func TestHandleEarlyRejections(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusUnsupportedMediaType {
 		t.Errorf("content encoding: status %d", w.Code)
+	}
+}
+
+// TestRequestLimit: each identity has a burst of RequestBurst requests and then one request for each
+// RequestInterval. The limit applies to an identity that is not registered, and before the body is read.
+func TestRequestLimit(t *testing.T) {
+	ca := newCA(t, "hub")
+	certA := ca.issue(t, false, "spiffe://hub/agent/a")
+	certB := ca.issue(t, false, "spiffe://hub/agent/b")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	r := New(Options{Logger: quiet, Now: func() time.Time { return now }})
+	send := func(cert tls.Certificate, body string) int {
+		req := httptest.NewRequest(http.MethodPost, spokesync.Path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.TLS = connState(cert)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusTooManyRequests && w.Header().Get("Retry-After") == "" {
+			t.Error("429 without Retry-After")
+		}
+		return w.Code
+	}
+	// The body is rejected before any read of the API server, so the receiver needs no client.
+	const bad = `{"cluster":"x"}`
+	for i := range DefaultRequestBurst {
+		if code := send(certA, bad); code != http.StatusBadRequest {
+			t.Fatalf("request %d: status %d", i+1, code)
+		}
+	}
+	if code := send(certA, bad); code != http.StatusTooManyRequests {
+		t.Fatalf("request after the burst: status %d", code)
+	}
+	// A body that the decoder would reject gets 429 too: the limit applies before the body is read.
+	if code := send(certA, `not json`); code != http.StatusTooManyRequests {
+		t.Fatalf("limit after the body read: status %d", code)
+	}
+	if code := send(certB, bad); code != http.StatusBadRequest {
+		t.Fatalf("other identity: status %d", code)
+	}
+	now = now.Add(DefaultRequestInterval)
+	if code := send(certA, bad); code != http.StatusBadRequest {
+		t.Fatalf("after one interval: status %d", code)
+	}
+	if code := send(certA, bad); code != http.StatusTooManyRequests {
+		t.Fatalf("one token for each interval: status %d", code)
+	}
+	// A clock that goes back gives no tokens.
+	now = now.Add(-time.Hour)
+	if code := send(certA, bad); code != http.StatusTooManyRequests {
+		t.Fatalf("clock back: status %d", code)
+	}
+	// Buckets that are full again are removed, so the map does not grow with old identities.
+	now = now.Add(2 * time.Hour)
+	send(certB, bad)
+	r.mu.Lock()
+	n := len(r.buckets)
+	r.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("buckets = %d, want 1", n)
 	}
 }
 
