@@ -6,7 +6,9 @@ the policies of all clusters. It documents the behaviour of the code in this rep
 is [PLAN.md section 18](../PLAN.md#18-multi-cluster). Read the [policy guide](policy-guide.md) and
 [operations](operations.md) first. Related: [limitations](limitations.md#multi-cluster),
 [threat model](security/threat-model.md#12-multi-cluster),
-[troubleshooting](troubleshooting.md#receiver-http-statuses).
+[troubleshooting](troubleshooting.md#receiver-http-statuses). To see the feature on a laptop, run the
+[multi-cluster quickstart](quickstart-multicluster.md): one hub and two spokes on kind, with the ordered
+steps of this guide.
 
 > **The feature is new and alpha.** Without the `multicluster` block in the static configuration,
 > Querdian works as a single-cluster proxy and nothing on this page applies.

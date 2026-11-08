@@ -1,6 +1,7 @@
 - title: Start
   pages:
     - quickstart
+    - quickstart-multicluster | Multi-cluster quickstart
     - policy-guide
 - title: Operate
   pages:
