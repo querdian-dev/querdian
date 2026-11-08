@@ -215,7 +215,7 @@ func TestDeadlinesConcurrent(*testing.T) {
 
 // A suspended spoke has a fresh age but is expired; the expired metric shows it.
 func TestDeadlinesExpiredStates(t *testing.T) {
-	now := time.Now()
+	now := testNow
 	d := NewDeadlines()
 	fresh := spoke("cluster-a")
 	suspended := spoke("cluster-b")
