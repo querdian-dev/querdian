@@ -1190,12 +1190,15 @@ Do these steps in this order. A later step does not repair a mistake in an earli
 1. Examine each hub `ClusterAccessPolicy`. Add a cluster matcher or `allClusters: true` where necessary.
 2. Make sure that hub telemetry carries `cluster="<hubCluster>"`.
 3. Set the `multicluster` block and `clusterLabel`, with the additional proxy RBAC.
-4. Configure the ingest gateway to overwrite the cluster label for all three signals, and test it with a
-   forged label for each new spoke before its users get access.
-5. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
-   namespace X also matches namespace X of that spoke. No check can find this condition.
+4. Install the receiver. Register each spoke with `suspended: true` and install its agent.
+5. Connect each spoke to the ingest gateway, which overwrites the cluster label for all three signals.
+   Test the overwrite with a forged label while the spoke is suspended. If spoke data arrives before
+   step 3, each hub `AccessPolicy` for namespace X also matches namespace X of that spoke. No check can
+   find this condition.
+6. Unsuspend each spoke only after its test passes.
 
-`docs/multicluster.md` gives the full procedure for these steps and for a stolen agent cert (§18.7).
+These numbers are the same as in `docs/multicluster.md`, which gives the full procedure for these steps
+and for a stolen agent cert (§18.7).
 
 ### 18.9 Tenants
 

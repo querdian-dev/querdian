@@ -225,9 +225,8 @@ return no data (Prometheus, Loki) or two equal values (Tempo).
 
 * **Traces** (TraceQL metrics). A span without the attribute matches neither `=` nor `!=`, so compare
   two counts over the same time range (`start` and `end`). They must be equal. TraceQL metrics queries
-  need the Tempo metrics generator or local blocks; without them, search `{ resource.k8s.cluster.name != "mla" }`
-  and `{ !(resource.k8s.cluster.name = "mla") }` over the same range and check that the second search
-  finds no trace that the first does not:
+  need the Tempo metrics generator or the local-blocks processor; enable one of them for this check.
+  Send the queries directly to Tempo:
 
   ```traceql
   {} | count_over_time()
@@ -254,15 +253,12 @@ From now on each hub `AccessPolicy` also carries `<clusterLabel>="<hubCluster>"`
 ### 4. Install the receiver and register the spokes
 
 Deploy `querdian receiver` on the hub (see [receiver](#querdian-receiver)) and make it reachable from
-the spokes. For each spoke, issue an agent cert, create a `SpokeCluster` object and install
-`querdian agent` in the spoke (see [agent](#querdian-agent)). Check that the spoke syncs:
+the spokes. For each spoke, issue an agent cert and create a `SpokeCluster` object with
+`suspended: true`, so that the spoke grants nothing until step 6. The receiver rejects the syncs of a
+suspended spoke, so `LastSync` stays empty for now. Then install `querdian agent` in the spoke (see
+[agent](#querdian-agent)).
 
-```sh
-kubectl get spokeclusters       # LastSync must be recent
-kubectl get spokepolicies       # one object for each policy of each spoke
-```
-
-### 5. Let the spokes send telemetry
+### 5. Connect each spoke to the ingest gateway and test the overwrite
 
 Connect a spoke to the ingest gateway only after step 3. If spoke data arrives before the block is
 set, each hub `AccessPolicy` for namespace `X` also matches namespace `X` of that spoke. No check can
@@ -270,10 +266,22 @@ find this condition.
 
 Before a spoke connects, configure the gateway to **overwrite** the cluster label for all three signals
 (see [the ingest gateway](#cluster-label-integrity-the-ingest-gateway)). For each new spoke, do the
-forged-label test before any user of that spoke gets access: send one sample, one log line and one
-span with the cluster label of a different spoke, and with the hub name, and query the backend
-directly. The stored value must be the cluster of the credential. Isolation between spokes depends on
-this overwrite, and Querdian cannot check it.
+forged-label test while the spoke is still suspended: send one sample, one log line and one span with
+the cluster label of a different spoke, and with the hub name, and query the backend directly. The
+stored value must be the cluster of the credential. Isolation between spokes depends on this
+overwrite, and Querdian cannot check it.
+
+### 6. Unsuspend each tested spoke
+
+Only after the forged-label test of a spoke passes, set `suspended: false` on its `SpokeCluster`. The
+agent then syncs, and the grants of the spoke become active. Check that the spoke syncs:
+
+```sh
+kubectl get spokeclusters       # LastSync must be recent
+kubectl get spokepolicies       # one object for each policy of each spoke
+```
+
+Repeat steps 4 to 6 for each spoke that joins later.
 
 ## Configuration reference
 
