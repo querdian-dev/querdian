@@ -311,6 +311,9 @@ func (c *Config) Validate() error {
 			add("%s.clusterLabel is required with multicluster", p)
 		case c.Multicluster != nil && !ValidLabelName(b.Type, b.ClusterLabel):
 			add("%s.clusterLabel %q is not a valid name for a %s backend", p, b.ClusterLabel, b.Type)
+		case c.Multicluster != nil && b.Type == BackendTempo && !strings.HasPrefix(b.ClusterLabel, "resource."):
+			// Applications set their own span attributes, so only the resource scope can carry the cluster.
+			add("%s.clusterLabel %q must be a resource. attribute on a tempo backend", p, b.ClusterLabel)
 		case c.Multicluster != nil && strings.HasPrefix(b.ClusterLabel, "__"):
 			add("%s.clusterLabel %q is a reserved name", p, b.ClusterLabel)
 		case c.Multicluster != nil && b.ClusterLabel == b.NamespaceLabel:
