@@ -7,6 +7,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 )
@@ -18,7 +19,7 @@ var testNow = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 // spoke returns a SpokeCluster that is valid at testNow: synced one hour ago at its current generation.
 func spoke(name string, mods ...func(*v1.SpokeCluster)) *v1.SpokeCluster {
 	sc := &v1.SpokeCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 3},
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("uid-" + name), Generation: 3},
 		Spec:       v1.SpokeClusterSpec{Identity: "spiffe://hub/agent/" + name},
 		Status: v1.SpokeClusterStatus{
 			LastSyncTime:       &metav1.Time{Time: testNow.Add(-time.Hour)},
@@ -29,6 +30,11 @@ func spoke(name string, mods ...func(*v1.SpokeCluster)) *v1.SpokeCluster {
 		m(sc)
 	}
 	return sc
+}
+
+// versionOf returns the version of the SpokeCluster.
+func versionOf(sc *v1.SpokeCluster) SpokeVersion {
+	return SpokeVersion{UID: sc.UID, Generation: sc.Generation}
 }
 
 func syncedAt(t time.Time) func(*v1.SpokeCluster) {
@@ -141,7 +147,7 @@ func TestDeadlinesNilTable(t *testing.T) {
 	d.Update(spoke("a"), defaultStale)
 	d.Delete("a")
 	d.MarkComplete()
-	if !d.Expired("a", testNow) || d.Complete() || d.Ages(testNow) != nil || !d.AnyExpired([]string{"a"}, testNow) {
+	if !d.Expired("a", testNow) || d.Complete() || d.Ages(testNow) != nil || !d.AnyExpired(map[string]SpokeVersion{"a": {}}, testNow) {
 		t.Fatal("a nil table must expire each spoke and never be complete")
 	}
 }
@@ -161,12 +167,46 @@ func TestDeadlinesAnyExpired(t *testing.T) {
 	d := NewDeadlines()
 	d.Update(spoke("a"), defaultStale)
 	d.Update(spoke("b"), defaultStale)
-	if d.AnyExpired([]string{"a", "b"}, testNow) || d.AnyExpired(nil, testNow) {
+	both := map[string]SpokeVersion{"a": versionOf(spoke("a")), "b": versionOf(spoke("b"))}
+	if d.AnyExpired(both, testNow) || d.AnyExpired(nil, testNow) {
 		t.Fatal("no spoke is expired")
 	}
 	d.Update(spoke("b", func(sc *v1.SpokeCluster) { sc.Spec.Suspended = true }), defaultStale)
-	if !d.AnyExpired([]string{"a", "b"}, testNow) {
+	if !d.AnyExpired(both, testNow) {
 		t.Fatal("b is suspended")
+	}
+	// A new spec of a, synced at once: a is valid, but not for a grant from the old spec (PLAN §18.9).
+	d.Update(spoke("b"), defaultStale)
+	d.Update(spoke("a", func(sc *v1.SpokeCluster) { sc.Generation, sc.Status.ObservedGeneration = 4, 4 }), defaultStale)
+	if d.Expired("a", testNow) || !d.AnyExpired(both, testNow) {
+		t.Fatal("a grant from the old spec of a must expire")
+	}
+}
+
+// ExpiredFor also expires a rule that was compiled from a different version of the SpokeCluster.
+func TestDeadlinesExpiredFor(t *testing.T) {
+	d := NewDeadlines()
+	sc := spoke("a")
+	d.Update(sc, defaultStale)
+	v := versionOf(sc)
+	if d.ExpiredFor("a", v, testNow) {
+		t.Fatal("same version must be valid")
+	}
+	for name, other := range map[string]SpokeVersion{
+		"older generation":         {UID: v.UID, Generation: v.Generation - 1},
+		"newer generation":         {UID: v.UID, Generation: v.Generation + 1},
+		"same generation, new UID": {UID: "uid-old", Generation: v.Generation},
+		"zero version":             {},
+	} {
+		if !d.ExpiredFor("a", other, testNow) {
+			t.Fatalf("%s: must be expired", name)
+		}
+	}
+	if !d.ExpiredFor("a", v, testNow.Add(defaultStale)) || !d.ExpiredFor("b", SpokeVersion{}, testNow) {
+		t.Fatal("an expired or missing spoke must be expired for each version")
+	}
+	if !(*Deadlines)(nil).ExpiredFor("a", v, testNow) {
+		t.Fatal("nil table")
 	}
 }
 
@@ -245,9 +285,9 @@ func TestDeadlinesTrackCompiled(t *testing.T) {
 	if !d.Expired("cluster-a", now) {
 		t.Fatal("tracked spoke must be expired before the first SetCompiled")
 	}
-	d.SetCompiled(map[string]int64{"cluster-a": sc.Generation})
+	d.SetCompiled(map[string]SpokeVersion{"cluster-a": versionOf(sc)})
 	if d.Expired("cluster-a", now) {
-		t.Fatal("compiled generation equals the entry: must be valid")
+		t.Fatal("compiled version equals the entry: must be valid")
 	}
 	// A spec change and an immediate sync of the new generation, before the rebuild.
 	next := sc.DeepCopy()
@@ -257,17 +297,32 @@ func TestDeadlinesTrackCompiled(t *testing.T) {
 	if !d.Expired("cluster-a", now) {
 		t.Fatal("the snapshot has the old generation: must be expired")
 	}
-	d.SetCompiled(map[string]int64{"cluster-a": next.Generation})
+	d.SetCompiled(map[string]SpokeVersion{"cluster-a": versionOf(next)})
 	if d.Expired("cluster-a", now) {
 		t.Fatal("after the rebuild the spoke must be valid again")
 	}
-	d.SetCompiled(map[string]int64{})
+	// The object is deleted and created again with the same name, and a sync of the new object arrives
+	// before the rebuild. The new object can have the generation that the snapshot has.
+	recreated := spoke("cluster-a", func(sc *v1.SpokeCluster) {
+		sc.UID = "uid-recreated"
+		sc.Generation, sc.Status.ObservedGeneration = next.Generation, next.Generation
+	})
+	d.Delete("cluster-a")
+	d.Update(recreated, defaultStale)
+	if !d.Expired("cluster-a", now) {
+		t.Fatal("the snapshot has the old object: must be expired")
+	}
+	d.SetCompiled(map[string]SpokeVersion{"cluster-a": versionOf(recreated)})
+	if d.Expired("cluster-a", now) {
+		t.Fatal("after the rebuild the re-created spoke must be valid")
+	}
+	d.SetCompiled(map[string]SpokeVersion{})
 	if !d.Expired("cluster-a", now) {
 		t.Fatal("a spoke missing from the compiled set must be expired")
 	}
 	// SetCompiled before TrackCompiled has no effect, and a nil table is safe.
 	u := NewDeadlines()
-	u.SetCompiled(map[string]int64{"x": 1})
+	u.SetCompiled(map[string]SpokeVersion{"x": {Generation: 1}})
 	u.Update(spoke("cluster-a"), defaultStale)
 	if u.Expired("cluster-a", now) {
 		t.Fatal("SetCompiled must not start tracking")

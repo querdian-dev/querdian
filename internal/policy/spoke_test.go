@@ -6,6 +6,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/config"
@@ -32,7 +33,8 @@ func mcConfig(t testing.TB) *config.Config {
 
 func spokeCluster(name, identity string, tenants ...string) v1.SpokeCluster {
 	return v1.SpokeCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
+		// The same UID and generation as spoke(name), so tableWith(name) is valid for the compiled rules.
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("uid-" + name), Generation: 3},
 		Spec:       v1.SpokeClusterSpec{Identity: identity, Tenants: tenants},
 	}
 }
@@ -104,6 +106,9 @@ func TestSpokeAccessPolicyCarriesClusterAndNamespace(t *testing.T) {
 		}
 		if cr.Origin != "cluster-a" || cr.Unrestricted || cr.Policy != "SpokePolicy/"+p.Name {
 			t.Errorf("%s: origin %q, unrestricted %v, policy %q", cr.Backend, cr.Origin, cr.Unrestricted, cr.Policy)
+		}
+		if want := (SpokeVersion{UID: spokeA.UID, Generation: spokeA.Generation}); cr.OriginVersion != want {
+			t.Errorf("%s: origin version %+v, want %+v", cr.Backend, cr.OriginVersion, want)
 		}
 		if cr.Backend != "metrics" && strings.Join(cr.Tenants, ",") != "tenant-a" {
 			t.Errorf("%s: tenants = %v", cr.Backend, cr.Tenants)

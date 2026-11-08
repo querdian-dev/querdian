@@ -376,6 +376,46 @@ func TestSpokeTenantChangesRecompile(t *testing.T) {
 	})
 }
 
+// A SpokeCluster that is deleted and created again with a smaller allow-list never grants the removed tenant.
+// The new object has generation 1, as the old one had, so only the UID shows that the snapshot is old.
+func TestSpokeRecreatedWithSmallerAllowList(t *testing.T) {
+	dl := policy.NewDeadlines()
+	c := startMC(t, dl)
+	const name = "recreated"
+	old := createSpoke(t, name, v1.SpokeClusterSpec{Tenants: []string{"tenant-a", "tenant-b"}})
+	syncSpoke(t, name, time.Now())
+	labelled := createSpokePolicy(t, name, spokeLogsAP("app", "labelled", "tenant-a", "re-group"))
+	eventually(t, 10*time.Second, "grant on tenant-a", func() bool {
+		eff, err := resolveNow(c, dl, "re-group", "logs")
+		return err == nil && slices.Contains(eff.Tenants, "tenant-a")
+	})
+
+	if err := direct.Delete(context.Background(), &v1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
+		t.Fatal(err)
+	}
+	recreated := createSpoke(t, name, v1.SpokeClusterSpec{Tenants: []string{"tenant-b"}})
+	if recreated.UID == old.UID || recreated.Generation != old.Generation {
+		t.Fatalf("want a new UID with the same generation: old %s/%d, new %s/%d", old.UID, old.Generation, recreated.UID, recreated.Generation)
+	}
+	// The sync of the new object comes at once, before the rebuild.
+	syncSpoke(t, name, time.Now())
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		eff, err := resolveNow(c, dl, "re-group", "logs")
+		if err == nil && slices.Contains(eff.Tenants, "tenant-a") {
+			t.Fatalf("removed tenant-a is granted after the re-creation: %+v", eff)
+		}
+		if r, ok := spokeResult(c, labelled.Name); ok && r.Reason == policy.ReasonTenantNotAllowed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the rebuild did not apply the allow-list of the new object")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	expiredFor(t, dl, name, false, "re-created spoke synced and compiled")
+}
+
 // The table is complete before the replica is ready, and it then holds each SpokeCluster that existed at the
 // start. A spoke that never synced (for example an unreachable spoke) does not stop readiness.
 func TestReadinessWaitsForDeadlineTable(t *testing.T) {

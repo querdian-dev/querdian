@@ -213,8 +213,9 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 		if red != nil {
 			opt.Rewrite = red.TailFrame
 		}
-		// Close the tail when a spoke that gave terms at the start expires (PLAN §18.6, rule 8).
-		if origins := eff.Origins; len(origins) > 0 {
+		// Close the tail when a spoke that gave terms at the start expires (PLAN §18.6, rule 8), or when its
+		// SpokeCluster gets a new spec, for example a smaller tenant allow-list (PLAN §18.9).
+		if origins := eff.OriginVersions; len(origins) > 0 {
 			dl := s.d.Deadlines
 			opt.Revoked = func() bool { return dl.AnyExpired(origins, time.Now()) }
 			opt.RevokeCheckInterval = s.tailRevokeCheck

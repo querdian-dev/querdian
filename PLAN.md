@@ -1043,6 +1043,9 @@ expire.
    - `lastSyncTime` is absent, or more than five minutes in the future.
    - `status.observedGeneration` differs from `metadata.generation`.
    - `spec.maxStaleness` is zero or negative.
+   - The rule was compiled from a different version of the `SpokeCluster`. A version is the pair of
+     `metadata.uid` and `metadata.generation`. A re-created object starts again at generation 1, so the
+     generation alone is not sufficient.
 5. An expired rule loses its terms but keeps its `labels.deny` and `labels.redact`, so expiry only
    narrows access.
 6. If no term remains, `Resolve` must return an error. The `ErrNoGrant` check in `Resolve` runs before
@@ -1050,8 +1053,8 @@ expire.
    check and test. The new reason is `policy_source_expired` with status 403. It does not name the cluster.
 7. The next valid sync restores the grants with no manual work.
 8. Each 10 seconds, a Loki tail checks the deadlines of the spokes that had active terms when the tail
-   started. If one has expired, the tail closes. A suspended spoke can still send logs, so
-   documentation alone is not sufficient here.
+   started. If one has expired, or if its `SpokeCluster` has a different version than at the start, the
+   tail closes. A suspended spoke can still send logs, so documentation alone is not sufficient here.
 
 Results that operators must accept:
 
@@ -1109,7 +1112,8 @@ The design does not assume a tenant setup. For a backend with a `tenantHeader`:
   value must be in `spec.tenants`.
 - Any other value makes the policy invalid (new reason `TenantNotAllowed`). Because of this, a spoke
   admin cannot select a tenant that the hub did not allow.
-- A smaller allow-list must remove the grant, so a change to `spec.tenants` starts a recompile.
+- A smaller allow-list must remove the grant, so a change to `spec.tenants` starts a recompile. An open
+  Loki tail closes, because the generation of the `SpokeCluster` changed (§18.6, rule 8).
 
 | Setup | Result |
 |---|---|

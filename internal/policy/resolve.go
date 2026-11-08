@@ -33,7 +33,8 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 // ResolveAt computes the exact union of all rules granted to the user and groups on a backend (PLAN §6.2,
 // §6.4). Users and groups are looked up in separate keyspaces.
 //
-// A rule from a spoke (Origin is set) that is expired in dl at now gives no term, but its DeniedLabels and
+// A rule from a spoke (Origin is set) that is expired in dl at now, or that was compiled from a different
+// version of its SpokeCluster than the one in dl, gives no term, but its DeniedLabels and
 // Redactions stay in the result, so expiry only narrows access (PLAN §18.6, rule 5). If no term remains
 // because rules expired, ResolveAt returns ErrPolicySourceExpired. It never returns an Effective with no
 // terms that is not Unrestricted.
@@ -59,6 +60,7 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 
 	var terms []Term
 	var denied, policies, origins []string
+	var versions map[string]SpokeVersion
 	expired := false
 	var redactions map[string]Redaction
 	seen := make(map[*CompiledRule]bool, len(rules))
@@ -84,11 +86,15 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 			if r.Unrestricted {
 				continue
 			}
-			if dl.Expired(r.Origin, now) {
+			if dl.ExpiredFor(r.Origin, r.OriginVersion, now) {
 				expired = true
 				continue
 			}
 			origins = append(origins, r.Origin)
+			if versions == nil {
+				versions = map[string]SpokeVersion{}
+			}
+			versions[r.Origin] = r.OriginVersion
 		}
 		if len(r.Tenants) == 0 {
 			terms = append(terms, Term{Matchers: r.Matchers})
@@ -128,6 +134,7 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 	eff.Redactions = redactions
 	eff.Policies = sortedUnique(policies)
 	eff.Origins = sortedUnique(origins)
+	eff.OriginVersions = versions
 	return eff, nil
 }
 
