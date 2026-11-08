@@ -21,11 +21,27 @@ import (
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
-// tail is an open Loki tail through the proxy. It keeps the stream labels and lines of each entry.
+// tail is an open Loki tail through the proxy. It keeps the stream labels and lines of each entry, and the
+// time and the error of the close.
 type tail struct {
-	mu      sync.Mutex
-	entries []tailEntry
-	done    chan error
+	mu       sync.Mutex
+	entries  []tailEntry
+	closedAt time.Time
+	closeErr error
+	// done is closed after closedAt and closeErr are set.
+	done chan struct{}
+}
+
+// closed returns the time of the close, true and the error of the close, or false while the tail is open.
+func (tl *tail) closed() (time.Time, bool, error) {
+	select {
+	case <-tl.done:
+	default:
+		return time.Time{}, false, nil
+	}
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+	return tl.closedAt, true, tl.closeErr
 }
 
 type tailEntry struct {
@@ -50,12 +66,15 @@ func (f *fixture) openTail(t *testing.T, group, query string) *tail {
 	}
 	c.SetReadLimit(8 << 20)
 	t.Cleanup(func() { _ = c.CloseNow() })
-	tl := &tail{done: make(chan error, 1)}
+	tl := &tail{done: make(chan struct{})}
 	go func() {
 		for {
 			_, msg, err := c.Read(context.Background())
 			if err != nil {
-				tl.done <- err
+				tl.mu.Lock()
+				tl.closedAt, tl.closeErr = time.Now(), err
+				tl.mu.Unlock()
+				close(tl.done)
 				return
 			}
 			var fr struct {
@@ -127,7 +146,10 @@ func testStolenCert(t *testing.T, f *fixture) {
 		t.Errorf("the tail of %s received entries of other records: %v", team, fe)
 	}
 
-	// Step 1: suspend.
+	// Step 1: suspend. The tail must be open until now, so that its close comes from the suspension.
+	if at, ok, err := tl.closed(); ok {
+		t.Fatalf("the tail closed at %s before the suspension: %v", at.Format(time.RFC3339Nano), err)
+	}
 	suspended := time.Now()
 	f.h.patchSpoke(t, clusterA, func(sp *v1.SpokeClusterSpec) { sp.Suspended = true })
 	f.eventuallyDenied(t, team, metrics, msgExpired, 10*time.Second)
@@ -136,18 +158,24 @@ func testStolenCert(t *testing.T, f *fixture) {
 		f.isDenied(t, team, ref, msgExpired)
 		f.sees(t, groupBoth, ref, []rec{{clusterB, nsTeam}})
 	}
+	// The close time comes from the reader of the tail, so the polls above do not count.
 	select {
-	case err := <-tl.done:
-		if st := websocket.CloseStatus(err); st != websocket.StatusPolicyViolation {
-			t.Errorf("the tail closed with %v (status %d); want status %d", err, st, websocket.StatusPolicyViolation)
-		}
-		if d := time.Since(suspended); d > 10*time.Second {
-			t.Errorf("the tail closed %s after the suspension; want at most 10s", d)
-		}
-		t.Logf("the tail closed %s after the suspension", time.Since(suspended).Round(10*time.Millisecond))
-	case <-time.After(15 * time.Second):
+	case <-tl.done:
+	case <-time.After(time.Until(suspended.Add(15 * time.Second))):
 		t.Fatal("the tail is still open 15s after the suspension")
 	}
+	at, _, err := tl.closed()
+	var ce websocket.CloseError
+	switch {
+	case !at.After(suspended):
+		t.Errorf("the tail closed at %s, not after the suspension at %s", at.Format(time.RFC3339Nano), suspended.Format(time.RFC3339Nano))
+	case !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation || ce.Reason != "policy source expired":
+		// Status 1008 is also the status of other closes, so the reason must agree.
+		t.Errorf("the tail closed with %v; want status %d and the reason %q", err, websocket.StatusPolicyViolation, "policy source expired")
+	case at.Sub(suspended) > 10*time.Second:
+		t.Errorf("the tail closed %s after the suspension; want at most 10s", at.Sub(suspended))
+	}
+	t.Logf("the tail closed %s after the suspension", at.Sub(suspended).Round(10*time.Millisecond))
 
 	// The receiver rejects each sync of a suspended spoke, and lastSyncTime does not change.
 	expectRejected(t, s.sender(t, f.h), "the SpokeCluster is suspended")

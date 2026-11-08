@@ -32,6 +32,9 @@ const (
 	groupSneaky = "sneaky"
 	// groupBadTenant has a spoke ClusterAccessPolicy in cluster-a for the tenant of cluster-b.
 	groupBadTenant = "bad-tenant"
+	// groupMulti has a spoke ClusterAccessPolicy in cluster-a with terms in two tenants of cluster-a: the
+	// setup "several tenants for each cluster" (PLAN §18.9).
+	groupMulti = "multi"
 )
 
 // tenantsFor returns the tenants of a rule for a backend in a cluster.
@@ -117,7 +120,7 @@ func spokeObjects(cluster string) []client.Object {
 		}},
 		clusterPolicy("admin", []string{groupAdmin + cluster}, rulesFor(sharedBackends, cluster, nil,
 			func(r *v1.ClusterRule) { r.Unrestricted = true })),
-		clusterPolicy("iso", isoGroups, rulesFor([]backendRef{logsPer, tracesPer}, cluster, nsMatcher(nsTeam), nil)),
+		clusterPolicy("iso", isoGroups, rulesFor(perClusterBackends, cluster, nsMatcher(nsTeam), nil)),
 	}
 	if cluster == clusterA {
 		objs = append(objs,
@@ -127,6 +130,11 @@ func spokeObjects(cluster string) []client.Object {
 			}, nil)),
 			// The tenant of cluster-b is not in the allow-list of cluster-a (PLAN §18.9).
 			clusterPolicy("bad-tenant", []string{groupBadTenant}, rulesFor([]backendRef{logsPer}, clusterB, nsMatcher(nsTeam), nil)),
+			// Namespace team from tenant "all" and namespace other from the tenant of cluster-a, on each backend
+			// of the setup "one tenant for each cluster". Both tenants are in the allow-list of cluster-a.
+			clusterPolicy("multi", []string{groupMulti}, append(
+				rulesFor(perClusterBackends, cluster, nsMatcher(nsTeam), func(r *v1.ClusterRule) { r.Tenants = []string{tenantAll} }),
+				rulesFor(perClusterBackends, cluster, nsMatcher(nsOther), nil)...)),
 		)
 	}
 	return objs

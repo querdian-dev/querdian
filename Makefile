@@ -5,7 +5,7 @@ ENVTEST_K8S_VERSION ?= 1.33.0
 IMAGE ?= ghcr.io/querdian-dev/querdian
 GORELEASER_VERSION ?= v2.20.0
 
-.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e e2e-multicluster fmt docker-build release-check site site-serve
+.PHONY: build test test-race lint fuzz generate manifests chart-crds chart-crds-check chart-lint licenses envtest e2e e2e-single e2e-multicluster fmt docker-build release-check site site-serve
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/querdian ./cmd/querdian
@@ -55,17 +55,26 @@ chart-lint: chart-crds-check
 licenses:
 	go tool go-licenses check ./... --disallowed_types=forbidden,restricted,reciprocal,unknown --ignore github.com/hashicorp/go-uuid
 
-envtest:
-	KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" go test -tags envtest ./...
-
-# The multicluster suite needs the envtest binaries in addition to a container runtime.
+# Sets KUBEBUILDER_ASSETS; setup-envtest downloads the binaries on the first run.
 ENVTEST_ASSETS = KUBEBUILDER_ASSETS="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) -p path)"
 
-e2e:
-	$(ENVTEST_ASSETS) go test -tags e2e -timeout 20m ./test/e2e/...
+envtest:
+	$(ENVTEST_ASSETS) go test -tags envtest ./...
 
+# All end-to-end suites: first the single-cluster suites in parallel, then the multicluster suite alone. The
+# multicluster suite measures real time (time limit, tail close), so the load of the other suites must not
+# delay it.
+e2e: e2e-single
+	$(MAKE) e2e-multicluster
+
+# The single-cluster suites against real Prometheus, Loki and Tempo containers (needs docker).
+e2e-single:
+	pkgs="$$(go list -tags e2e ./test/e2e/... | grep -v '/test/e2e/multicluster$$')" && test -n "$$pkgs" && \
+		go test -tags e2e -count=1 -timeout 20m $$pkgs
+
+# The multicluster suite: envtest API servers for the hub and the spokes, and real backend containers.
 e2e-multicluster:
-	$(ENVTEST_ASSETS) go test -tags e2e -timeout 10m -v -run TestMultiCluster ./test/e2e/multicluster/
+	$(ENVTEST_ASSETS) go test -tags e2e -count=1 -timeout 10m -v -run TestMultiCluster ./test/e2e/multicluster/
 
 fmt:
 	gofmt -s -w .

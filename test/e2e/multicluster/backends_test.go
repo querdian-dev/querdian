@@ -101,17 +101,22 @@ type backendRef struct {
 	setup        setup
 }
 
-// Prometheus has no tenants, so it has only the setup with no tenant header. Loki and Tempo have all
-// three setups. The setups with a tenant header share one multi-tenant instance of each type.
+// Loki and Tempo have all three setups. The setups with a tenant header share one multi-tenant instance of
+// each type. A plain Prometheus has no tenants and ignores the tenant header, so metrics-per uses the same
+// Prometheus as metrics: it shows what Querdian does for a Prometheus-type backend with a tenant header (as
+// in front of Thanos or Mimir), but it cannot show that the backend selects the tenant.
 var (
 	metrics     = backendRef{"metrics", "/metrics", config.BackendPrometheus, setupNone}
+	metricsPer  = backendRef{"metrics-per", "/metrics-per", config.BackendPrometheus, setupPerCluster}
 	logs        = backendRef{"logs", "/logs", config.BackendLoki, setupNone}
 	logsOne     = backendRef{"logs-one", "/logs-one", config.BackendLoki, setupOne}
 	logsPer     = backendRef{"logs-per", "/logs-per", config.BackendLoki, setupPerCluster}
 	traces      = backendRef{"traces", "/traces", config.BackendTempo, setupNone}
 	tracesOne   = backendRef{"traces-one", "/traces-one", config.BackendTempo, setupOne}
 	tracesPer   = backendRef{"traces-per", "/traces-per", config.BackendTempo, setupPerCluster}
-	allBackends = []backendRef{metrics, logs, logsOne, logsPer, traces, tracesOne, tracesPer}
+	allBackends = []backendRef{metrics, metricsPer, logs, logsOne, logsPer, traces, tracesOne, tracesPer}
+	// perClusterBackends are the backends of the setup "one tenant for each cluster".
+	perClusterBackends = []backendRef{metricsPer, logsPer, tracesPer}
 	// sharedBackends are the setups where one tenant (or none) holds the data of all clusters.
 	sharedBackends = []backendRef{metrics, logs, logsOne, traces, tracesOne}
 )
@@ -186,6 +191,23 @@ overrides:
       block_retention: 1h
 `
 
+// noTenant is the tenant marker of the data in the single-tenant instances.
+const noTenant = "none"
+
+// expectedTenant is the tenant that must hold a record that a user reads through ref. Prometheus has one
+// store, so its results carry no tenant.
+func expectedTenant(ref backendRef, r rec) string {
+	switch {
+	case ref.typ == config.BackendPrometheus:
+		return ""
+	case ref.setup == setupOne:
+		return tenantAll
+	case ref.setup == setupPerCluster:
+		return perClusterTenant(r.cluster)
+	}
+	return noTenant
+}
+
 // backends are the running upstream containers. The single-tenant instances serve the setup with no
 // tenant header; the multi-tenant instances serve both setups with a tenant header.
 type backends struct {
@@ -193,8 +215,9 @@ type backends struct {
 	lokiSingle, lokiMT   *framework.Container
 	tempoSingle, tempoMT *framework.Container
 	end                  time.Time
-	// traceIDs maps the trimmed trace ID of each seeded trace to its record.
-	traceIDs map[string]rec
+	// traceIDs maps the trimmed trace ID of each seeded trace to its record and tenant. The IDs are unique
+	// over all instances and tenants, so a trace in a result shows the tenant that it came from.
+	traceIDs map[string]item
 }
 
 func (b *backends) url(ref backendRef) string {
@@ -321,17 +344,17 @@ func (b *backends) seed(t testing.TB) {
 	}
 
 	// Tempo: one single-span trace for each record and tenant. Trace IDs are unique over the data set.
-	b.traceIDs = map[string]rec{}
+	b.traceIDs = map[string]item{}
 	n := 0
-	traceID := func(r rec) string {
+	traceID := func(r rec, tenant string) string {
 		n++
 		id := fmt.Sprintf("a%031x", n)
-		b.traceIDs[trimID(id)] = r
+		b.traceIDs[trimID(id)] = item{r, tenant}
 		return id
 	}
 	var single []traceDef
 	for _, r := range recs {
-		single = append(single, traceDef{id: traceID(r), r: r})
+		single = append(single, traceDef{id: traceID(r, noTenant), r: r})
 	}
 	pushTempo(t, b.tempoSingle.URL("4318"), "", single, b.end)
 	tenants := make([]string, 0, len(byTenant))
@@ -342,7 +365,7 @@ func (b *backends) seed(t testing.TB) {
 	for _, tn := range tenants {
 		var ts []traceDef
 		for _, r := range byTenant[tn] {
-			ts = append(ts, traceDef{id: traceID(r), r: r})
+			ts = append(ts, traceDef{id: traceID(r, tn), r: r})
 		}
 		pushTempo(t, b.tempoMT.URL("4318"), tn, ts, b.end)
 	}
@@ -371,7 +394,7 @@ func (b *backends) seed(t testing.TB) {
 	for _, c := range checks {
 		eventually(t, 2*time.Minute, fmt.Sprintf("seed of %s tenant %q", c.ref.name, c.tenant), func() (bool, string) {
 			res := b.queryAt(t, c.c, backendRef{typ: c.ref.typ}, "")
-			return res.status == 200 && len(res.recs) == c.want, res.String()
+			return res.status == 200 && len(res.itemSet()) == c.want, res.String()
 		})
 	}
 }
@@ -440,7 +463,8 @@ func snappyLiteral(data []byte) []byte {
 }
 
 // pushLoki sends one stream for each record, with three lines that end at end. tenant "" sends no tenant
-// header. The ingester ring can need a moment after readiness, so failed pushes are retried.
+// header. Each line starts with the marker and names the tenant, so that a result shows the tenant that it
+// came from. The ingester ring can need a moment after readiness, so failed pushes are retried.
 func pushLoki(t testing.TB, base, tenant string, recs []rec, end time.Time, marker string) {
 	t.Helper()
 	type stream struct {
@@ -454,7 +478,7 @@ func pushLoki(t testing.TB, base, tenant string, recs []rec, end time.Time, mark
 		s := stream{Stream: labelsOf(r)}
 		for i := 2; i >= 0; i-- {
 			ts := end.Add(-time.Duration(i) * 10 * time.Second).UnixNano()
-			s.Values = append(s.Values, []string{strconv.FormatInt(ts, 10), fmt.Sprintf("%s record=%s line=%d", marker, r, i)})
+			s.Values = append(s.Values, []string{strconv.FormatInt(ts, 10), fmt.Sprintf("%s tenant=%s record=%s line=%d", marker, lineTenant(tenant), r, i)})
 		}
 		body.Streams = append(body.Streams, s)
 	}
@@ -486,6 +510,24 @@ func pushLoki(t testing.TB, base, tenant string, recs []rec, end time.Time, mark
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("push to Loki %s as %q: %s", base, tenant, last)
+}
+
+// lineTenant is the tenant marker in a Loki line.
+func lineTenant(tenant string) string {
+	if tenant == "" {
+		return noTenant
+	}
+	return tenant
+}
+
+// tenantOfLine returns the tenant marker of a Loki line, or "?" if the line has none.
+func tenantOfLine(line string) string {
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, "tenant="); ok {
+			return v
+		}
+	}
+	return "?"
 }
 
 // traceDef is one seeded trace with one span.
@@ -547,6 +589,19 @@ func pushTempo(t testing.TB, base, tenant string, traces []traceDef, end time.Ti
 	t.Fatalf("push to Tempo %s as %q: %s", base, tenant, last)
 }
 
+// traceID returns the ID of the seeded trace of the record in the tenant (noTenant for the single-tenant
+// instance).
+func (b *backends) traceID(t testing.TB, r rec, tenant string) string {
+	t.Helper()
+	for id, it := range b.traceIDs {
+		if it.r == r && it.tenant == tenant {
+			return id // the IDs start with "a", so the trimmed ID is the full ID
+		}
+	}
+	t.Fatalf("no seeded trace for %s in tenant %q", r, tenant)
+	return ""
+}
+
 // trimID makes trace IDs comparable: Tempo removes leading zeros in search results.
 func trimID(s string) string {
 	s = strings.TrimLeft(s, "0")
@@ -558,21 +613,44 @@ func trimID(s string) string {
 
 // --- queries ---------------------------------------------------------------------------------------
 
+// item is one record in a result, with the tenant that it came from ("" for Prometheus).
+type item struct {
+	r      rec
+	tenant string
+}
+
+func (i item) String() string {
+	if i.tenant == "" {
+		return i.r.String()
+	}
+	return i.r.String() + "@" + i.tenant
+}
+
 // result is the answer to one query: the status and the records in the data.
 type result struct {
 	status int
-	recs   []rec
+	items  []item
 	body   string
 }
 
 func (r result) String() string {
-	return fmt.Sprintf("status %d, records %v, body %.300s", r.status, r.recs, r.body)
+	return fmt.Sprintf("status %d, records %v, body %.300s", r.status, r.itemSet(), r.body)
 }
 
-// recordSet returns the sorted records as text, for comparisons.
-func (r result) recordSet() []string {
-	out := make([]string, 0, len(r.recs))
-	for _, x := range r.recs {
+// recs returns the records of the result without the tenants.
+func (r result) recs() []rec {
+	out := make([]rec, len(r.items))
+	for i, x := range r.items {
+		out[i] = x.r
+	}
+	return out
+}
+
+// itemSet returns the sorted records with their tenants as text, for comparisons. A Loki result has one
+// entry for each line, so equal entries are removed.
+func (r result) itemSet() []string {
+	out := make([]string, 0, len(r.items))
+	for _, x := range r.items {
 		out = append(out, x.String())
 	}
 	sort.Strings(out)
@@ -629,16 +707,21 @@ func (b *backends) queryPath(t testing.TB, c *framework.Client, prefix string, t
 				Result []struct {
 					Metric map[string]string `json:"metric"`
 					Stream map[string]string `json:"stream"`
+					Values [][]any           `json:"values"`
 				} `json:"result"`
 			} `json:"data"`
 		}
 		resp.JSON(t, &d)
 		for _, x := range d.Data.Result {
-			l := x.Metric
-			if typ == config.BackendLoki {
-				l = x.Stream
+			if typ == config.BackendPrometheus {
+				res.items = append(res.items, item{r: rec{x.Metric["cluster"], x.Metric["namespace"]}})
+				continue
 			}
-			res.recs = append(res.recs, rec{l["cluster"], l["namespace"]})
+			r := rec{x.Stream["cluster"], x.Stream["namespace"]}
+			for _, v := range x.Values {
+				line, _ := v[1].(string)
+				res.items = append(res.items, item{r, tenantOfLine(line)})
+			}
 		}
 	default:
 		var d struct {
@@ -648,24 +731,34 @@ func (b *backends) queryPath(t testing.TB, c *framework.Client, prefix string, t
 		}
 		resp.JSON(t, &d)
 		for _, x := range d.Traces {
-			r, ok := b.traceIDs[trimID(x.TraceID)]
+			it, ok := b.traceIDs[trimID(x.TraceID)]
 			if !ok {
 				t.Fatalf("search returned an unknown trace %s", x.TraceID)
 			}
-			res.recs = append(res.recs, r)
+			res.items = append(res.items, it)
 		}
 	}
 	return res
 }
 
-// want returns the sorted text form of the records, for comparisons with result.recordSet.
-func want(recs ...rec) []string {
-	out := make([]string, 0, len(recs))
-	for _, r := range recs {
-		out = append(out, r.String())
+// want returns the sorted text form of the records, each with the tenant that must hold it on ref, for
+// comparisons with result.itemSet.
+func want(ref backendRef, recs ...rec) []string {
+	items := make([]item, len(recs))
+	for i, r := range recs {
+		items[i] = item{r, expectedTenant(ref, r)}
+	}
+	return wantItems(items...)
+}
+
+// wantItems returns the sorted text form of the items.
+func wantItems(items ...item) []string {
+	out := make([]string, 0, len(items))
+	for _, x := range items {
+		out = append(out, x.String())
 	}
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
 }
 
 // inCluster returns the records of the data set in the clusters.

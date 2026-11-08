@@ -56,7 +56,8 @@ func testHubScopeAndNewSpoke(t *testing.T, f *fixture) {
 			// The rules of the other spokes and of the hub do not grow.
 			f.sees(t, groupBoth, ref, []rec{{clusterA, nsTeam}, {clusterB, nsTeam}})
 			f.sees(t, groupHubTeam, ref, []rec{{hubCluster, nsTeam}})
-			f.noRecordsOf(t, groupOps, ref, clusterC, clusterC)
+			f.onlyClusters(t, groupOps, ref, clusterC, hubCluster, clusterA)
+			f.onlyClusters(t, groupTeam+clusterA, ref, clusterC, clusterA)
 		}
 	})
 }

@@ -295,7 +295,7 @@ type hub struct {
 	serverCA    []byte  // PEM of the CA of the receiver server cert
 }
 
-// hubConfig is the static config of the hub: the multicluster block and seven backends, one for each tenant
+// hubConfig is the static config of the hub: the multicluster block and eight backends, one for each tenant
 // setup of each backend type (PLAN §18.9).
 func hubConfig(t testing.TB, issuer string, b *backends) *config.Config {
 	t.Helper()
@@ -313,6 +313,10 @@ func hubConfig(t testing.TB, issuer string, b *backends) *config.Config {
 		}
 		if ref.setup == setupPerCluster && ref.typ == config.BackendLoki {
 			be.TenantFederation = config.FederationTenantIDLabel
+		}
+		if ref.typ == config.BackendTempo {
+			// Filter mode, so that the suite can show that a trace of a different cluster is not found.
+			be.TraceByID = config.TraceByIDFilter
 		}
 		raw.Backends = append(raw.Backends, be)
 	}
@@ -366,7 +370,8 @@ func startHub(t testing.TB, api *apiServer, b *backends) *hub {
 		return mgr
 	}
 
-	// Querdian: the controller and the proxy handler chain, wired as in cmd/querdian.
+	// Querdian: the controller and the proxy handler chain. This is a copy of the wiring in cmd/querdian, not
+	// the command itself; the package comment lists the differences.
 	mgr := newMgr()
 	h.ctl = controller.New(h.cfg, controller.WithDeadlines(h.deadlines), controller.WithDebounce(50*time.Millisecond))
 	if err := h.ctl.SetupWithManager(mgr); err != nil {

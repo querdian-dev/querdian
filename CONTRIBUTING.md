@@ -33,10 +33,17 @@ make test-race        # with the race detector
 make fuzz             # short fuzz run
 make envtest          # controller tests against a local API server
 make generate manifests   # must produce no diff
-make e2e              # differential/equivalence suites against real Prometheus, Loki and Tempo (needs docker)
+make e2e              # all end-to-end suites: e2e-single, then e2e-multicluster (needs docker)
+make e2e-single       # differential/equivalence suites against real Prometheus, Loki and Tempo (needs docker)
+make e2e-multicluster # multi-cluster suite: envtest API servers for a hub and spokes, real backends (needs docker)
 make chart-lint       # Helm chart lint (needs helm)
 make licenses         # dependency licence gate
 ```
+
+`make envtest`, `make e2e` and `make e2e-multicluster` use `setup-envtest`. On the first run, it downloads
+the etcd and kube-apiserver binaries (version `ENVTEST_K8S_VERSION`) to the cache of `setup-envtest`, so
+that run needs network access. The multi-cluster suite runs alone after the other suites, because it
+measures real time. The comment of package `test/e2e/multicluster` describes its topology.
 
 ## What a change needs
 

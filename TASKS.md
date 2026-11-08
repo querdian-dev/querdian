@@ -681,18 +681,33 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] The chart README and `CHANGELOG.md` describe the change.
   - [x] The policy dashboard shows the origin and the expired state of a policy.
 
-### [ ] T6.8 — End-to-end tests
+### [x] T6.8 — End-to-end tests
 - **Depends on:** T6.7
-- **Files:** `test/e2e/`
+- **Files:** `test/e2e/multicluster/`
 - **Acceptance:**
-  - [ ] A hub and two spokes on kind. A policy in spoke A never returns data of spoke B on all three
+  - [x] A hub and two spokes, each with its own envtest API server. The hub runs the controller, the
+        proxy handler chain and the receiver in the test process, and each spoke runs the agent. The
+        backends are real Prometheus, Loki and Tempo containers. The package comment gives the reason
+        for envtest instead of kind. A policy in spoke A never returns data of spoke B on all three
         backends, also for equal namespace names.
-  - [ ] The suite covers all setups in §18.9, with the limits of federated tenants.
-  - [ ] A new spoke does not widen a hub rule with a cluster matcher. A hub `AccessPolicy` sees hub
+  - [x] The suite covers all setups in §18.9 that the backends support, with the limits of federated
+        tenants.
+  - [x] A new spoke does not widen a hub rule with a cluster matcher. A hub `AccessPolicy` sees hub
         telemetry with `cluster="<hubCluster>"`, and it does not see hub data with no cluster label.
-  - [ ] Grants stop after the time limit and return after the next sync.
-  - [ ] The procedure in §18.7 works. `suspended: true` stops new requests and closes an open Loki tail,
+  - [x] Grants stop after the time limit and return after the next sync.
+  - [x] The procedure in §18.7 works. `suspended: true` stops new requests and closes an open Loki tail,
         and grants return only after a new valid sync.
+
+### [ ] T6.9 — Kind smoke test of the chart
+- **Depends on:** T6.7, T6.8
+- **Files:** `test/`, `charts/querdian/`, `.github/workflows/`
+- **Acceptance:**
+  - [ ] A hub and one spoke on kind, installed with the chart and the real `querdian` image: the proxy,
+        the receiver and the agent as Deployments with the RBAC of the chart.
+  - [ ] The agent authenticates to its API server with a ServiceAccount token, and it reaches the
+        receiver over the network path between the clusters, with the cert files from Secrets.
+  - [ ] A smoke test shows a grant of the spoke through the proxy, its stop after `suspended: true`, and
+        its return after the next sync. The detailed cases stay in the envtest suite of T6.8.
 
 ---
 
@@ -711,7 +726,7 @@ T0.0 ─┬─ T0.1 ─┬─ T0.2
                └─ T4.1 ─ T4.2 ─ (T4.3)
 ```
 
-M6: T6.1 ─┬─ T6.2 ─ T6.3 ─ T6.4 ─┬─ T6.7 ─ T6.8
+M6: T6.1 ─┬─ T6.2 ─ T6.3 ─ T6.4 ─┬─ T6.7 ─ T6.8 ─ T6.9
           └─ T6.5 ─ T6.6 ───────┘
 
 Lexer/parser work (T3.1–T3.2, T4.1–T4.2) can start as soon as T0.5 is done, in parallel with M1.

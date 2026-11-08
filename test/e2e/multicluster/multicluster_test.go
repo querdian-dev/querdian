@@ -9,9 +9,24 @@
 // kube-apiserver) with the Querdian CRDs. The hub runs these components in the test process, each with
 // its own controller-runtime manager, as the separate Deployments of a real hub do:
 //
-//   - the Querdian controller (informers, snapshot, deadline table, status writer) and the real proxy
-//     handler chain of internal/server, wired as in cmd/querdian;
+//   - the Querdian controller (informers, snapshot, deadline table, status writer) and the proxy handler
+//     chain of internal/server;
 //   - the receiver (internal/receiver) on its own mTLS listener, with its own client CA.
+//
+// The suite does not run the querdian binary. The wiring of the hub is a copy of the wiring in
+// cmd/querdian, with these differences:
+//
+//   - The proxy serves only server.ProxyHandler on an httptest listener. There is no management listener
+//     (/readyz, /metrics), no dashboard and no tracing setup. The suite waits for Controller.Ready instead
+//     of /readyz.
+//   - The proxy manager has no leader election, so the replica is always the status writer. The rebuild
+//     debounce is 50ms instead of 250ms. There is no rebuild hook for the snapshot metrics, and the
+//     registry has no Go, process or spoke age collectors.
+//   - The receiver has no leader election and no probe server, and it uses the default limits. Its cert,
+//     key and client CA come from memory, not from files.
+//   - The agent uses agent.New and agent.NewSender with a heartbeat of one second, as described below,
+//     and the default lease timing. The command flags and the pod namespace file are not used.
+//   - All components log to one buffer that the test prints only if it fails.
 //
 // Each spoke runs the agent (internal/agent) with leader election, as a Kubernetes user that has only the
 // RBAC of PLAN §18.5. The agent reads its cert files before each request and sends its syncs over mTLS to
@@ -25,38 +40,47 @@
 //
 // # Why no kind cluster
 //
-// TASKS T6.8 names kind. The suite uses envtest API servers instead, for these reasons:
+// The first text of TASKS T6.8 named kind. The suite uses envtest API servers instead, for these reasons:
 //
 //   - The development sandbox of the project has no container runtime, so kind cannot run there. The
 //     envtest binaries run in the sandbox and in the CI job, and the `envtest` CI job installs them already.
-//   - A kind cluster needs a Querdian image and the Helm chart. The chart for the multi-cluster mode is a
-//     parallel task (T6.7), and the suite must not depend on it.
+//   - A kind cluster needs a Querdian image and the Helm chart. The chart for the multi-cluster mode was a
+//     parallel task (T6.7) when the suite was written, and the suite does not depend on it.
 //   - The behaviour under test is in the Querdian components, not in the kubelet or in the network of a
 //     cluster: the policy origin, the cluster matcher, the receiver checks, the agent transport, the
 //     deadline table and the closure of tails. envtest gives a real API server with the real CRDs, CEL
 //     rules and RBAC, and the components use the same client code as in a pod.
 //
-// What the suite does not cover: the Deployments, Services and RBAC objects of the chart, and the network
-// path between clusters. The chart tests of T6.7 cover the RBAC of the chart.
+// What the suite does not cover: the chart (Deployments, Services, RBAC objects), the querdian binary,
+// ServiceAccount tokens and the network path between clusters. The chart tests of T6.7 cover the RBAC of
+// the chart. TASKS T6.9 adds a kind smoke test for the other items.
 //
 // # Tenant setups (PLAN §18.9)
 //
-// The hub config has seven backends, one for each tenant setup that a backend type supports:
+// The hub config has eight backends, one for each tenant setup that a backend type supports:
 //
 //   - no tenant header: Prometheus, a single-tenant Loki and a single-tenant Tempo;
 //   - one tenant for all clusters: a multi-tenant Loki and Tempo, tenant "all";
-//   - one tenant for each cluster: the same multi-tenant instances, tenant "t-<cluster>". The Loki backend
-//     uses tenantFederation: tenantIdLabel; Tempo has no such option.
+//   - one tenant for each cluster: the same multi-tenant instances, tenant "t-<cluster>", and a Prometheus
+//     backend with a tenant header and no federation. The Loki backend uses tenantFederation:
+//     tenantIdLabel; Tempo has no such option.
 //
-// Prometheus has no tenants, so it has only the first setup. The setup "several tenants for each cluster"
-// follows the rules of the setup "one tenant for each cluster" when the terms of a user span tenants, so
-// the suite does not repeat it.
+// A plain Prometheus has no tenants and ignores the tenant header. The Prometheus backend with a tenant
+// header uses the same Prometheus as the backend with no header. It shows the result of Querdian for a
+// Prometheus-type backend with tenants (for example Thanos or Mimir): the cluster matcher and the 403 for a
+// cross-tenant union. It cannot show that the backend selects the right tenant. On Loki and Tempo, each line
+// and each trace names its tenant, so the suite also checks that each result comes from the right tenant.
+//
+// The setup "several tenants for each cluster" has one case: a user with terms in two tenants of
+// cluster-a, on each backend of the setup "one tenant for each cluster". The rules of the row "one tenant
+// for each cluster" apply, because the terms span tenants.
 //
 // These limits of federated tenants apply to the setup "one tenant for each cluster" (docs/limitations.md).
 // The suite tests the documented result where one exists, and does not test the unsupported cases:
 //
-//   - Tempo: a cross-tenant union with differing terms is 403 cross_tenant_union_unsupported. The suite
-//     tests this result for a user with grants in two clusters.
+//   - Tempo and Prometheus: a cross-tenant union with differing terms is 403
+//     cross_tenant_union_unsupported. The suite tests this result for a user with grants in two clusters
+//     and for a user with grants in two tenants of one cluster.
 //   - Loki: a cross-tenant union works for query_range with tenantIdLabel, and the suite tests it. Tenant-bound
 //     metadata endpoints (labels, series, index/*) and tail with several tenants do not work reliably, so
 //     the suite does not test them.
@@ -64,17 +88,25 @@
 //
 // # Run
 //
-// `make e2e` runs all end-to-end suites, and `make e2e-multicluster` runs this suite only. Both targets
-// set KUBEBUILDER_ASSETS with setup-envtest.
+// `make e2e` runs the single-cluster suites in parallel (`make e2e-single`) and then this suite alone
+// (`make e2e-multicluster`). The time limit and the tail tests measure real time, so the load of the other
+// suites must not delay them. `make e2e-multicluster` sets KUBEBUILDER_ASSETS with setup-envtest, and
+// downloads the envtest binaries on the first run.
 package multicluster
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+
+	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/controller"
 	"github.com/querdian-dev/querdian/test/e2e/framework"
 )
 
@@ -121,13 +153,33 @@ func TestMultiCluster(t *testing.T) {
 	t.Logf("suite done after %s", time.Since(start).Round(time.Second))
 }
 
-// waitSpokeActive waits until the hub has all policies of the spoke, the spoke had a valid sync, and the
-// team user of the spoke can read its data.
+// waitSpokeActive waits until the hub has all policies of the spoke, the spoke had a valid sync, the status
+// writer has a Ready condition on each SpokePolicy of the spoke for its current generation, and the team
+// user of the spoke can read its data. The status writer runs after the snapshot swap, so the checks after
+// this wait see a snapshot with all policies of the spoke.
 func (f *fixture) waitSpokeActive(t testing.TB, name string) {
 	t.Helper()
 	eventually(t, time.Minute, "first sync of "+name, func() (bool, string) {
-		n := f.h.spokePolicies(t, name)
-		return n == spokePolicyCount(name) && f.h.synced(t, name), "SpokePolicy objects or the sync state are not complete"
+		var list v1.SpokePolicyList
+		if err := f.h.api.admin.List(context.Background(), &list); err != nil {
+			return false, err.Error()
+		}
+		n := 0
+		for i := range list.Items {
+			p := &list.Items[i]
+			if p.Spec.Cluster != name {
+				continue
+			}
+			n++
+			if p.Status.ObservedGeneration != p.Generation ||
+				apimeta.FindStatusCondition(p.Status.Conditions, controller.ReadyCondition) == nil {
+				return false, fmt.Sprintf("SpokePolicy %s (%s %s) has no Ready condition for generation %d", p.Name, p.Spec.Kind, p.Spec.Name, p.Generation)
+			}
+		}
+		if n != spokePolicyCount(name) {
+			return false, fmt.Sprintf("%d of %d SpokePolicy objects", n, spokePolicyCount(name))
+		}
+		return f.h.synced(t, name), "no valid sync for the current generation"
 	})
 	f.eventuallySees(t, groupTeam+name, metrics, []rec{{name, nsTeam}})
 }
@@ -139,12 +191,18 @@ func (f *fixture) as(t testing.TB, group string) *framework.Client {
 	return c
 }
 
-// sees checks that group gets exactly the records on ref.
+// sees checks that group gets exactly the records on ref, each from the tenant that must hold it.
 func (f *fixture) sees(t testing.TB, group string, ref backendRef, recs []rec) {
 	t.Helper()
+	f.seesItems(t, group, ref, want(ref, recs...))
+}
+
+// seesItems checks that group gets exactly the items (records with tenants, see wantItems) on ref.
+func (f *fixture) seesItems(t testing.TB, group string, ref backendRef, items []string) {
+	t.Helper()
 	res := f.b.query(t, f.as(t, group), ref, "")
-	if res.status != http.StatusOK || !slices.Equal(res.recordSet(), want(recs...)) {
-		t.Errorf("%s on %s: got %s; want status 200 and records %v", group, ref.name, res, want(recs...))
+	if res.status != http.StatusOK || !slices.Equal(res.itemSet(), items) {
+		t.Errorf("%s on %s: got %s; want status 200 and records %v", group, ref.name, res, items)
 	}
 }
 
@@ -153,7 +211,7 @@ func (f *fixture) eventuallySees(t testing.TB, group string, ref backendRef, rec
 	t.Helper()
 	eventually(t, 30*time.Second, group+" on "+ref.name, func() (bool, string) {
 		res := f.b.query(t, f.as(t, group), ref, "")
-		return res.status == http.StatusOK && slices.Equal(res.recordSet(), want(recs...)), res.String()
+		return res.status == http.StatusOK && slices.Equal(res.itemSet(), want(ref, recs...)), res.String()
 	})
 }
 
@@ -192,18 +250,21 @@ func (f *fixture) eventuallyDenied(t testing.TB, group string, ref backendRef, m
 	})
 }
 
-// noRecordsOf checks that a query of group on ref returns no record of the clusters. A 403 also passes.
-func (f *fixture) noRecordsOf(t testing.TB, group string, ref backendRef, selectCluster string, clusters ...string) {
+// onlyClusters sends a query of group on ref that selects the cluster selectCluster ("" for no selection).
+// It checks that the answer is 200 and that each record is in one of the allowed clusters. An empty result
+// passes. The check uses an allow-list, so a record of any other cluster value fails, also of a cluster
+// that the test does not name.
+func (f *fixture) onlyClusters(t testing.TB, group string, ref backendRef, selectCluster string, allowed ...string) {
 	t.Helper()
 	res := f.b.query(t, f.as(t, group), ref, selectCluster)
-	if res.status != http.StatusOK && res.status != http.StatusForbidden {
-		t.Errorf("%s on %s (query for cluster %q): got %s; want 200 or 403", group, ref.name, selectCluster, res)
+	if res.status != http.StatusOK {
+		t.Errorf("%s on %s (query for cluster %q): got %s; want 200", group, ref.name, selectCluster, res)
 		return
 	}
-	for _, r := range res.recs {
-		if slices.Contains(clusters, r.cluster) {
-			t.Errorf("%s on %s (query for cluster %q): got the record %s of a different cluster: %s",
-				group, ref.name, selectCluster, r, res)
+	for _, r := range res.recs() {
+		if !slices.Contains(allowed, r.cluster) {
+			t.Errorf("%s on %s (query for cluster %q): got the record %s, which is not in the clusters %q: %s",
+				group, ref.name, selectCluster, r, allowed, res)
 		}
 	}
 }
