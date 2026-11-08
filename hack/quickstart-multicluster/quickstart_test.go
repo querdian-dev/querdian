@@ -306,6 +306,14 @@ func TestGatewayOverwritesTheClusterLabel(t *testing.T) {
 		if procs[len(procs)-1] != "batch" {
 			t.Errorf("pipeline %s: the last processor is %s", name, procs[len(procs)-1])
 		}
+		// Prometheus copies the resource attributes to target_info, so the metrics pipelines delete the
+		// resource attribute k8s.cluster.name after the upsert.
+		if strings.HasPrefix(name, "metrics/") {
+			i, j := slices.Index(procs, "resource/"+s), slices.Index(procs, "resource/metrics")
+			if j < 0 || j < i {
+				t.Errorf("pipeline %s: processors %v; resource/metrics must follow resource/%s", name, procs, s)
+			}
+		}
 		signals[strings.SplitN(name, "/", 2)[0]+"/"+s]++
 	}
 	for _, s := range ss {
@@ -314,6 +322,9 @@ func TestGatewayOverwritesTheClusterLabel(t *testing.T) {
 				t.Errorf("%s of %s: %d pipelines, want 1", sig, s, signals[sig+"/"+s])
 			}
 		}
+	}
+	if got := actions(t, get(cfg, "processors", "resource/metrics"), "attributes"); !slices.Equal(got, []string{"k8s.cluster.name=:delete"}) {
+		t.Errorf("resource/metrics: %v", got)
 	}
 	raw, _ := yaml.Marshal(cfg)
 	if strings.Contains(string(raw), "action: insert") {

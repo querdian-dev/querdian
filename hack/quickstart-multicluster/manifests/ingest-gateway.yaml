@@ -13,8 +13,9 @@
 #      resource attributes  k8s.cluster.name, cluster          (Loki label k8s_cluster_name, Tempo
 #                                                              resource.k8s.cluster.name)
 #      data point, log record and span attributes  cluster     (Prometheus label cluster)
-#    and they delete the attribute k8s.cluster.name of data points, log records and spans, so no second
-#    label with a value of the spoke exists.
+#    and they delete the attribute k8s.cluster.name of data points, log records and spans. The metrics
+#    pipelines also delete the resource attribute k8s.cluster.name after the upsert: Prometheus copies
+#    the resource attributes to the series target_info, which then has only the label cluster.
 #
 # Limits of this demo (see docs/quickstart-multicluster.md):
 #  * The gateway checks the CA only, not the URI SAN of the client cert. This is correct only because
@@ -65,6 +66,10 @@ data:
         actions:
           - {key: cluster, value: spoke-b, action: upsert}
           - {key: k8s.cluster.name, action: delete}
+      # Metrics only: Prometheus copies each resource attribute to a label of target_info.
+      resource/metrics:
+        attributes:
+          - {key: k8s.cluster.name, action: delete}
       batch:
         timeout: 2s
     exporters:
@@ -88,7 +93,7 @@ data:
       pipelines:
         metrics/spoke-a:
           receivers: [otlp/spoke-a]
-          processors: [memory_limiter, resource/spoke-a, attributes/spoke-a, batch]
+          processors: [memory_limiter, resource/spoke-a, resource/metrics, attributes/spoke-a, batch]
           exporters: [otlphttp/prometheus]
         logs/spoke-a:
           receivers: [otlp/spoke-a]
@@ -100,7 +105,7 @@ data:
           exporters: [otlphttp/tempo]
         metrics/spoke-b:
           receivers: [otlp/spoke-b]
-          processors: [memory_limiter, resource/spoke-b, attributes/spoke-b, batch]
+          processors: [memory_limiter, resource/spoke-b, resource/metrics, attributes/spoke-b, batch]
           exporters: [otlphttp/prometheus]
         logs/spoke-b:
           receivers: [otlp/spoke-b]

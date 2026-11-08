@@ -8,7 +8,8 @@
 # 1. From the node container of the spoke, with the ingest cert of that spoke, it sends one sample, one
 #    log line and one span to the gateway port of that spoke. Each signal claims the cluster label of
 #    each other cluster: the other spokes and the hub. The claims are in the resource attributes and in
-#    the attributes of the data point, the log record and the span.
+#    the attributes of the data point, the log record and the span. Prometheus also copies the resource
+#    attributes to the series target_info, so the script checks it too.
 # 2. It queries Prometheus, Loki and Tempo of the hub DIRECTLY (not through Querdian). The stored cluster
 #    label of each item must be the spoke of the cert, and no item may carry a claimed value.
 # 3. It checks that the gateway and the receiver refuse the wrong certs: the ingest cert on the port of
@@ -82,7 +83,7 @@ hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
 printf '\n--- %s: forged data through the gateway (port %s), test id %s\n' "$S" "$GW_PORT" "$ID"
 for c in "${CLAIMS[@]}"; do
-  res="$(attrs "$c" service.name=forged-label-test)"
+  res="$(attrs "$c" service.name=forged-label-test test_id="$ID")"
   pt="$(attrs "$c" test_id="$ID" claimed="$c")"
   code=$(jq -cn --argjson r "$res" --argjson a "$pt" --arg t "$NOW_NS" \
     '{resourceMetrics:[{resource:{attributes:$r},scopeMetrics:[{scope:{name:"forged-label-test"},metrics:[{name:"querdian_forged_label_test",gauge:{dataPoints:[{asDouble:1,timeUnixNano:$t,attributes:$a}]}}]}]}]}' |
@@ -119,6 +120,11 @@ expect "metrics: no label k8s_cluster_name (the gateway deletes it)" "" "$(jq -r
 expect "metrics: the claims are kept only in the label claimed" "$(printf '%s\n' "${CLAIMS[@]}" | sort | paste -sd, -)" \
   "$(jq -r '[.data.result[].metric.claimed] | sort | join(",")' <<<"$M")"
 lines() { jq -r '[.data.result[].values[]] | length' <<<"$(loki_direct_range "$1" 600 || echo '{}')"; }
+TI=$(prom_direct "target_info{test_id=\"$ID\"}") || TI='{}'
+expect "metrics: label cluster of target_info (a copy of the resource attributes)" "$S" \
+  "$(jq -r '[.data.result[].metric.cluster] | unique | join(",")' <<<"$TI")"
+expect "metrics: no label k8s_cluster_name on target_info" "" \
+  "$(jq -r '[.data.result[].metric.k8s_cluster_name // empty] | unique | join(",")' <<<"$TI")"
 expect "logs: forged lines stored" "$N" "$(jq -r '[.data.result[].values[]] | length' <<<"$L")"
 expect "logs: label k8s_cluster_name of each stream" "$S" "$(jq -r '[.data.result[].stream.k8s_cluster_name] | unique | join(",")' <<<"$L")"
 expect "logs: lines in the stream selector {k8s_cluster_name=\"$S\"}" "$N" \

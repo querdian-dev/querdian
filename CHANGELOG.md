@@ -49,6 +49,11 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * New metrics: `querdian_cluster_policy_age_seconds{cluster}` and
   `querdian_cluster_policy_expired{cluster}`; `querdian_policies` has the kind `SpokePolicy` with the
   `multicluster` block.
+* Helm chart: `receiver.service.nodePort` sets a fixed node port for a receiver Service of type
+  `NodePort`, so the receiver URL of the agents stays the same after a reinstall.
+* Multi-cluster quickstart on kind (`hack/quickstart-multicluster/up.sh`): one hub and two spokes on a
+  laptop, with a demo ingest gateway, the ordered migration steps, a forged-label test of the gateway
+  and checks through the proxy. See [docs/quickstart-multicluster.md](docs/quickstart-multicluster.md).
 
 ### Changed
 

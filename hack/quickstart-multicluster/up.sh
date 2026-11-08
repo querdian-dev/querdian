@@ -121,6 +121,8 @@ info "hub node address on the Docker network kind: $HUB_IP"
 # --- 3. certs ------------------------------------------------------------------------------------------------------
 step "certs (openssl) in $CERT_DIR"
 mkdir -p "$MC_WORK_DIR"
+# down.sh removes the work directory only if it has this marker.
+touch "$MC_WORK_DIR/$MC_WORK_MARKER"
 rm -rf "$CERT_DIR"
 "$MC_DIR/certs.sh" "$CERT_DIR" "$HUB_IP" "$TRUST_DOMAIN" "${SPOKES[@]}" | sed 's/^/    /'
 
@@ -162,24 +164,35 @@ k -n observability rollout status ds/otel-collector --timeout=300s
 # data without the hub cluster label.
 step "migration step 2: hub telemetry carries cluster=\"$HUB_NAME\" (direct backend queries)"
 backends_pf
-n_prom() { prom_direct "$1" | jq -r '.data.result | length'; }
-n_loki() { loki_direct "$1" | jq -r '.data.result | length'; }
-n_tempo() { tempo_direct "$1" 600 | jq -r '.traces | length'; }
+# Each n_* prints the number of results, or "error" if the query fails.
+n_prom() { prom_direct "$1" | jq -r '.data.result | length' || echo error; }
+n_loki() { loki_direct "$1" | jq -r '.data.result | length' || echo error; }
+n_tempo() { tempo_direct "$1" 600 | jq -r '.traces | length' || echo error; }
 gt0() { [ "$("$@")" -gt 0 ] 2>/dev/null; }
+none() { # description count
+  case "$2" in
+    0) ;;
+    error | '') die "$1: the direct query failed" ;;
+    *) die "$1: $2 results, expected none" ;;
+  esac
+}
 wait_for "hub metrics with cluster=$HUB_NAME" 180 gt0 n_prom "count(demo_requests_total{cluster=\"$HUB_NAME\"})"
 wait_for "hub logs with k8s_cluster_name=$HUB_NAME" 180 gt0 n_loki "sum(count_over_time({k8s_namespace_name=~\".+\", k8s_cluster_name=\"$HUB_NAME\"}[10m]))"
 wait_for "hub traces with resource.k8s.cluster.name=$HUB_NAME" 180 gt0 n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" }"
-[ "$(n_prom "count by (__name__) (last_over_time({__name__=~\".+\", cluster!=\"$HUB_NAME\"}[1h]))")" = 0 ] ||
-  die "metrics: hub series without cluster=$HUB_NAME exist"
+none "metrics: series without cluster=$HUB_NAME" \
+  "$(n_prom "count by (__name__) (last_over_time({__name__=~\".+\", cluster!=\"$HUB_NAME\"}[1h]))")"
 for sel in k8s_namespace_name service_name; do
-  [ "$(n_loki "sum by ($sel) (count_over_time({$sel=~\".+\", k8s_cluster_name!=\"$HUB_NAME\"}[1h]))")" = 0 ] ||
-    die "logs: hub streams without k8s_cluster_name=$HUB_NAME exist (selector $sel)"
+  none "logs: streams without k8s_cluster_name=$HUB_NAME (selector $sel)" \
+    "$(n_loki "sum by ($sel) (count_over_time({$sel=~\".+\", k8s_cluster_name!=\"$HUB_NAME\"}[1h]))")"
 done
-all_t=$(n_tempo '{}')
-hub_t=$(n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" }")
-[ "$all_t" = "$hub_t" ] || die "traces: $all_t traces in 10 minutes, but only $hub_t with resource.k8s.cluster.name=$HUB_NAME"
+# The guide compares two TraceQL metrics counts. The demo Tempo has no metrics generator, so the demo
+# searches for spans without the attribute (= nil) and with a different value. A trace matches if one
+# of its spans matches.
+none "traces: spans without resource.k8s.cluster.name" "$(n_tempo '{ resource.k8s.cluster.name = nil }')"
+none "traces: spans with resource.k8s.cluster.name other than $HUB_NAME" \
+  "$(n_tempo "{ resource.k8s.cluster.name != \"$HUB_NAME\" }")"
 pf_stop
-ok "metrics, logs and traces of the hub carry the hub cluster label ($hub_t traces in 10 minutes)"
+ok "metrics, logs and traces of the hub carry the hub cluster label"
 
 # --- 7. the ingest gateway (before a spoke connects) -----------------------------------------------------------
 step "hub: demo ingest gateway (one mTLS OTLP port and one ingest CA for each spoke)"

@@ -1,9 +1,9 @@
 # Multi-cluster quickstart on kind
 
 This demo shows [multi-cluster enforcement](multicluster.md) on one laptop. One script creates three
-[kind](https://kind.sigs.k8s.io) clusters: a **hub** with the backends, Keycloak, Grafana and Querdian,
-and two **spokes** that run only the Querdian agent and send their telemetry to the hub. Both spokes and
-the hub have a namespace with the same name, `order-service`. A different team owns it in each cluster,
+[kind](https://kind.sigs.k8s.io) clusters. The **hub** has the backends, Keycloak, Grafana and Querdian.
+The two **spokes** run only the Querdian agent, and they send their telemetry to the hub. All three
+clusters have a namespace with the same name, `order-service`. A different team owns it in each cluster,
 and each team sees only the data of its own cluster.
 
 > **Demo only.** Keycloak runs in dev mode over plain HTTP with known passwords, all CA keys are in one
@@ -26,8 +26,8 @@ The [single-cluster quickstart](quickstart.md) is the base of this demo: read it
   Podman with the `docker` shim), and `openssl` (OpenSSL 1.1 or later; LibreSSL was not tested).
 * Bash 3.2 or later. The scripts do not use features of later versions.
 * Free host ports `8080` (Keycloak), `3000` (Grafana) and `8081` (policy dashboard). The single-cluster
-  quickstart uses the same ports, so remove it first (`hack/quickstart/down.sh`) or set
-  `KEYCLOAK_PORT=8082`. Grafana needs port 3000.
+  quickstart uses the same three ports, so remove it first (`hack/quickstart/down.sh`). `KEYCLOAK_PORT`
+  changes only the port of Keycloak.
 * Free local ports `18080`, `19090`, `13100` and `13200` for the port-forwards of the scripts.
 * Internet access: each kind node pulls its images from Docker Hub and quay.io.
 
@@ -38,7 +38,10 @@ measured values of the single-cluster quickstart and from the size of a kind nod
 
 | Item | Estimate |
 |---|---|
-| Memory | about 4 to 4.5 GiB in use: the hub about 2.5 GiB (the single-cluster stack without the history, plus the gateway and the receiver), each spoke about 0.7 to 0.9 GiB (a kind control plane, one collector, the agent, two busybox workloads). Give the container VM **8 GiB** and 4 CPUs or more. |
+| Memory in use | about 4 to 4.5 GiB in total |
+| Memory of the hub | about 2.5 GiB: the single-cluster stack without the history, the gateway and the receiver |
+| Memory of each spoke | about 0.7 to 0.9 GiB: a kind control plane, one collector, the agent and two busybox workloads |
+| Container VM | **8 GiB** of memory and 4 CPUs or more |
 | Disk | about 6 GiB: three node containers, and the collector and busybox images are pulled in each cluster. |
 | `up.sh` | about 8 to 12 minutes with a warm image cache; 15 to 20 minutes on a first run (Go build, node image and image pulls). Keycloak and the image pulls are the slowest parts. |
 | `verify.sh` | about 1 to 2 minutes. Most of the time is the wait for the access of the suspended spoke to return. |
@@ -46,7 +49,7 @@ measured values of the single-cluster quickstart and from the size of a kind nod
 Options (environment variables): `CLUSTER_PREFIX` (default `querdian`, gives the cluster names
 `querdian-hub`, `querdian-spoke-a`, `querdian-spoke-b`), `MC_WORK_DIR` (default
 `~/.cache/querdian-quickstart-multicluster`), `KEYCLOAK_PORT`, `IMAGE_TAG`, `SKIP_BUILD=1`,
-`CLEANUP_ON_FAILURE=1`; `down.sh` honours `KEEP_IMAGE=1`. `up.sh` sets the current kubectl context to
+`CLEANUP_ON_FAILURE=1`; `down.sh` uses `KEEP_IMAGE=1`. `up.sh` sets the current kubectl context to
 the hub.
 
 ## Topology
@@ -131,8 +134,10 @@ The demo uses an OpenTelemetry Collector for this job
     `k8s.cluster.name` as the label `k8s_cluster_name`, Tempo keeps it as `resource.k8s.cluster.name`);
   * the attribute `cluster` of each data point, log record and span gets the name of the spoke (the
     Prometheus label `cluster`);
-  * the attribute `k8s.cluster.name` of data points, log records and spans is deleted, so no second
-    label with a value of the spoke exists.
+  * the attribute `k8s.cluster.name` of data points, log records and spans is deleted;
+  * the metrics pipelines also delete the resource attribute `k8s.cluster.name` after the upsert.
+    Prometheus copies the resource attributes to the series `target_info`, which then has only the label
+    `cluster`. Thus no second label with a value of the spoke exists.
 * The gateway writes the metrics to the OTLP receiver of Prometheus, and the logs and traces to the OTLP
   endpoints of Loki and Tempo, with the tenant `demo`.
 
@@ -154,6 +159,10 @@ Limits of this design:
 * The backends have no write authentication. A pod on the hub can write data with the cluster label of
   a spoke and bypass the gateway ([PLAN 18.8](../PLAN.md#188-label-integrity)). A real hub restricts the
   write paths, for example with NetworkPolicies.
+* The policy dashboard has no authentication (as in the single-cluster quickstart). The kind port
+  mapping binds it to `127.0.0.1` on the laptop, but its NodePort 30081 on the hub node is also open to
+  each container on the Docker network `kind`, thus also to the pods of the spokes. The dashboard shows
+  policies, not telemetry.
 
 ## The ordered setup
 
@@ -166,8 +175,10 @@ Limits of this design:
 2. **Step 2.** Before Querdian and before a spoke exists, `up.sh` makes sure that hub telemetry carries
    `cluster="hub"`. Prometheus writes the target label `cluster="hub"` at scrape time, and the hub
    collector writes `k8s.cluster.name="hub"` with `upsert`. The direct queries of step 2 must find no
-   data without the label: the PromQL and LogQL queries return nothing, and the TraceQL search finds the
-   same number of traces with and without the cluster matcher.
+   data without the label: the PromQL and LogQL queries return nothing. For traces, the guide compares
+   two TraceQL metrics counts, but the demo Tempo has no metrics generator. Thus `up.sh` searches for
+   spans with `resource.k8s.cluster.name = nil` and with a different value, and both searches must find
+   nothing.
 3. **Step 4.** The chart installs the receiver with the hub. `up.sh` registers each spoke as a
    `SpokeCluster` with `suspended: true`, then installs the agent in the spoke. The receiver rejects each
    sync of a suspended spoke, so `LastSync` stays empty, and `up.sh` checks this.
@@ -299,6 +310,12 @@ checks them without Docker:
 * The NetworkPolicy option of the single-cluster quickstart is not available.
 
 ## Troubleshooting
+
+* On Linux, three kind clusters can reach the inotify limits of the host, and then a collector or a
+  kubelet fails with "too many open files". Increase `fs.inotify.max_user_instances` and
+  `fs.inotify.max_user_watches` as the kind
+  [known issues](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files)
+  describe.
 
 * `up.sh` keeps the clusters if it fails (`CLEANUP_ON_FAILURE=1` deletes them) and prints the pods that
   are not running in each cluster.

@@ -31,6 +31,7 @@ TENANT=demo
 
 MC_WORK_DIR="${MC_WORK_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/querdian-quickstart-multicluster}"
 CERT_DIR="$MC_WORK_DIR/certs"
+MC_WORK_MARKER=.querdian-quickstart-multicluster
 
 spoke_cluster() { printf '%s-%s' "$CLUSTER_PREFIX" "$1"; }      # kind cluster name of a spoke
 spoke_ctx() { printf 'kind-%s-%s' "$CLUSTER_PREFIX" "$1"; }     # kube context of a spoke
