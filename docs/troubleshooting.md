@@ -272,7 +272,7 @@ before any HTTP status; the agent logs it as a connection error.
 |---|---|---|---|
 | 200 | `result: ok` | The stored state equals the agent's state; `lastSyncTime` is renewed. The body carries the `Ready` conditions. | waits for the next heartbeat |
 | 200 | `result: fullStateRequired` | The digest of the heartbeat differs from the stored state. Nothing is renewed. | sends the full state at once |
-| 400 | `invalid request: ...`, `invalid policy: ...`, `invalid state: ...`, `the digest is not valid`, `the digest does not agree with the policies`, `a heartbeat must not carry policies`, `cannot read the body` | The body does not follow the protocol: an unknown field, a kind that does not agree with the spec, an `AccessPolicy` without a namespace, a `ClusterAccessPolicy` with one, a duplicate policy. | retries at the next heartbeat (at most one minute) |
+| 400 | `invalid request: ...`, `invalid policy: ...`, `invalid state: ...`, `the digest is not valid`, `the digest does not agree with the policies`, `a heartbeat must not carry policies`, `cannot read the body` | The body does not follow the protocol: an unknown field, too many JSON values (256 for each policy of `--max-policies`), a kind that does not agree with the spec, an `AccessPolicy` without a namespace, a `ClusterAccessPolicy` with one, a duplicate policy. | retries at the next heartbeat (at most one minute) |
 | 400 | `the API server rejected a policy` | The API server rejected a `SpokePolicy` (CRD validation). | retries at the next heartbeat |
 | 403 | `client certificate not accepted` | The cert has no URI SAN or several URI SANs. | retries at the next heartbeat |
 | 403 | `unknown identity`, `the identity is on more than one SpokeCluster`, `the identity does not agree with the SpokeCluster name`, `the SpokeCluster name is not a valid label value` | No `SpokeCluster` has the URI SAN as `spec.identity`, two have it, or the last path segment is not the name. | retries at the next heartbeat |
@@ -283,6 +283,7 @@ before any HTTP status; the agent logs it as a connection error.
 | 413 | `the body is too large`, `too many policies` | Above `--max-body-bytes` or `--max-policies`. Raise the limit or reduce the policies of the spoke. | retries at the next heartbeat |
 | 415 | `unknown content type` | A content type other than `application/json`, or a `Content-Encoding` other than `identity`. | retries at the next heartbeat |
 | 429 | `too many changed syncs` | More than one changed sync of a cluster in 10 seconds (`Retry-After: 10`). | retries after `Retry-After` |
+| 429 | `too many requests` | More than six requests of one identity in a burst, then more than one each 5 seconds (`Retry-After: 10`). An agent sends at most a heartbeat and a full sync each heartbeat interval (at least 10 seconds); look for two agents with the same cert or a retry loop. | retries after `Retry-After` |
 | 500 | `internal error` | An API server error or an inconsistent stored state; the cause is in the receiver log. | retries at the next heartbeat |
 | 503 | `too many requests in progress` | More than `--max-in-flight` requests at once (`Retry-After: 1`). | retries at the next heartbeat |
 

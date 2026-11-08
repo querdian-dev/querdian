@@ -168,7 +168,8 @@ tokenised and structurally validated, not interpreted. Anything it does not reco
   to 4 MiB and duplicates are removed with a memory of the last 10 000 entries; an invalid frame
   closes the tail. The tail runs under the policy and token it started with, with one exception: in a
   multi-cluster setup it closes within 10 seconds when a spoke whose rules gave terms at the start
-  expires or is suspended (close code 1008, `policy source expired`).
+  expires, is suspended, or gets a new `SpokeCluster` spec or UID (close code 1008, `policy source
+  expired`).
 * `patterns` returns 404 upstream unless the pattern ingester is enabled; the non-empty response
   shape is unverified against a live Loki.
 * The `X-Loki-Response-Encoding-Flags: categorize-labels` encoding is preserved by the stream merge;
@@ -405,7 +406,8 @@ These apply only with the `multicluster` block ([multicluster.md](multicluster.m
   session, no token introspection and no revocation list, so a stolen token works until it expires.
 * An open Loki tail keeps working after the token expires or the policy changes, until either side
   closes it. The only exception is the multi-cluster time limit: a tail closes within 10 seconds after
-  a spoke whose rules gave its terms expires or is suspended. A change of a policy does not close it,
-  also not of a spoke policy.
+  a spoke whose rules gave its terms expires, is suspended, or gets a new `SpokeCluster` spec or UID
+  (for example a smaller tenant allow-list). A change of a policy does not close it, also not of a
+  spoke policy.
 * Group membership comes only from the token. A change in the identity provider takes effect when
   the user obtains a new token.

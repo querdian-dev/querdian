@@ -22,12 +22,15 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   setups and the procedures for a stolen agent cert and for the removal of a spoke.
 * Static configuration: the `multicluster` block (`hubCluster`, `maxStaleness`, default 48h) and
   `clusterLabel` on each backend. Querdian refuses to start with an empty `hubCluster`, a zero or
-  negative `maxStaleness`, a missing or invalid `clusterLabel`, or a `clusterLabel` without the block.
+  negative `maxStaleness`, a missing or invalid `clusterLabel`, a Tempo `clusterLabel` that is not a
+  `resource.` attribute, or a `clusterLabel` without the block.
 * New subcommands of the same binary: `querdian receiver` runs on the hub, terminates mTLS with its
   own client CA, takes the cluster from the URI SAN of the agent cert only, and stores the spoke
   policies; `querdian agent` runs in each spoke, reads its policies directly from the spoke API
   server, sends a digest at each heartbeat (default one minute) and the full state when it differs,
-  and writes the `Ready` conditions back to the spoke objects. Both use leader election.
+  and writes the `Ready` conditions back to the spoke objects. Both use leader election. The receiver
+  limits each agent identity to a burst of six requests, then one request each 5 seconds, and limits
+  the number of JSON values in a body.
 * New cluster-scoped kinds: `SpokeCluster` (short name `spoke`; a registered spoke with its agent
   identity, tenant allow-list, optional `defaultTenant`, `maxStaleness` and `suspended`) and
   `SpokePolicy` (short name `sp`; the hub copy of one spoke policy, written by the receiver only).
@@ -38,7 +41,7 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * Time limit: the policies of a spoke stop when it has not synced for `maxStaleness`, or when it is
   suspended, and return at the next valid sync. Expired rules keep their denied and redacted labels.
   New decision reason `policy_source_expired` (403). An open Loki tail closes within 10 seconds when a
-  spoke in its policy expires or is suspended.
+  spoke in its policy expires, is suspended, or gets a new `SpokeCluster` spec or UID.
 * New status reasons: `InvalidClusterScope`, `TenantNotAllowed`, `MulticlusterDisabled`,
   `SpokeClusterNotFound`, `SpokeClusterInvalid` and `InvalidSpokePolicy`.
 * New metrics: `querdian_cluster_policy_age_seconds{cluster}` and

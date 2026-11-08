@@ -150,7 +150,7 @@ func TestPoliciesShowOriginAndExpiry(t *testing.T) {
 	if ps = policies(); !ps[1].Expired || !ps[1].Rules[0].Expired {
 		t.Fatalf("snapshot without the current spoke generation: %+v", ps[1])
 	}
-	f.dl.SetCompiled(map[string]int64{"cluster-a": f.sc.Generation})
+	f.dl.SetCompiled(map[string]policy.SpokeVersion{"cluster-a": {UID: f.sc.UID, Generation: f.sc.Generation}})
 	if ps = policies(); ps[1].Expired {
 		t.Fatalf("snapshot with the current spoke generation: %+v", ps[1])
 	}

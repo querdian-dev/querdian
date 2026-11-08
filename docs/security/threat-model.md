@@ -341,7 +341,8 @@ the backends' own per-tenant limits.
   Querdian.
 * A WebSocket tail authenticates only at the handshake; it continues after token expiry or policy
   changes until it closes. The one exception is the multi-cluster time limit (section 10): a tail
-  closes within 10 seconds when a spoke whose rules gave its terms expires or is suspended.
+  closes within 10 seconds when a spoke whose rules gave its terms expires, is suspended, or gets a
+  new `SpokeCluster` spec or UID.
 * The issuer discovery runs in the background; until it succeeds all requests fail with `503`.
 
 ## 10. Snapshot staleness
@@ -375,10 +376,11 @@ and the receiver, so its revocation takes longer:
   `maxStaleness` (default 48 hours). The check runs on each request against a deadline table outside
   the snapshot, because expiry makes no Kubernetes event. A spoke is also expired when it is
   suspended, being deleted, has no valid sync of its current `metadata.generation`, is not yet in the
-  snapshot with its current generation (so a change of `SpokeCluster.spec`, such as a smaller tenant
-  allow-list, never applies late), or has a `lastSyncTime` more than five minutes in the future. An expired rule keeps its `labels.deny` and
+  snapshot with its current version (UID and generation, so a change of `SpokeCluster.spec`, such as
+  a smaller tenant allow-list, never applies late, also not for a deleted and re-created object), or has a `lastSyncTime` more than five minutes in the future. An expired rule keeps its `labels.deny` and
   `labels.redact`, so expiry only narrows; a user left with no terms gets `403 policy_source_expired`.
-  An open Loki tail closes within 10 seconds after a spoke in its terms expires or is suspended. A
+  An open Loki tail closes within 10 seconds after a spoke in its terms expires, is suspended, or
+  gets a new `SpokeCluster` version, so a smaller tenant allow-list also ends an open tail. A
   replica with the `multicluster` block is ready only after it has read all `SpokeCluster` objects.
 * The time limit does **not** protect against a stolen agent cert, which can renew `lastSyncTime`
   (section 12). Hub policies never expire.
@@ -428,15 +430,20 @@ write path, and it is reachable from the spokes.
   the URI SAN of the client cert (the protocol has no cluster field), rejects a cert with no or
   several URI SANs, and requires an exact match with `spec.identity` of exactly one `SpokeCluster`
   whose name is the last path segment of the identity. It has one path and one method, decodes
-  strictly (unknown or case-variant fields, duplicate keys and trailing data are rejected), checks
+  strictly (unknown or case-variant fields, duplicate keys and trailing data are rejected) in one
+  pass over the tokens with a limit on the number of JSON values (256 for each policy of
+  `--max-policies`), so the memory of one request has a fixed upper limit, checks
   every policy against the CRD rules in Go, and rejects the whole sync on any doubt: a body above
   `--max-body-bytes`, more than `--max-policies` policies, a digest that does not match, more than one
   changed sync of a cluster in 10 seconds, a suspended or deleted `SpokeCluster`. It reads the
   `SpokeCluster` directly from the API server at the start of each sync and before each write, and
   writes `status` with a `resourceVersion` precondition, so a sync that overlaps a spec change
   validates nothing. It never changes or deletes an object of a different cluster; object names are
-  a hash of cluster, kind, namespace and name. Requests in progress are limited
-  (`--max-in-flight`), and one identity and one cluster can each have only one sync at a time. Error
+  a hash of cluster, kind, namespace and name. Each identity can send a burst of six requests and then
+  one request each 5 seconds (`429`); this limit applies before the body is read and before any read
+  of the API server, also to heartbeats and to identities that are not registered. Requests in
+  progress are limited (`--max-in-flight`), and one identity and one cluster can each have only one
+  sync at a time. Error
   messages are generic and never contain data of other spokes.
 * *RBAC:* the receiver needs write access only to `spokepolicies` and `spokeclusters/status`. The
   proxy needs read access and `spokepolicies/status` only. Only hub admins write `SpokeCluster.spec`.
@@ -498,7 +505,7 @@ backends ([multicluster.md](../multicluster.md#rollback)).
    log lines or cardinality (section 5).
 4. Policies that cover only part of a trace rely on the root-intrinsic restriction (section 7).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes, but close
-   when a spoke in their terms expires or is suspended (section 9).
+   when a spoke in their terms expires, is suspended or gets a new spec (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
 7. No built-in rate limiting; memory use of merged responses scales with concurrency (section 8).
 8. Multi-cluster: isolation between spokes relies on the ingest gateway overwriting the cluster label

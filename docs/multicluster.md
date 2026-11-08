@@ -315,7 +315,8 @@ Querdian refuses to start if:
   label);
 * `multicluster.maxStaleness` is zero or negative (if it is absent, the default of 48 hours applies);
 * a backend has no `clusterLabel`, the name is not valid for the backend type (Tempo: `resource.<name>`
-  or `span.<name>`), it starts with `__`, or it is equal to `namespaceLabel`;
+  only, because an application can set its own `span.` attributes), it starts with `__`, or it is equal
+  to `namespaceLabel`;
 * a backend has `clusterLabel` but the `multicluster` block is absent. This stops an accidental
   rollback (see [rollback](#rollback)).
 
@@ -398,9 +399,14 @@ the stored `SpokePolicy` objects directly from the API server, never from a cach
 | `--leader-elect` | `true` | Lease `querdian-receiver-leader-election`. Only the leader serves syncs. With `false`, run only one replica: the lock for one sync for each cluster and the `429` limit work only within one process. |
 | `--leader-election-namespace` | pod namespace | Namespace of the lease. |
 | `--max-body-bytes` | `8388608` (8 MiB) | Maximum size of a sync body (`413`). |
-| `--max-policies` | `2000` | Maximum number of policies in one full sync (`413`). |
+| `--max-policies` | `2000` | Maximum number of policies in one full sync (`413`). It also sets the limit of JSON values in a body: 256 for each policy (`400`). |
 | `--max-in-flight` | `16` | Maximum number of requests in progress (`503`). |
 | `--log-level`, `--log-format` | `info`, `json` | As for the proxy. |
+
+Each agent identity can send a burst of six requests and then one request each 5 seconds (`429`).
+The receiver applies this limit before it reads the body, also to identities that are not registered.
+An agent sends at most a heartbeat and a full sync each heartbeat interval (at least 10 seconds), so
+the limit has no effect on a normal agent.
 
 * **Readiness.** `/readyz` returns 200 only on the leader. A Service in front of the receiver
   therefore sends traffic only to the leader. One replica is the default. A second replica gives a
@@ -526,13 +532,15 @@ tenant for all clusters, or no tenant header, avoids these limits.
 * A spoke expires if any of these is true: no `SpokeCluster` exists, `suspended` is true, the
   `SpokeCluster` is being deleted, `lastSyncTime` is absent or more than five minutes in the future,
   `status.observedGeneration` differs from `metadata.generation`, the current snapshot was not yet
-  compiled from the current generation of the `SpokeCluster`, or `maxStaleness` has passed since
-  `lastSyncTime`.
+  compiled from the current version of the `SpokeCluster` (its UID and generation, so a deleted and
+  re-created object also counts as new), or `maxStaleness` has passed since `lastSyncTime`.
 * An expired rule gives no terms, but its `labels.deny` and `labels.redact` stay active, so expiry
   only narrows access. A user whose grants all come from expired spokes gets
   `403 policy_source_expired`; the message does not name the cluster.
 * An open Loki tail that uses terms of a spoke closes within 10 seconds after that spoke expires or is
-  suspended (WebSocket close code 1008, reason `policy source expired`).
+  suspended, or after its `SpokeCluster` gets a new spec or is created again, for example with a
+  smaller tenant allow-list (WebSocket close code 1008, reason `policy source expired`). A heartbeat
+  does not close it.
 
 ### Suspend a spoke
 
