@@ -22,6 +22,11 @@ func (p provider) Snapshot() *policy.Snapshot { return p.s }
 
 func newHandler(t *testing.T, ready bool) http.Handler {
 	t.Helper()
+	return Handler(newDeps(t, ready))
+}
+
+func newDeps(t *testing.T, ready bool) Deps {
+	t.Helper()
 	cfg, err := config.Load("../config/testdata/example.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +45,13 @@ func newHandler(t *testing.T, ready bool) http.Handler {
 		}}
 		snap = policy.NewSnapshot(policy.Compile(policy.Input{Config: cfg, ClusterPolicies: cps}), cfg, 5)
 	}
-	return Handler(Deps{Config: cfg, Snapshots: provider{snap},
-		Enforcers: map[config.BackendType]enforce.Enforcer{config.BackendPrometheus: enforcepromql.New()}})
+	return Deps{Config: cfg, Snapshots: provider{snap},
+		Enforcers: map[config.BackendType]enforce.Enforcer{config.BackendPrometheus: enforcepromql.New()}}
 }
 
 func do(h http.Handler, method, path, ct, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Host = "localhost:8081"
 	if ct != "" {
 		r.Header.Set("Content-Type", ct)
 	}

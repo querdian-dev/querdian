@@ -237,6 +237,11 @@ func TestFlags(t *testing.T) {
 		"bad level":        func(f *Flags) { f.LogLevel = "loud" },
 		"ui same as proxy": func(f *Flags) { f.UIListen = f.Listen },
 		"bad ui auth":      func(f *Flags) { f.UIListen = ":8081"; f.UIAuth = "basic" },
+		"ui host port":     func(f *Flags) { f.UIAllowedHosts = []string{"querdian.example.com:443"} },
+		"ui host empty":    func(f *Flags) { f.UIAllowedHosts = []string{""} },
+		"ui host wildcard": func(f *Flags) { f.UIAllowedHosts = []string{"*.example.com"} },
+		"ui host url":      func(f *Flags) { f.UIAllowedHosts = []string{"https://querdian.example.com"} },
+		"ui host list":     func(f *Flags) { f.UIAllowedHosts = []string{"a.example.com,b.example.com"} },
 		"bad format":       func(f *Flags) { f.LogFormat = "xml" },
 		"empty config":     func(f *Flags) { f.ConfigFile = "" },
 	} {
@@ -253,5 +258,51 @@ func TestFlags(t *testing.T) {
 	}
 	if !f.RecordUser || f.LeaderElect || f.LogFormat != "text" {
 		t.Fatalf("parse wrong: %+v", f)
+	}
+	if len(f.UIAllowedHosts) != 0 {
+		t.Fatalf("default allowed hosts: %v", f.UIAllowedHosts)
+	}
+}
+
+func TestUIAllowedHostFlag(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	f := RegisterFlags(fs)
+	err := fs.Parse([]string{"--ui-listen=:8081", "--ui-allowed-host=Querdian.Example.com",
+		"--ui-allowed-host", "10.0.0.5", "--ui-allowed-host=[fd00::1]", "--ui-allowed-host=fd00::2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.UIAllowedHosts, " "); got != "Querdian.Example.com 10.0.0.5 [fd00::1] fd00::2" {
+		t.Fatalf("parse: %q", got)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"Querdian.Example.COM":           "querdian.example.com",
+		"localhost":                      "localhost",
+		"10.0.0.5":                       "10.0.0.5",
+		"[FD00::1]":                      "fd00::1",
+		"fd00::1":                        "fd00::1",
+		"":                               "",
+		"example.com.":                   "",
+		"-bad.example.com":               "",
+		"bad-.example.com":               "",
+		"a..b":                           "",
+		"host:8081":                      "",
+		"[10.0.0.5]":                     "",
+		"[host]":                         "",
+		"*.example.com":                  "",
+		"exa mple.com":                   "",
+		"exa_mple.com":                   "",
+		"fe80::1%eth0":                   "",
+		strings.Repeat("a", 64) + ".com": "",
+	} {
+		if got := NormalizeHost(in); got != want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

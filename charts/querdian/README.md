@@ -71,6 +71,9 @@ The defaults for `config` are examples. **You must set `config.auth` and `config
 | `receiver.*` | disabled | Receiver of a hub. |
 | `agent.*` | see values.yaml | Agent of a spoke (only with `mode: spoke`). |
 | `prometheusRule.*` | disabled | Alerts for spoke policies. |
+| `ui.enabled` / `ui.port` / `ui.auth` / `ui.adminGroup` | `false` / `8081` / `oidc` / "" | Read-only policy dashboard (`--ui-listen`, `--ui-auth`, `--ui-admin-group`). Use `auth: none` only through a port-forward. See [docs/dashboard.md](../../docs/dashboard.md). |
+| `ui.allowedHosts` | `[]` | More host names that the dashboard accepts in the `Host` header, with any port (`--ui-allowed-host`). `localhost`, `127.0.0.1` and `[::1]` are always accepted, so a port-forward needs nothing. The chart has no Ingress for the dashboard: if you add one, put its host here. Other hosts get 403. |
+| `ui.service.*` | disabled, `ClusterIP`, `8081` | Service for the dashboard port. `NodePort` only for local clusters. |
 | `extraArgs`, `extraEnv`, `extraVolumes`, `extraVolumeMounts` | empty | Escape hatches. |
 | `networkPolicy.*` | disabled | See below. |
 

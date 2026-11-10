@@ -136,6 +136,7 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 | `--ui-listen` | empty (off) | Read-only policy dashboard, see [dashboard.md](dashboard.md). Must differ from the other listeners. |
 | `--ui-auth` | `oidc` | `oidc` (bearer token required) or `none`. |
 | `--ui-admin-group` | empty | With `oidc`: group a token must carry. Empty: any valid token. |
+| `--ui-allowed-host` | none | Repeatable. Host name that the dashboard accepts in the `Host` header, with any port. `localhost`, `127.0.0.1`, `[::1]` and the host of `--ui-listen` are always accepted. See [dashboard.md](dashboard.md#allowed-hosts). |
 | `--leader-elect` | `true` | Leader election for the status writer. |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `--log-format` | `json` | `json` or `text`. |

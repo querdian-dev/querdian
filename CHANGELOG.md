@@ -77,6 +77,12 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   not parse, that has a `define` action, or that has a control character other than tab and newline
   is rejected. Literal text in a template is no longer compared with denied names. See
   [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
+* **The policy dashboard checks the `Host` header** (GHSA-gvjr-jcq3-jc25, versions 0.1.2 and earlier).
+  It answers only for `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and the names of the
+  new repeatable flag `--ui-allowed-host` (Helm: `ui.allowedHosts`), with any port. Other hosts get 403,
+  for the API and the static files, in all authentication modes. A request with a method other than `GET`
+  must also not come from a different origin. A port-forward and the quickstarts need no change. Behind
+  an Ingress, add its host name. See [docs/dashboard.md](docs/dashboard.md#allowed-hosts).
 
 ### Documentation
 

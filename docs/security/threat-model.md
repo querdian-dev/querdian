@@ -408,6 +408,13 @@ and the receiver, so its revocation takes longer:
   multi-cluster hub it shows the policies of **all** spokes, so a dashboard user learns the subjects,
   matchers and tenants of every cluster. Give dashboard access only to people who may see the policies
   of all clusters, for example with `--ui-admin-group`.
+* **DNS rebinding and cross-origin requests against the dashboard.** Other web pages in the browser of a
+  dashboard user must not read the dashboard or use the test bench. This is most important with
+  `--ui-auth=none`, which has no authentication. The dashboard accepts only an allowed host in the `Host`
+  header (`localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and each `--ui-allowed-host`), for
+  the API and the static files, in all authentication modes. A request with a method other than `GET`
+  must also come from the origin of the dashboard. Use `none` only on a loopback address or through a
+  port-forward.
 * **Management port, multi-cluster.** `querdian_cluster_policy_age_seconds` and
   `querdian_cluster_policy_expired` expose the names of all spokes and their sync state.
 * **Privacy.** Usernames and query text are not written to logs or traces by default; the two

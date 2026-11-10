@@ -840,6 +840,13 @@
         "adminGroup": {
           "type": "string"
         },
+        "allowedHosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\\[?[0-9A-Fa-f.]*:[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*\\]?)$"
+          }
+        },
         "service": {
           "type": "object",
           "additionalProperties": false,

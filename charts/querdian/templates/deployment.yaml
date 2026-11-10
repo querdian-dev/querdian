@@ -59,6 +59,9 @@ spec:
             {{- with .Values.ui.adminGroup }}
             - {{ printf "--ui-admin-group=%s" . | quote }}
             {{- end }}
+            {{- range .Values.ui.allowedHosts }}
+            - {{ printf "--ui-allowed-host=%s" . | quote }}
+            {{- end }}
             {{- end }}
             {{- range .Values.extraArgs }}
             - {{ . | quote }}

@@ -135,13 +135,17 @@ func run(args []string) error {
 	}
 	var uiHandler http.Handler
 	if flags.UIListen != "" {
-		uiHandler = ui.Handler(ui.Deps{Config: cfg, Snapshots: ctl, Deadlines: deadlines, Enforcers: enforcers, Version: version, Logger: logger})
+		deps := ui.Deps{Config: cfg, Snapshots: ctl, Deadlines: deadlines, Enforcers: enforcers, Version: version, Logger: logger,
+			Listen: flags.UIListen, AllowedHosts: flags.UIAllowedHosts}
 		if flags.UIAuth == "oidc" {
-			uiHandler = authn.Middleware(server.RequireGroup(flags.UIAdminGroup, uiHandler))
+			deps.Auth = func(next http.Handler) http.Handler {
+				return authn.Middleware(server.RequireGroup(flags.UIAdminGroup, next))
+			}
 		} else {
-			logger.Warn("dashboard authentication is disabled (--ui-auth=none); expose --ui-listen only to a trusted network",
+			logger.Warn("dashboard authentication is disabled (--ui-auth=none); expose --ui-listen only to a loopback address or a port-forward",
 				"ui", flags.UIListen)
 		}
+		uiHandler = ui.Handler(deps)
 	}
 	srv := server.New(server.Deps{
 		UIListen:     flags.UIListen,

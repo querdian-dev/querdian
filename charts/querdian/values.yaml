@@ -47,6 +47,10 @@ ui:
   # only for a trusted network, for example kubectl port-forward.
   auth: oidc
   adminGroup: ""
+  # More host names that the dashboard accepts in the Host header, with any port. localhost, 127.0.0.1 and
+  # [::1] are always accepted, so kubectl port-forward needs nothing here. Add the host name of an Ingress
+  # or a proxy in front of the dashboard. Other hosts get 403.
+  allowedHosts: []
   service:
     # Create a Service for the dashboard port.
     enabled: false

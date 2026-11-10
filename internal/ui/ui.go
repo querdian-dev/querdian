@@ -33,11 +33,21 @@ type Deps struct {
 	Enforcers map[config.BackendType]enforce.Enforcer
 	Version   string
 	Logger    *slog.Logger
+	// Listen is the dashboard listener address. When its host is a specific host, the dashboard accepts that
+	// host in the Host header.
+	Listen string
+	// AllowedHosts are more host names that the dashboard accepts in the Host header, with any port. The
+	// loopback names localhost, 127.0.0.1 and [::1] are always allowed.
+	AllowedHosts []string
+	// Auth wraps the dashboard inside the Host check, for example with the OIDC middleware. With nil, the
+	// dashboard has no authentication.
+	Auth func(http.Handler) http.Handler
 }
 
 type handler struct{ d Deps }
 
-// Handler returns the dashboard handler: GET /api/*, POST /api/test and the static assets.
+// Handler returns the dashboard handler: GET /api/*, POST /api/test and the static assets. Each request must
+// name an allowed host in the Host header, before authentication and in all authentication modes.
 func Handler(d Deps) http.Handler {
 	if d.Logger == nil {
 		d.Logger = slog.New(slog.DiscardHandler)
@@ -55,7 +65,11 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/backends", h.backends)
 	mux.HandleFunc("POST /api/test", h.test)
 	mux.Handle("GET /", http.FileServerFS(sub))
-	return secure(mux)
+	var next http.Handler = mux
+	if d.Auth != nil {
+		next = d.Auth(next)
+	}
+	return secure(guard(allowedHosts(d.Listen, d.AllowedHosts), next))
 }
 
 // secure sets the response headers on every answer. The CSP forbids inline script and any third-party origin.
