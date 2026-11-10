@@ -141,7 +141,8 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `--log-format` | `json` | `json` or `text`. |
 | `--tracing.record-user` | `false` | Add `enduser.id` to spans and `user` to request log lines. |
-| `--tracing.record-queries` | `false` | Add the original and rewritten query to the server span. |
+| `--tracing.record-queries` | `false` | Add the original and rewritten query to the server span, and the query string to `url.full` on the `upstream` spans. |
+| `--tracing.trust-inbound-context` | `false` | Use the trace context of the client as the parent of the server span. When `false`, the server span starts a new trace and links the trace context of the client. |
 | `--version` | | Print the version and exit. |
 
 Kubernetes access uses the usual controller-runtime discovery (in-cluster service account, or
@@ -260,6 +261,10 @@ Configured exclusively through the standard `OTEL_*` environment variables
 
 * If neither an OTLP endpoint nor `OTEL_TRACES_EXPORTER` is set, spans are discarded.
 * If `OTEL_TRACES_SAMPLER` is unset the sampler is `parentbased_traceidratio` with ratio 1.0.
+* The server span does not use the trace context of the client as its parent. It starts a new trace
+  and has a span link to the trace context of the client. Thus a client cannot select the trace ID
+  and cannot force sampling. Set `--tracing.trust-inbound-context` only when all clients that
+  can reach the proxy are trusted; then the trace context of the client is the parent.
 * Propagation is fixed in code: inbound W3C `tracecontext` and `baggage`, outbound `tracecontext`
   only. `OTEL_PROPAGATORS` is ignored on purpose, so client baggage never reaches a backend.
 * Every response carries `X-Trace-Id` and every error body a `traceId`; use it to find the trace.
@@ -272,18 +277,22 @@ Span tree of one proxied request:
 | `authn.verify` | status error when authentication failed |
 | `policy.resolve` | `snapshot.generation`, `policies.matched`, `dnf.terms`, `dnf.unrestricted`, `dnf.disjoint`, `tenants.count` |
 | `enforce.rewrite` | `query.language`, `strategy` (`inject`, `or_lift`, `fanout`, `match_expand`, `passthrough`), `query.bytes_in`, `query.bytes_out` |
-| `upstream` (client span, one per upstream request) | standard HTTP client attributes |
+| `upstream` (client span, one per upstream request) | standard HTTP client attributes; `url.full` has scheme, host and path only, without the query string (see the privacy flags) |
 | `snapshot.rebuild` (root span, controller) | `querdian.trigger` (`startup`, `event`), `snapshot.generation`, `policies.total`, `policies.invalid`, `compile.duration_ms` |
 
 Privacy flags, both **off by default**:
 
 * `--tracing.record-user`: `enduser.id` on the server span and `user` in the request log line.
 * `--tracing.record-queries`: `querdian.query.original` and `querdian.query.rewritten` on the
-  server span. Queries can contain sensitive values; enable only where the trace backend has
+  server span, and the full upstream URL with the query string in `url.full` on each `upstream`
+  span. For a `GET` request, this query string holds the rewritten query with the matchers of the
+  policy. Queries can contain sensitive values; enable only where the trace backend has
   equivalent access controls. Queries are never written to the log.
 
-Without these flags no username and no query text is recorded; `querdian.policies` records the
-names of the matched policies.
+Without these flags no username and no query text is recorded: the server span records only the
+path (`url.path`), and each `upstream` span records `url.full` without the query string.
+`querdian.policies` records the names of the matched policies. Paths can contain values from the
+client, for example a trace ID or a tag name.
 
 ### Logging
 

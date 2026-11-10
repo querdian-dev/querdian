@@ -417,3 +417,13 @@ These apply only with the `multicluster` block ([multicluster.md](multicluster.m
   spoke policy.
 * Group membership comes only from the token. A change in the identity provider takes effect when
   the user obtains a new token.
+
+## Tracing
+
+* Without `--tracing.record-queries`, no span records query text. The `upstream` client spans record
+  `url.full` with scheme, host and path only. With the flag, `url.full` also has the query string,
+  and for a `GET` request that is the rewritten query with the matchers of the policy.
+* Paths are always recorded. A path can hold a value from the client, for example a trace ID.
+* The server span starts a new trace and links the trace context of the client, unless
+  `--tracing.trust-inbound-context` is set. Thus a trace in the trace backend does not show the spans
+  of the client and of Querdian as one tree; follow the span link.

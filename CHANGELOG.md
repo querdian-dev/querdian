@@ -11,6 +11,16 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+### Security
+
+* **Upstream spans no longer record query text by default.** The `upstream` client spans now record
+  `url.full` with scheme, host and path only. The query string is recorded only with
+  `--tracing.record-queries`.
+* **The trace context of a client is no longer the parent of the server span.** The server span starts
+  a new trace and has a span link to the trace context of the client, so a client cannot select the
+  trace ID or force sampling. The new flag `--tracing.trust-inbound-context` (Helm:
+  `tracing.trustInboundContext`, default `false`) restores the old behaviour for trusted clients.
+
 ### Added
 
 * **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the

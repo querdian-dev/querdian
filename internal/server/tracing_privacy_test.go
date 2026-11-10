@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -93,6 +94,30 @@ func upstreamSpans(rec *tracetest.SpanRecorder) []sdktrace.ReadWriteSpan {
 	return out
 }
 
+// assertSpansClean fails if an attribute, the status or an event of a recorded span contains the matcher
+// value or a query string.
+func assertSpansClean(t *testing.T, rec *tracetest.SpanRecorder) {
+	t.Helper()
+	bad := func(v string) bool { return strings.Contains(v, secretValue) || strings.Contains(v, "?") }
+	for _, s := range rec.Started() {
+		for _, a := range s.Attributes() {
+			if bad(a.Value.String()) {
+				t.Errorf("span %q: attribute %s=%q contains query text", s.Name(), a.Key, a.Value.String())
+			}
+		}
+		if d := s.Status().Description; strings.Contains(d, secretValue) {
+			t.Errorf("span %q: status %q contains query text", s.Name(), d)
+		}
+		for _, e := range s.Events() {
+			for _, a := range e.Attributes {
+				if bad(a.Value.String()) {
+					t.Errorf("span %q: event %s: attribute %s=%q contains query text", s.Name(), e.Name, a.Key, a.Value.String())
+				}
+			}
+		}
+	}
+}
+
 // assertNoQueryText fails if an attribute of a recorded span contains the matcher value or a query string.
 // It also checks the url.full value that the upstream span had when the request left the process.
 func assertNoQueryText(t *testing.T, rec *tracetest.SpanRecorder, probe *probeTransport, wantUpstream int) {
@@ -101,14 +126,7 @@ func assertNoQueryText(t *testing.T, rec *tracetest.SpanRecorder, probe *probeTr
 	if len(ups) != wantUpstream {
 		t.Fatalf("got %d upstream spans, want %d", len(ups), wantUpstream)
 	}
-	for _, s := range rec.Started() {
-		for _, a := range s.Attributes() {
-			v := a.Value.String()
-			if strings.Contains(v, secretValue) || strings.Contains(v, "?") {
-				t.Errorf("span %q: attribute %s=%q contains query text", s.Name(), a.Key, v)
-			}
-		}
-	}
+	assertSpansClean(t, rec)
 	probe.mu.Lock()
 	defer probe.mu.Unlock()
 	if len(probe.urlFull) != wantUpstream {
@@ -346,11 +364,178 @@ func TestHideQueryTransportPair(t *testing.T) {
 			t.Errorf("%s: base saw %q, caller request is now %q", raw, below, req.URL.String())
 		}
 	}
-	// Without the hidden query in the context, restoreQueryTransport sends the request unchanged.
-	req, _ := http.NewRequest(http.MethodGet, "http://up/x?a=b", nil)
-	if _, err := (restoreQueryTransport{next: base}).RoundTrip(req); err != nil || below != "http://up/x?a=b" {
-		t.Fatalf("restore without context: %q %v", below, err)
+}
+
+// Without the hidden query in the context, restoreQueryTransport fails closed: it sends nothing, because a
+// request without its query string can give a larger result.
+func TestRestoreQueryTransportFailsClosed(t *testing.T) {
+	sent := false
+	base := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		sent = true
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})
+	req, _ := http.NewRequest(http.MethodGet, "http://up/api/v1/labels", nil)
+	if resp, err := (restoreQueryTransport{next: base}).RoundTrip(req); !errors.Is(err, errQueryNotHidden) || resp != nil || sent {
+		t.Fatalf("restore without context: resp=%v err=%v sent=%v", resp, err, sent)
 	}
+	// A middle layer that drops the context also fails closed, also for a request with no query string.
+	drop := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return restoreQueryTransport{next: base}.RoundTrip(r.WithContext(context.Background()))
+	})
+	for _, raw := range []string{"http://up/api/v1/labels?match%5B%5D=up", "http://up/api/v1/labels"} {
+		req, _ := http.NewRequest(http.MethodGet, raw, nil)
+		if _, err := (hideQueryTransport{next: drop}).RoundTrip(req); !errors.Is(err, errQueryNotHidden) || sent {
+			t.Fatalf("%s: err=%v sent=%v", raw, err, sent)
+		}
+	}
+}
+
+// restoreQueryTransport gives the otelhttp transport an error with a fixed text. hideQueryTransport gives
+// the caller the original error.
+func TestTransportErrorsBetweenThePair(t *testing.T) {
+	cause := &url.Error{Op: "Get", URL: "http://up/api/v1/query?query=" + secretValue, Err: errors.New("connection refused")}
+	base := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, cause })
+	var between error
+	mid := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := restoreQueryTransport{next: base}.RoundTrip(r)
+		between = err
+		return resp, err
+	})
+	req, _ := http.NewRequest(http.MethodGet, "http://up/api/v1/query?query="+secretValue, nil)
+	_, err := hideQueryTransport{next: mid}.RoundTrip(req)
+	if err != cause { //nolint:errorlint // the caller must get the same error value
+		t.Fatalf("caller got %v", err)
+	}
+	var se *spanSafeError
+	if !errors.As(between, &se) || strings.Contains(between.Error(), secretValue) || strings.Contains(between.Error(), "?") {
+		t.Fatalf("middle layer got %T %q", between, between)
+	}
+	if !errors.Is(between, cause) || se.ErrorType() != "*url.Error" {
+		t.Fatalf("errors.Is = %v, ErrorType = %q", errors.Is(between, cause), se.ErrorType())
+	}
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string { return "i/o timeout" }
+func (timeoutError) Timeout() bool { return true }
+
+// Through the full upstream transport of the server (with otelhttp), a timeout error still reports
+// Timeout() to the caller, and the span status has no query text.
+func TestUpstreamTimeoutError(t *testing.T) {
+	h := privacyHarness(t)
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	s := h.server(func(d *Deps) {
+		d.TracerProvider = tp
+		d.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, &url.Error{Op: "Get", URL: r.URL.String(), Err: timeoutError{}}
+		})
+	})
+	req, _ := http.NewRequest(http.MethodGet, h.metricsUp.URL+"/api/v1/query?query=up%7Bns%3D%22"+secretValue+"%22%7D", nil)
+	_, err := s.proxies["metrics"].Transport.RoundTrip(req)
+	var ue *url.Error
+	if !errors.As(err, &ue) || !ue.Timeout() || !strings.Contains(ue.URL, secretValue) {
+		t.Fatalf("caller got %T %v", err, err)
+	}
+	var te interface{ Timeout() bool }
+	if !errors.As(err, &te) || !te.Timeout() {
+		t.Fatal("Timeout() is lost")
+	}
+	ended := rec.Ended()
+	if len(ended) != 1 || ended[0].Status().Description == "" {
+		t.Fatalf("got %d ended spans", len(ended))
+	}
+	assertSpansClean(t, rec)
+	for _, a := range ended[0].Attributes() {
+		if a.Key == "error.type" && a.Value.AsString() != "*url.Error" {
+			t.Errorf("error.type = %q", a.Value.AsString())
+		}
+	}
+}
+
+// A POST request has the query in the form body. No span records it, and the upstream gets it.
+func TestUpstreamSpansPost(t *testing.T) {
+	h := privacyHarness(t)
+	srv, rec, _ := tracedServer(t, h, observability.Privacy{})
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/prom/api/v1/query", strings.NewReader("query=up"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+h.issuer.token(t, "u", "g"))
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	waitServerSpan(t, rec)
+	if n := len(upstreamSpans(rec)); n != 1 {
+		t.Fatalf("got %d upstream spans", n)
+	}
+	assertSpansClean(t, rec)
+	h.metricsUp.mu.Lock()
+	body := h.metricsUp.body[len(h.metricsUp.body)-1]
+	h.metricsUp.mu.Unlock()
+	if !strings.Contains(body, secretValue) {
+		t.Fatalf("upstream body %q does not contain the policy matcher", body)
+	}
+}
+
+// When the upstream transport fails with an error that contains the URL, the span status and the span
+// attributes do not get the query string.
+func TestUpstreamSpansOnTransportError(t *testing.T) {
+	failing := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Get", URL: r.URL.String(), Err: errors.New("connection refused")}
+	})
+	for name, do := range map[string]func(*testing.T, *harness, *httptest.Server) int{
+		"prometheus GET": func(t *testing.T, h *harness, srv *httptest.Server) int {
+			resp, _ := get(t, srv, "/prom/api/v1/query?query=up", h.issuer.token(t, "u", "g"))
+			return resp.StatusCode
+		},
+		"loki fan-out": func(t *testing.T, h *harness, srv *httptest.Server) int {
+			qs := url.Values{"query": {`{job="j"}`}, "limit": {"10"}}
+			resp, _ := get(t, srv, "/loki/loki/api/v1/query_range?"+qs.Encode(), h.issuer.token(t, "u", "g"))
+			return resp.StatusCode
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := privacyHarness(t)
+			srv, rec, _ := tracedServer(t, h, observability.Privacy{}, func(d *Deps) { d.Transport = failing })
+			if code := do(t, h, srv); code != http.StatusBadGateway {
+				t.Fatalf("status %d, want 502", code)
+			}
+			waitServerSpan(t, rec)
+			ups := upstreamSpans(rec)
+			if len(ups) == 0 {
+				t.Fatal("no upstream span")
+			}
+			for _, s := range ups {
+				if s.Status().Description == "" {
+					t.Errorf("span %q: no error status", s.Name())
+				}
+			}
+			assertSpansClean(t, rec)
+		})
+	}
+}
+
+// When the upstream redirects to a URL with a query string, the span of the second request also has no
+// query string.
+func TestUpstreamSpansOnRedirect(t *testing.T) {
+	h := privacyHarness(t)
+	h.logsUp.setHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("redirected") == "" {
+			http.Redirect(w, r, r.URL.Path+"?"+r.URL.RawQuery+"&redirected=1", http.StatusTemporaryRedirect) //nolint:gosec // test upstream, same host
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[],"stats":{}}}`))
+	})
+	srv, rec, probe := tracedServer(t, h, observability.Privacy{})
+	lokiFanoutGet(t, h, srv)
+	waitServerSpan(t, rec)
+	assertNoQueryText(t, rec, probe, 4) // two terms, each with one redirect
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

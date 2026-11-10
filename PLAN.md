@@ -442,7 +442,8 @@ an error (§18.4).
 | `--log-level` | `info` | slog level |
 | `--log-format` | `json` | `json` or `text` |
 | `--tracing.record-user` | `false` | add `enduser.id` to spans |
-| `--tracing.record-queries` | `false` | add original + rewritten query to spans |
+| `--tracing.record-queries` | `false` | add original + rewritten query to spans, and the query string to `url.full` of upstream spans |
+| `--tracing.trust-inbound-context` | `false` | use the client trace context as parent of the server span (default: new trace with a link) |
 
 Tracing exporter/sampler config uses standard `OTEL_*` environment variables (§11.2).
 
@@ -785,6 +786,9 @@ data source with URL `https://proxy/<pathPrefix>` calls.
   `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`,
   `OTEL_TRACES_SAMPLER_ARG`, `OTEL_TRACES_EXPORTER`, `OTEL_RESOURCE_ATTRIBUTES`).
   Default sampler `parentbased_traceidratio`.
+- The server span is a public endpoint: it starts a new trace and links the inbound trace context,
+  so a client cannot select the trace ID or force sampling. `--tracing.trust-inbound-context`
+  makes the inbound trace context the parent.
 - Propagation: inbound `tracecontext` + `baggage`; outbound **only** `tracecontext`. The propagator
   is fixed in code (`autoprop` / `OTEL_PROPAGATORS` are deliberately not used) because
   outbound-tracecontext-only is a security rule.
@@ -810,7 +814,13 @@ Attributes namespace: `querdian.*`; semconv where applicable. Always on the serv
 `querdian.policies` (names).
 
 Privacy (default off): `enduser.id` (`--tracing.record-user`), `querdian.query.original` /
-`querdian.query.rewritten` (`--tracing.record-queries`).
+`querdian.query.rewritten` (`--tracing.record-queries`). The same flag controls the query string in
+`url.full` of the upstream client spans. Without it, a transport pair around the otelhttp transport
+removes the query string from the URL that otelhttp sees and puts it back below otelhttp, so
+`url.full` has scheme, host and path only (for `GET`, the query string holds the rewritten query).
+If the inner transport does not find the query in the request context, it sends nothing (fail closed).
+A transport error goes through otelhttp with a fixed text (the span status gets no URL); the outer
+transport gives the original error to the caller.
 
 Every response has header `X-Trace-Id`; every error body has `traceId`.
 

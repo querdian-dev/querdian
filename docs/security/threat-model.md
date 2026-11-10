@@ -418,10 +418,32 @@ and the receiver, so its revocation takes longer:
 * **Management port, multi-cluster.** `querdian_cluster_policy_age_seconds` and
   `querdian_cluster_policy_expired` expose the names of all spokes and their sync state.
 * **Privacy.** Usernames and query text are not written to logs or traces by default; the two
-  tracing flags are opt-in. `querdian.policies` records policy names.
+  tracing flags are opt-in. `querdian.policies` records policy names. See section 11.1.
 * **Supply chain.** Dependencies are limited to Apache-2.0 and permissive licences (checked by
   `make licenses`), commits are signed off (DCO), and CI includes CodeQL and OpenSSF Scorecard.
-  There are no signed releases, SBOM or provenance yet because there is no release.
+  Releases have cosign signatures, SBOMs and build-provenance attestations (see
+  [self-assessment.md](self-assessment.md) and [releasing.md](../releasing.md)).
+
+### 11.1 Privacy of the telemetry of Querdian
+
+The traces of Querdian go to a trace backend that can have other readers than the protected data.
+Thus the spans must not disclose the data that the policies protect, and the policies themselves.
+
+* **Query text.** The rewritten query holds the matchers of the policy of the user, and the original
+  query can hold sensitive values. Without `--tracing.record-queries`, no span records query text:
+  not the `querdian.*` attributes, and not the standard HTTP attributes. The server span records
+  only the path. Each `upstream` client span records `url.full` with scheme, host and path only,
+  also for each fan-out request and for the Loki tail handshake. The query string is removed
+  before the client span starts, so the attribute never holds it.
+* **Paths.** Paths are recorded. They can hold values from the client, for example a trace ID or a
+  tag name, but not the matchers of a policy.
+* **Inbound trace context.** By default, the server span does not continue the trace of the client.
+  It starts a new trace and links the trace context of the client. Thus a client cannot select the
+  trace ID, cannot force sampling and cannot put its spans in the same trace as the spans of
+  Querdian. `--tracing.trust-inbound-context` removes this protection. Use it only when all
+  clients that can reach the proxy are trusted. Client baggage is never sent to a backend.
+* **Residual risk.** Span names, `http.route`, decisions, policy names and counts are always
+  recorded. Give access to the trace backend only to people who may know which policies exist.
 
 ## 12. Multi-cluster
 

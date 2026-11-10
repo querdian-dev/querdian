@@ -53,7 +53,9 @@ spec:
             - --log-format={{ .Values.logFormat }}
             - --tracing.record-user={{ .Values.tracing.recordUser }}
             - --tracing.record-queries={{ .Values.tracing.recordQueries }}
-            - --tracing.trust-inbound-context={{ .Values.tracing.trustInboundContext }}
+            {{- if .Values.tracing.trustInboundContext }}
+            - --tracing.trust-inbound-context=true
+            {{- end }}
             {{- if .Values.ui.enabled }}
             - --ui-listen=:{{ .Values.ui.port }}
             - --ui-auth={{ .Values.ui.auth }}

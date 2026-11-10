@@ -252,7 +252,6 @@ spec:
             - --log-format=json
             - --tracing.record-user=false
             - --tracing.record-queries=false
-            - --tracing.trust-inbound-context=false
           env:
             # Downward API values must precede OTEL_RESOURCE_ATTRIBUTES, which references them.
             - name: K8S_POD_NAME
