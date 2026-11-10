@@ -114,6 +114,10 @@ func TestSpokeClusterValidation(t *testing.T) {
 	check(t, k8s.Create(ctx, mk("cluster-d", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-d", MaxStaleness: &metav1.Duration{}})), "maxStaleness must be positive")
 	check(t, k8s.Create(ctx, mk("cluster-e", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-e", MaxStaleness: &metav1.Duration{Duration: -3600e9}})), "maxStaleness must be positive")
 	check(t, k8s.Create(ctx, mk("cluster-f", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-f", Tenants: []string{"t1", "t1"}})), "Duplicate value")
+	// Each tenant is a Kubernetes label value.
+	for _, bad := range []string{"", "a b", "-t1", "t1/x", strings.Repeat("t", 64)} {
+		check(t, k8s.Create(ctx, mk("cluster-g", v1.SpokeClusterSpec{Identity: "spiffe://x/cluster-g", Tenants: []string{bad}})), "spec.tenants")
+	}
 
 	// The receiver writes status through the subresource; a status write cannot change spec.
 	ok.Status.LastSyncTime = &metav1.Time{Time: metav1.Now().Time}
@@ -214,6 +218,7 @@ func TestSpokePolicyNameValidation(t *testing.T) {
 		{"dotted namespace", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: "a.b", Name: "x", Generation: 1, AccessPolicy: apSpec}, "spec.namespace"},
 		{"long namespace", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: strings.Repeat("a", 64), Name: "x", Generation: 1, AccessPolicy: apSpec}, "spec.namespace"},
 		{"long tenant label", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: "ns", Name: "x", Generation: 1, TenantLabel: strings.Repeat("t", 64), AccessPolicy: apSpec}, "spec.tenantLabel"},
+		{"tenant label not a label value", v1.SpokePolicySource{Kind: v1.SpokeAccessPolicy, Namespace: "ns", Name: "x", Generation: 1, TenantLabel: "t1|t2", AccessPolicy: apSpec}, "spec.tenantLabel"},
 		{"tenant label on cap", v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "x", Generation: 1, TenantLabel: "t1", ClusterAccessPolicy: capSpec}, "kind, namespace and spec do not agree"},
 	} {
 		t.Run(tc.name, func(t *testing.T) { check(t, k8s.Create(ctx, mk(tc.src)), tc.want) })

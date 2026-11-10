@@ -206,7 +206,8 @@ spec:
                           default: false
                           description: |-
                             AllClusters states that the rule applies to every cluster, including spokes added later (PLAN §18.3).
-                            It has no effect without the multicluster config block and is invalid on spoke policies.
+                            It has no effect without the multicluster config block. The compiler rejects it on spoke policies
+                            (reason InvalidClusterScope); admission does not.
                           type: boolean
                         backends:
                           description: Backends are backend names from the static
@@ -378,6 +379,7 @@ spec:
                 description: TenantLabel is the value of the policy.querdian.dev/tenant
                   label of the namespace (AccessPolicy only).
                 maxLength: 63
+                pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                 type: string
             required:
             - cluster

@@ -73,9 +73,13 @@ spec:
                 type: boolean
               tenants:
                 default: []
-                description: Tenants is the allow-list of tenants that policies of
-                  this spoke may use.
+                description: |-
+                  Tenants is the allow-list of tenants that policies of this spoke may use. Each item is a Kubernetes
+                  label value, because a spoke AccessPolicy takes its tenant from a namespace label.
                 items:
+                  maxLength: 63
+                  minLength: 1
+                  pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
                   type: string
                 type: array
                 x-kubernetes-list-type: set

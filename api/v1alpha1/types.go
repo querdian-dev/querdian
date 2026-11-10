@@ -99,7 +99,8 @@ type ClusterRule struct {
 	// +kubebuilder:default=false
 	Unrestricted bool `json:"unrestricted"`
 	// AllClusters states that the rule applies to every cluster, including spokes added later (PLAN §18.3).
-	// It has no effect without the multicluster config block and is invalid on spoke policies.
+	// It has no effect without the multicluster config block. The compiler rejects it on spoke policies
+	// (reason InvalidClusterScope); admission does not.
 	// +optional
 	// +kubebuilder:default=false
 	AllClusters bool `json:"allClusters"`
@@ -200,9 +201,13 @@ type SpokeClusterSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048
 	Identity string `json:"identity"`
-	// Tenants is the allow-list of tenants that policies of this spoke may use.
+	// Tenants is the allow-list of tenants that policies of this spoke may use. Each item is a Kubernetes
+	// label value, because a spoke AccessPolicy takes its tenant from a namespace label.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`
 	// +kubebuilder:default={}
 	Tenants []string `json:"tenants"`
 	// DefaultTenant is used for spoke AccessPolicy objects whose namespace has no tenant label.
@@ -290,6 +295,7 @@ type SpokePolicySource struct {
 	// TenantLabel is the value of the policy.querdian.dev/tenant label of the namespace (AccessPolicy only).
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$`
 	TenantLabel string `json:"tenantLabel,omitempty"`
 	// +optional
 	ClusterAccessPolicy *ClusterAccessPolicySpec `json:"clusterAccessPolicy,omitempty"`
