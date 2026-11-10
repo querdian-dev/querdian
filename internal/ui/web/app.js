@@ -77,7 +77,8 @@ async function policies() {
     body.replaceChildren();
     for (const p of d.policies) {
       const row = h("tr", { class: "row", tabindex: "0", "aria-expanded": String(open.has(p.id)) },
-        h("td", {}, spoke(p) && p.origin.kind ? h("b", { title: p.id }, srcName(p.origin)) : h("b", {}, p.id), unverified(p)),
+        // One unverified mark for each row, in the Origin cell: it covers the cluster and the source name.
+        h("td", {}, spoke(p) && p.origin.kind ? h("b", { title: p.id }, srcName(p.origin)) : h("b", {}, p.id)),
         mc ? h("td", {}, spoke(p) ? [p.origin.cluster || "unknown", unverified(p)] : "Hub") : null,
         h("td", { class: p.ready ? "" : "deny" }, h("b", { class: "mono" }, p.ready ? "Ready" : "NotReady"), " ", h("span", { class: "mono muted" }, p.reason),
           p.expired ? h("div", {}, chip("Expired", "deny")) : null),
