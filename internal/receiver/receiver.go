@@ -37,7 +37,8 @@ const (
 	DefaultMaxBodyBytes = 8 << 20
 	DefaultMaxPolicies  = 2000
 	// DefaultMaxInFlight keeps the memory below about 512 MiB: a request with the default limits uses
-	// at most about 50 MiB (the body and the typed decode at the value limit).
+	// at most about 50 MiB. That is a body at the value limit that the validation then rejects, for example
+	// with empty rule objects (the body and the typed decode). A valid request uses less, about 13 MiB.
 	DefaultMaxInFlight = 8
 	// DefaultRequestBurst and DefaultRequestInterval limit the requests of one identity (PLAN §18.5): a burst
 	// of DefaultRequestBurst requests, then one request for each DefaultRequestInterval. An agent with the
