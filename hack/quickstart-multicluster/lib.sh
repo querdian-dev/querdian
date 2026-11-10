@@ -6,6 +6,7 @@
 # Environment (all optional):
 #   CLUSTER_PREFIX  prefix of the kind cluster names               (default querdian)
 #   MC_WORK_DIR     work directory for the certs                    (default ~/.cache/querdian-quickstart-multicluster)
+#                   a new or empty directory: down.sh deletes it
 #
 # The scripts are for bash 3.2 (macOS) too: no associative arrays, no mapfile, and each expansion of an
 # array that can be empty uses ${a[@]+"${a[@]}"}.
@@ -32,6 +33,39 @@ TENANT=demo
 MC_WORK_DIR="${MC_WORK_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/querdian-quickstart-multicluster}"
 CERT_DIR="$MC_WORK_DIR/certs"
 MC_WORK_MARKER=.querdian-quickstart-multicluster
+
+# claim_work_dir makes MC_WORK_DIR the work directory of up.sh and marks it. down.sh deletes a marked
+# directory completely, so the marker must mean that up.sh made the directory. A directory with files
+# but no marker belongs to the user: claim_work_dir stops with an error and changes nothing.
+claim_work_dir() {
+  local d="${MC_WORK_DIR:?}"
+  if [ -e "$d" ] && [ ! -d "$d" ]; then
+    die "MC_WORK_DIR=$d is not a directory"
+  fi
+  if [ -d "$d" ] && [ ! -f "$d/$MC_WORK_MARKER" ] && [ -n "$(ls -A "$d")" ]; then
+    die "MC_WORK_DIR=$d has files that up.sh did not make; use a new or empty directory"
+  fi
+  mkdir -p "$d"
+  touch "$d/$MC_WORK_MARKER"
+}
+
+# remove_work_dir deletes MC_WORK_DIR only if claim_work_dir marked it, and never / or $HOME. It returns
+# 1 if it refuses, so that down.sh can continue with the other steps.
+remove_work_dir() {
+  local d="${MC_WORK_DIR:?}" real
+  [ -d "$d" ] || return 0
+  real="$(cd "$d" && pwd -P)"
+  if [ "$real" = / ] || [ "$real" = "$(cd "$HOME" && pwd -P)" ]; then
+    printf 'ERROR: MC_WORK_DIR=%s: refusing to delete it\n' "$d" >&2
+    return 1
+  fi
+  if [ ! -f "$d/$MC_WORK_MARKER" ]; then
+    info "$d has no marker of up.sh, so it stays"
+    return 0
+  fi
+  step "removing the work directory $d"
+  rm -rf "$d"
+}
 
 spoke_cluster() { printf '%s-%s' "$CLUSTER_PREFIX" "$1"; }      # kind cluster name of a spoke
 spoke_ctx() { printf 'kind-%s-%s' "$CLUSTER_PREFIX" "$1"; }     # kube context of a spoke

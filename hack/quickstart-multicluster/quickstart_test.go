@@ -55,6 +55,71 @@ func shell(t *testing.T, script string, args ...string) string {
 	return string(out)
 }
 
+// workDir runs a bash snippet after `source lib.sh` with MC_WORK_DIR=dir and HOME=home. It returns the
+// error of the snippet.
+func workDir(t *testing.T, dir, home, script string) error {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	cmd := exec.Command("bash", "-c", "set -euo pipefail; source ./lib.sh; "+script) //nolint:gosec // fixed script
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CACHE_HOME=", "CLUSTER_PREFIX=querdian", "MC_WORK_DIR="+dir)
+	return cmd.Run()
+}
+
+// down.sh deletes the work directory, so up.sh must never mark a directory that holds files of the user.
+func TestWorkDirOwnership(t *testing.T) {
+	home := t.TempDir()
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	cycle := "claim_work_dir; mkdir -p \"$CERT_DIR\"; touch \"$CERT_DIR/agent-ca.key\"; remove_work_dir"
+
+	// A new directory and an empty directory: up.sh makes and marks them, down.sh deletes them.
+	for _, d := range []string{filepath.Join(t.TempDir(), "new", "work"), t.TempDir()} {
+		if err := workDir(t, d, home, cycle); err != nil || exists(d) {
+			t.Fatalf("%s: %v, exists after removal: %v", d, err, exists(d))
+		}
+	}
+
+	// A directory with a file of the user, as MC_WORK_DIR=/tmp would be.
+	used := t.TempDir()
+	mine := filepath.Join(used, "notes.txt")
+	if err := os.WriteFile(mine, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := workDir(t, used, home, "claim_work_dir"); err == nil {
+		t.Fatal("claim_work_dir accepted a directory with files of the user")
+	}
+	if exists(filepath.Join(used, ".querdian-quickstart-multicluster")) {
+		t.Fatal("claim_work_dir marked a directory with files of the user")
+	}
+	if err := workDir(t, used, home, "remove_work_dir"); err != nil || !exists(mine) {
+		t.Fatalf("remove_work_dir changed a directory without a marker: %v", err)
+	}
+
+	// A second up.sh may use the directory of the first one.
+	again := t.TempDir()
+	if err := workDir(t, again, home, "claim_work_dir; mkdir -p \"$CERT_DIR\"; claim_work_dir"); err != nil {
+		t.Fatalf("second claim: %v", err)
+	}
+
+	// A file is not a directory.
+	file := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := workDir(t, file, home, "claim_work_dir"); err == nil {
+		t.Fatal("claim_work_dir accepted a file")
+	}
+
+	// remove_work_dir never deletes $HOME, also with a marker.
+	if err := os.WriteFile(filepath.Join(home, ".querdian-quickstart-multicluster"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := workDir(t, home, home, "remove_work_dir"); err == nil || !exists(home) {
+		t.Fatalf("remove_work_dir with MC_WORK_DIR=$HOME: %v", err)
+	}
+}
+
 // subst renders a file with subst() of lib.sh, as up.sh does.
 func subst(t *testing.T, file string, kv ...string) string {
 	t.Helper()
@@ -790,7 +855,11 @@ func TestCerts(t *testing.T) {
 			}
 		}
 	}
-	if fi, err := os.Stat(f("agent-ca.key")); err != nil || fi.Mode().Perm()&0o077 != 0 {
-		t.Errorf("agent-ca.key: mode %v (%v), want no access for group and others", fi.Mode(), err)
+	fi, err := os.Stat(f("agent-ca.key"))
+	if err != nil {
+		t.Fatalf("agent-ca.key: %v", err)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		t.Errorf("agent-ca.key: mode %v, want no access for group and others", fi.Mode())
 	}
 }

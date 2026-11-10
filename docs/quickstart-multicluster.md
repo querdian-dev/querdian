@@ -48,7 +48,8 @@ measured values of the single-cluster quickstart and from the size of a kind nod
 
 Options (environment variables): `CLUSTER_PREFIX` (default `querdian`, gives the cluster names
 `querdian-hub`, `querdian-spoke-a`, `querdian-spoke-b`), `MC_WORK_DIR` (default
-`~/.cache/querdian-quickstart-multicluster`), `KEYCLOAK_PORT`, `IMAGE_TAG`, `SKIP_BUILD=1`,
+`~/.cache/querdian-quickstart-multicluster`; a new or empty directory, because `down.sh` deletes it;
+`up.sh` refuses a directory with other files), `KEYCLOAK_PORT`, `IMAGE_TAG`, `SKIP_BUILD=1`,
 `CLEANUP_ON_FAILURE=1`; `down.sh` uses `KEEP_IMAGE=1`. `up.sh` sets the current kubectl context to
 the hub.
 

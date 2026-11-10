@@ -61,6 +61,8 @@ for c in $(all_clusters); do
     die "kind cluster '$c' already exists; run hack/quickstart-multicluster/down.sh first (or choose CLUSTER_PREFIX=...)"
   fi
 done
+# Before any cluster exists: down.sh deletes the work directory, so it must not hold files of the user.
+claim_work_dir
 
 # The spoke that each spoke claims to be in its collector (hostile on purpose, see
 # manifests/spoke-collector.yaml): the first spoke claims the hub, each other spoke claims the first.
@@ -120,10 +122,7 @@ info "hub node address on the Docker network kind: $HUB_IP"
 
 # --- 3. certs ------------------------------------------------------------------------------------------------------
 step "certs (openssl) in $CERT_DIR"
-mkdir -p "$MC_WORK_DIR"
-# down.sh removes the work directory only if it has this marker.
-touch "$MC_WORK_DIR/$MC_WORK_MARKER"
-rm -rf "$CERT_DIR"
+rm -rf "$CERT_DIR" # in the work directory that claim_work_dir marked
 "$MC_DIR/certs.sh" "$CERT_DIR" "$HUB_IP" "$TRUST_DOMAIN" "${SPOKES[@]}" | sed 's/^/    /'
 
 # --- 4. image into the clusters --------------------------------------------------------------------------------
