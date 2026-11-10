@@ -61,12 +61,15 @@ func (s *Snapshot) Results() []Result {
 type RuleView struct {
 	Backend string
 	// Origin is the SpokeCluster name for a rule from a spoke policy, and empty for a hub rule.
-	Origin       string
-	Tenants      []string
-	Unrestricted bool
-	Matchers     []Matcher
-	DeniedLabels []string // includes the names of Redactions
-	Redactions   map[string]Redaction
+	Origin string
+	// OriginVersion is the SpokeCluster version that the rule was compiled from. Give it to
+	// Deadlines.ExpiredFor, as ResolveAt does, so that the display agrees with enforcement.
+	OriginVersion SpokeVersion
+	Tenants       []string
+	Unrestricted  bool
+	Matchers      []Matcher
+	DeniedLabels  []string // includes the names of Redactions
+	Redactions    map[string]Redaction
 }
 
 // View is a read-only description of one policy as compiled into the snapshot.
@@ -101,13 +104,14 @@ func (s *Snapshot) Policies() []View {
 					if !seenRule[cr] {
 						seenRule[cr] = true
 						pv.Rules = append(pv.Rules, RuleView{
-							Backend:      cr.Backend,
-							Origin:       cr.Origin,
-							Tenants:      append([]string(nil), cr.Tenants...),
-							Unrestricted: cr.Unrestricted,
-							Matchers:     append([]Matcher(nil), cr.Matchers...),
-							DeniedLabels: append([]string(nil), cr.DeniedLabels...),
-							Redactions:   maps.Clone(cr.Redactions),
+							Backend:       cr.Backend,
+							Origin:        cr.Origin,
+							OriginVersion: cr.OriginVersion,
+							Tenants:       append([]string(nil), cr.Tenants...),
+							Unrestricted:  cr.Unrestricted,
+							Matchers:      append([]Matcher(nil), cr.Matchers...),
+							DeniedLabels:  append([]string(nil), cr.DeniedLabels...),
+							Redactions:    maps.Clone(cr.Redactions),
 						})
 					}
 					if group {
@@ -138,6 +142,9 @@ type Ref struct {
 	ID string
 	// Origin is the SpokeCluster name for a spoke policy, and empty for a hub policy.
 	Origin string
+	// OriginVersion is the SpokeCluster version that the rules of the policy were compiled from. All rules
+	// of one policy in one snapshot come from the same version.
+	OriginVersion SpokeVersion
 }
 
 // PoliciesFor returns the policies with rules for the user and groups on a backend, sorted by ID. It finds
@@ -158,7 +165,7 @@ func (s *Snapshot) PoliciesFor(user string, groups []string, backend string) []R
 	for _, r := range rules {
 		if !seen[r.Policy] {
 			seen[r.Policy] = true
-			out = append(out, Ref{ID: r.Policy, Origin: r.Origin})
+			out = append(out, Ref{ID: r.Policy, Origin: r.Origin, OriginVersion: r.OriginVersion})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

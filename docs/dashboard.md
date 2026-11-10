@@ -31,7 +31,9 @@ shows where each policy comes from. Without the block, it looks and behaves as d
   `suspended: true`, or a `SpokeCluster` change that the snapshot does not contain yet) has a hatched
   Expired mark. Its rules grant no data, so their matchers are struck through. Their hidden and redacted
   labels still apply, and the dashboard shows them as usual. The state comes from the same deadline
-  table as the proxy.
+  table and the same check as the proxy: a rule is expired also if the table has a different version of the
+  `SpokeCluster` than the rule was compiled from. A policy has the Expired mark when all its rules are
+  expired.
 * **Access and Backends**: the pass and the Backends view name spoke policies by their source and mark
   the expired ones. On the pass, a refused backend lists only its expired policies, for example for
   `policy_source_expired`.

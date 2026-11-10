@@ -228,6 +228,56 @@ func TestAccessShowsExpiredSources(t *testing.T) {
 	}
 }
 
+// TestNewerSpokeVersionIsExpired: the table has a newer SpokeCluster version than the rules of the snapshot,
+// as for a short time after a sync of a new generation. The spoke itself is valid, but ResolveAt treats the
+// rules as expired, so the dashboard also shows them as expired. TrackCompiled is not set, so only the
+// version check of ExpiredFor finds the difference.
+func TestNewerSpokeVersionIsExpired(t *testing.T) {
+	f := newMCFixture(t)
+	newer := f.sc.DeepCopy()
+	newer.Generation, newer.Status.ObservedGeneration = 2, 2
+	f.dl.Update(newer, time.Hour)
+	if f.dl.Expired("cluster-a", time.Now()) {
+		t.Fatal("fixture: the spoke itself must be valid")
+	}
+
+	var p struct {
+		Policies []policyJSON `json:"policies"`
+	}
+	getJSON(t, f.h, "/api/policies", &p)
+	hub, read := p.Policies[0], p.Policies[1]
+	if read.ID != f.readID || !read.Ready || !read.Expired || len(read.Rules) != 1 || !read.Rules[0].Expired {
+		t.Fatalf("spoke policy of an older version: %+v", read)
+	}
+	if hub.Expired || hub.Rules[0].Expired {
+		t.Fatalf("hub policies never expire: %+v", hub)
+	}
+
+	var o struct {
+		SpokePolicies map[string]int `json:"spokePolicies"`
+	}
+	getJSON(t, f.h, "/api/overview", &o)
+	if o.SpokePolicies["total"] != 2 || o.SpokePolicies["expired"] != 1 {
+		t.Fatalf("overview: %+v", o)
+	}
+
+	readSrc := sourceJSON{ID: f.readID, Expired: true,
+		Origin: originJSON{Cluster: "cluster-a", Kind: "AccessPolicy", Namespace: "shop", Name: "read"}}
+	a := accessFor(t, f.h, "spoke-only")["metrics"]
+	if a.Granted || a.Reason != "policy_source_expired" || len(a.Sources) != 1 || a.Sources[0] != readSrc {
+		t.Fatalf("access: %+v", a)
+	}
+	var b struct {
+		Backends []struct {
+			Sources []sourceJSON `json:"sources"`
+		} `json:"backends"`
+	}
+	getJSON(t, f.h, "/api/backends", &b)
+	if s := b.Backends[0].Sources; len(s) != 2 || s[1] != readSrc {
+		t.Fatalf("backends: %+v", b.Backends)
+	}
+}
+
 func accessFor(t *testing.T, h http.Handler, groups string) map[string]accessJSON {
 	t.Helper()
 	var a struct {

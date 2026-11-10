@@ -19,6 +19,8 @@ func TestSnapshotShowsSpokeOrigin(t *testing.T) {
 		SpokeClusters: []v1.SpokeCluster{spokeA}, SpokePolicies: []v1.SpokePolicy{read, lost}})
 	s := NewSnapshot(c, cfg, 1)
 	readID, lostID := KindSpokePolicy+"/"+read.Name, KindSpokePolicy+"/"+lost.Name
+	// The views carry the version for Deadlines.ExpiredFor, as the compiled rules do.
+	versionA := SpokeVersion{UID: spokeA.UID, Generation: spokeA.Generation}
 
 	byID := map[string]View{}
 	for _, v := range s.Policies() {
@@ -29,7 +31,7 @@ func TestSnapshotShowsSpokeOrigin(t *testing.T) {
 	}
 	v := byID[readID]
 	if v.Result.Spoke != (SpokeSource{Cluster: "cluster-a", Kind: "AccessPolicy", Namespace: "order", Name: "read"}) ||
-		len(v.Rules) != 1 || v.Rules[0].Origin != "cluster-a" {
+		len(v.Rules) != 1 || v.Rules[0].Origin != "cluster-a" || v.Rules[0].OriginVersion != versionA {
 		t.Fatalf("spoke policy: %+v", v)
 	}
 	// A policy that failed to compile still names its source.
@@ -37,7 +39,7 @@ func TestSnapshotShowsSpokeOrigin(t *testing.T) {
 		t.Fatalf("spoke policy of an unknown cluster: %+v", v)
 	}
 
-	want := []Ref{{ID: "ClusterAccessPolicy/hub"}, {ID: readID, Origin: "cluster-a"}}
+	want := []Ref{{ID: "ClusterAccessPolicy/hub"}, {ID: readID, Origin: "cluster-a", OriginVersion: versionA}}
 	if got := s.PoliciesFor("", []string{"g", "g", ""}, "metrics"); !slices.Equal(got, want) {
 		t.Fatalf("PoliciesFor: %+v", got)
 	}

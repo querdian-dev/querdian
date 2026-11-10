@@ -97,9 +97,31 @@ type sourceJSON struct {
 // multicluster reports whether the static config has the multicluster block.
 func (h *handler) multicluster() bool { return h.d.Config.Multicluster != nil }
 
-// expired reports whether the rules of a spoke grant nothing at now. Hub rules (no origin) never expire.
-func (h *handler) expired(origin string, now time.Time) bool {
-	return origin != "" && h.d.Deadlines.Expired(origin, now)
+// expired reports whether rules that were compiled from version v of a spoke grant nothing at now. It is
+// the check of ResolveAt, so the dashboard does not show a rule as valid that enforcement treats as
+// expired, for example just after a snapshot swap. Hub rules (no origin) never expire.
+func (h *handler) expired(origin string, v policy.SpokeVersion, now time.Time) bool {
+	return origin != "" && h.d.Deadlines.ExpiredFor(origin, v, now)
+}
+
+// policyExpired is the Expired mark of a whole policy. Only a ready spoke policy can be expired. The mark
+// agrees with the marks of its rules: it is true if the spoke is expired, or if each rule is expired by the
+// check of ResolveAt. All rules of one policy come from the same SpokeCluster version, so the rules are
+// either all expired or all valid. A spoke that is expired makes each rule expired, so the policy and its
+// rules never disagree.
+func (h *handler) policyExpired(v policy.View, now time.Time) bool {
+	if !v.Result.Ready || v.Result.Kind != policy.KindSpokePolicy {
+		return false
+	}
+	if h.d.Deadlines.Expired(v.Result.Spoke.Cluster, now) {
+		return true
+	}
+	for _, r := range v.Rules {
+		if !h.expired(r.Origin, r.OriginVersion, now) {
+			return false
+		}
+	}
+	return len(v.Rules) > 0
 }
 
 // compileResults maps each policy ID of the snapshot to its compile result.
@@ -121,7 +143,7 @@ func (h *handler) sources(byID map[string]policy.Result, refs []policy.Ref, now 
 			// The rules are the truth. This occurs only for rules with no compile result, as in tests.
 			o = originJSON{Hub: ref.Origin == "", Cluster: ref.Origin}
 		}
-		out = append(out, sourceJSON{ID: ref.ID, Origin: o, Expired: h.expired(ref.Origin, now)})
+		out = append(out, sourceJSON{ID: ref.ID, Origin: o, Expired: h.expired(ref.Origin, ref.OriginVersion, now)})
 	}
 	slices.SortStableFunc(out, func(a, b sourceJSON) int { return compareOrigin(a.Origin, a.ID, b.Origin, b.ID) })
 	return out
@@ -172,7 +194,7 @@ type policyJSON struct {
 	Groups     []string   `json:"groups"`
 	Rules      []ruleJSON `json:"rules"`
 	// Origin and Expired are set only with the multicluster block. Expired is true for a ready spoke policy
-	// whose spoke is expired or suspended now.
+	// whose spoke is expired or suspended now, or whose rules are all expired (see policyExpired).
 	Origin  *originJSON `json:"origin,omitempty"`
 	Expired bool        `json:"expired,omitempty"`
 }
@@ -202,7 +224,7 @@ func (h *handler) policyViews(s *policy.Snapshot, now time.Time) []policyJSON {
 		if mc {
 			o := originOf(v.Result)
 			p.Origin = &o
-			p.Expired = v.Result.Ready && h.expired(v.Result.Spoke.Cluster, now)
+			p.Expired = h.policyExpired(v, now)
 		}
 		for _, r := range v.Rules {
 			rj := ruleJSON{Backend: r.Backend, Type: h.backendType(r.Backend), Tenants: nz(r.Tenants),
@@ -210,7 +232,7 @@ func (h *handler) policyViews(s *policy.Snapshot, now time.Time) []policyJSON {
 				Redactions: redactionViews(r.Redactions)}
 			if mc {
 				rj.Origin = &originJSON{Hub: r.Origin == "", Cluster: r.Origin}
-				rj.Expired = h.expired(r.Origin, now)
+				rj.Expired = h.expired(r.Origin, r.OriginVersion, now)
 			}
 			for _, m := range r.Matchers {
 				rj.Matchers = append(rj.Matchers, matcherJSON{Name: m.Name, Op: opSymbol[string(m.Op)], Value: m.Value})
@@ -247,11 +269,12 @@ func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
 	}
 	if h.multicluster() {
 		var spoke, expired int
-		for _, p := range h.policyViews(s, time.Now()) {
-			if !p.Origin.Hub {
+		now := time.Now()
+		for _, v := range s.Policies() {
+			if v.Result.Kind == policy.KindSpokePolicy {
 				spoke++
 			}
-			if p.Expired {
+			if h.policyExpired(v, now) {
 				expired++
 			}
 		}
@@ -383,7 +406,7 @@ func (h *handler) backends(w http.ResponseWriter, _ *http.Request) {
 		for _, r := range p.Rules {
 			if !slices.Contains(reach[r.Backend], p.ID) {
 				reach[r.Backend] = append(reach[r.Backend], p.ID)
-				refs[r.Backend] = append(refs[r.Backend], policy.Ref{ID: p.ID, Origin: r.Origin})
+				refs[r.Backend] = append(refs[r.Backend], policy.Ref{ID: p.ID, Origin: r.Origin, OriginVersion: r.OriginVersion})
 			}
 		}
 	}
