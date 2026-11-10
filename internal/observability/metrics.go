@@ -81,21 +81,21 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
-// clusterPolicyAge is the collector of querdian_cluster_policy_age_seconds. It reads the ages at each
-// scrape, because the age increases without an event.
-type clusterPolicyAge struct {
-	desc *prometheus.Desc
-	ages func(now time.Time) map[string]float64
+// clusterGauge is a collector of one gauge with the label cluster. It reads the values at each scrape,
+// because the age and the expired state change without an event.
+type clusterGauge struct {
+	desc   *prometheus.Desc
+	values func(now time.Time) map[string]float64
 }
 
 // NewClusterPolicyAge returns the collector of querdian_cluster_policy_age_seconds{cluster} (PLAN §18.6).
 // ages gives the time in seconds since the last valid sync of each spoke cluster; policy.Deadlines.Ages
 // implements it. A spoke that has not synced has the value +Inf.
 func NewClusterPolicyAge(ages func(now time.Time) map[string]float64) prometheus.Collector {
-	return &clusterPolicyAge{
+	return &clusterGauge{
 		desc: prometheus.NewDesc("querdian_cluster_policy_age_seconds",
 			"Time since the last valid policy sync of a spoke cluster.", []string{"cluster"}, nil),
-		ages: ages,
+		values: ages,
 	}
 }
 
@@ -103,20 +103,20 @@ func NewClusterPolicyAge(ages func(now time.Time) map[string]float64) prometheus
 // 1 if the policies of the spoke are expired or suspended, else 0. policy.Deadlines.ExpiredStates
 // implements states.
 func NewClusterPolicyExpired(states func(now time.Time) map[string]float64) prometheus.Collector {
-	return &clusterPolicyAge{
+	return &clusterGauge{
 		desc: prometheus.NewDesc("querdian_cluster_policy_expired",
 			"1 if the policies of a spoke cluster are expired or suspended, else 0.", []string{"cluster"}, nil),
-		ages: states,
+		values: states,
 	}
 }
 
 // Describe implements prometheus.Collector.
-func (c *clusterPolicyAge) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+func (c *clusterGauge) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
 
 // Collect implements prometheus.Collector.
-func (c *clusterPolicyAge) Collect(ch chan<- prometheus.Metric) {
-	for cluster, age := range c.ages(time.Now()) {
-		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, age, cluster)
+func (c *clusterGauge) Collect(ch chan<- prometheus.Metric) {
+	for cluster, v := range c.values(time.Now()) {
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, v, cluster)
 	}
 }
 

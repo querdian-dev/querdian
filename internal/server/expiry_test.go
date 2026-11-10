@@ -226,7 +226,8 @@ func TestTailClosesOnSpokeSuspension(t *testing.T) {
 
 func TestTailClosesOnSpokeExpiry(t *testing.T) {
 	dl := policy.NewDeadlines()
-	dl.Update(validSpoke("cluster-a"), 1500*time.Millisecond)
+	// 3 s gives a slow -race runner time for the dial and the resolve before the spoke expires.
+	dl.Update(validSpoke("cluster-a"), 3*time.Second)
 	h, s := tailHarness(t, dl)
 	s.tailRevokeCheck = 50 * time.Millisecond
 	c := openTail(t, h, s, "spoke")

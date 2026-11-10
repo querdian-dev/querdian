@@ -109,6 +109,11 @@ func (d *Deadlines) Expired(origin string, now time.Time) bool {
 	d.mu.RLock()
 	e, ok := d.spokes[origin]
 	d.mu.RUnlock()
+	return expiredEntry(e, ok, now)
+}
+
+// expiredEntry is the check of Expired for the entry e; ok is false if the table has no entry.
+func expiredEntry(e spokeDeadline, ok bool, now time.Time) bool {
 	switch {
 	case !ok, !e.valid, e.lastSync.IsZero():
 		return true
@@ -135,16 +140,13 @@ func (d *Deadlines) ExpiredStates(now time.Time) map[string]float64 {
 	if d == nil {
 		return nil
 	}
+	// One read lock for all entries, so that a concurrent Delete cannot show a deleted spoke.
 	d.mu.RLock()
-	names := make([]string, 0, len(d.spokes))
-	for name := range d.spokes {
-		names = append(names, name)
-	}
-	d.mu.RUnlock()
-	out := make(map[string]float64, len(names))
-	for _, name := range names {
+	defer d.mu.RUnlock()
+	out := make(map[string]float64, len(d.spokes))
+	for name, e := range d.spokes {
 		out[name] = 0
-		if d.Expired(name, now) {
+		if expiredEntry(e, true, now) {
 			out[name] = 1
 		}
 	}
