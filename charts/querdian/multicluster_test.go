@@ -511,13 +511,14 @@ func TestModeValuesRejected(t *testing.T) {
 		"agent heartbeat below 10s":         {with(spoke, "agent.heartbeatInterval=9s"), "must be at least 10s"},
 		"agent heartbeat of 1s":             {with(spoke, "agent.heartbeatInterval=1s"), "must be at least 10s"},
 		// The agent accepts each Go duration, but the chart accepts only <n>s, <n>m and <n>h, so that it can
-		// compare the value with 10s. The other forms can hide a value below 10s.
-		"agent heartbeat in milliseconds": {with(spoke, "agent.heartbeatInterval=9000ms"), "integer n of 1 to 6 digits"},
-		"agent heartbeat with a fraction": {with(spoke, "agent.heartbeatInterval=0.1m"), "integer n of 1 to 6 digits"},
-		"agent heartbeat leading zero":    {with(spoke, "agent.heartbeatInterval=05s"), "integer n of 1 to 6 digits"},
-		"agent heartbeat of zero":         {with(spoke, "agent.heartbeatInterval=0s"), "integer n of 1 to 6 digits"},
-		"agent heartbeat of two units":    {with(spoke, "agent.heartbeatInterval=1m30s"), "integer n of 1 to 6 digits"},
-		"agent heartbeat too many digits": {with(spoke, "agent.heartbeatInterval=99999999999999999999s"), "integer n of 1 to 6 digits"},
+		// compare the value with 10s. The other forms can hide a value below 10s. The schema rejects them
+		// first; the template check stays as a second check.
+		"agent heartbeat in milliseconds": {with(spoke, "agent.heartbeatInterval=9000ms"), "does not match pattern"},
+		"agent heartbeat with a fraction": {with(spoke, "agent.heartbeatInterval=0.1m"), "does not match pattern"},
+		"agent heartbeat leading zero":    {with(spoke, "agent.heartbeatInterval=05s"), "does not match pattern"},
+		"agent heartbeat of zero":         {with(spoke, "agent.heartbeatInterval=0s"), "does not match pattern"},
+		"agent heartbeat of two units":    {with(spoke, "agent.heartbeatInterval=1m30s"), "does not match pattern"},
+		"agent heartbeat too many digits": {with(spoke, "agent.heartbeatInterval=99999999999999999999s"), "does not match pattern"},
 		// The agent and the proxy are mutually exclusive: both write the status of the spoke policies.
 		"agent and proxy":       {with(spoke, "mode=proxy"), "A spoke runs only the agent"},
 		"agent URL with proxy":  {with(nil, "agent.receiverURL=https://hub:8443"), "A spoke runs only the agent"},
