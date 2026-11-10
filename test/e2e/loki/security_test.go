@@ -288,6 +288,10 @@ func testDenied(t *testing.T, f *fixture) {
 				`{app="web"} | line_format "{{ with . }}x{{ end }}"`,
 				`{app="web"} | line_format "{{ template \"x\" . }}"`,
 				`{app="web"} | line_format "{{ .app "`,
+				// A CR in a template: Loki can decode it in a different way.
+				"{app=\"web\"} | line_format `{\r{ . }}`",
+				"{app=\"web\"} | label_format a=`{\r{ . }}`",
+				`{app="web"} | line_format "{\r{ . }}"`,
 				"{app=\"web\"} | line_format `{{define \"line_format\"}}{{ . }}{{end}}`",
 				"{app=\"web\"} | label_format a=`{{define \"label_format\"}}{{ .pod }}{{end}}`",
 				"{app=\"web\"} | line_format `{{ .app }}{{define \"line\"}}{{ . }}{{end}}`",

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template/parse"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -436,47 +437,59 @@ var templateFuncs = map[string]struct{}{
 // at run time. slice and call are not necessary for log formats.
 var templateRejectedFuncs = map[string]struct{}{"index": {}, "slice": {}, "call": {}}
 
-// templateTreeName is the name of the parse tree in [templateCheck]. The check
-// does not depend on the name that Loki gives to its templates.
-const templateTreeName = "line_format"
+// templateTreeNames are the two names of the parse trees in [templateCheck].
+// The check parses each template one time with each name. The result does not
+// depend on the name that Loki gives to its templates.
+var templateTreeNames = [2]string{"line_format", "querdian_template_check"}
 
 // templateCheck parses tmpl as a Go template with the default delimiters and
 // returns "" if every node of the tree is in the allow-list. Otherwise it
 // returns the denied label that a field reads, [TemplateAllLabels] for a node
 // or function outside the allow-list, or [TemplateInvalid] if tmpl does not
-// parse. The allowed nodes are text, actions and pipelines without variable
+// parse or contains a control character other than tab and newline. The
+// allowed nodes are text, actions and pipelines without variable
 // declarations, commands, if/else, constants, functions of [templateFuncs],
 // and fields with one identifier that is not in denied. All other nodes are
 // rejected, for example ".", "$" variables, chained fields such as .a.b,
 // range, with, template, block, define, break and continue.
 func templateCheck(tmpl string, denied map[string]struct{}) string {
-	tree := parse.New(templateTreeName)
-	tree.Mode = parse.SkipFuncCheck
-	trees := map[string]*parse.Tree{}
-	if _, err := tree.Parse(tmpl, "", "", trees); err != nil {
+	// Loki can decode a control character such as CR in a different way
+	// from the lexer of this package (Go removes CR from raw strings), and
+	// then run a template that this check did not see. Thus reject these
+	// characters and invalid UTF-8.
+	if !utf8.ValidString(tmpl) {
 		return TemplateInvalid
 	}
-	// A define or block action adds a tree. With an empty main body, a
-	// define with the name of the main tree replaces it, and text/template
-	// then runs the body of the define. Thus accept only exactly one tree,
-	// and only when it is the main tree.
-	if len(trees) != 1 || trees[tree.Name] != tree {
-		return TemplateAllLabels
+	for _, r := range tmpl {
+		if r != '\t' && r != '\n' && unicode.IsControl(r) {
+			return TemplateInvalid
+		}
 	}
-	// Check every tree in the set, not only the main tree, as a second
-	// protection.
-	for _, t := range trees {
-		if t == nil {
+	var main *parse.Tree
+	for i, name := range templateTreeNames {
+		tree := parse.New(name)
+		tree.Mode = parse.SkipFuncCheck
+		trees := map[string]*parse.Tree{}
+		if _, err := tree.Parse(tmpl, "", "", trees); err != nil {
+			return TemplateInvalid
+		}
+		// A define or block action adds a tree to the set. A define with
+		// the name of the main tree can replace the main tree, or the main
+		// tree can replace it. Thus accept only exactly one tree, and only
+		// when it is the main tree. A define action can have the name of
+		// at most one of the two tree names, so the two parses together
+		// find each define action.
+		if len(trees) != 1 || trees[name] != tree {
 			return TemplateAllLabels
 		}
-		if t.Root == nil {
-			continue
-		}
-		if r := templateNode(t.Root, denied); r != "" {
-			return r
+		if i == 0 {
+			main = tree
 		}
 	}
-	return ""
+	if main.Root == nil {
+		return ""
+	}
+	return templateNode(main.Root, denied)
 }
 
 // templateNode checks one node of a parsed template and its children. See

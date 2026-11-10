@@ -77,6 +77,18 @@ var templateDeniedQueries = []string{
 	`{app="x"} | line_format "{{ call .app }}"`,
 	`{app="x"} | line_format "{{ foo .app }}"`,
 	`{app="x"} | line_format "{{ .app | index }}"`,
+	// Control characters other than tab and newline, in raw and in
+	// double-quoted strings.
+	"{app=\"x\"} | line_format `{\r{ . }}`",
+	"{app=\"x\"} | line_format `{{ .app }}\r`",
+	"{app=\"x\"} | label_format a=`{\r{ . }}`",
+	`{app="x"} | line_format "{\r{ . }}"`,
+	`{app="x"} | label_format a="{\r{ . }}"`,
+	`{app="x"} | line_format "{{ .app }}\r"`,
+	`{app="x"} | line_format "{{ .app }}\x00"`,
+	`{app="x"} | line_format "{{ .app }}\x7f"`,
+	"{app=\"x\"} | line_format `{{ .app }}\u0085`",
+	`{app="x"} | line_format "{{ .app }}\xff"`,
 	// Templates that do not parse.
 	`{app="x"} | line_format "{{ .app "`,
 	`{app="x"} | line_format "{{ end }}"`,
@@ -87,7 +99,7 @@ var templateDeniedQueries = []string{
 
 // templateTestTreeNames are tree names that a template engine can give to a
 // line_format or label_format template. The check must not depend on them.
-var templateTestTreeNames = []string{templateTreeName, "label_format", "line", "label", "t"}
+var templateTestTreeNames = []string{templateTreeNames[0], templateTreeNames[1], "label_format", "line", "label", "t"}
 
 // templateDefineCases returns templates with a define action for each name of
 // templateTestTreeNames, with an empty and with a non-empty main body. The
@@ -104,6 +116,9 @@ func templateDefineCases() []string {
 			"{{ .app }}{{define "+q+"}}{{ .secret }}{{end}}",
 			"{{define "+q+"}}{{ . }}{{end}}{{ .app }}",
 			"{{block "+q+" .}}{{ .app }}{{end}}",
+			"{{ .app }}{{define "+q+"}}{{end}}",
+			"{{define "+q+"}}{{end}}",
+			"{{define "+q+"}}{{end}}{{ .app }}",
 		)
 	}
 	return out
@@ -129,11 +144,11 @@ func TestTemplateCheckDefine(t *testing.T) {
 // the test.
 func goTemplateBuiltins(t *testing.T) []string {
 	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-f", "{{.Dir}}", "text/template").Output()
 	if err != nil {
-		t.Fatalf("go env GOROOT: %v", err)
+		t.Fatalf("go list text/template: %v", err)
 	}
-	file := filepath.Join(strings.TrimSpace(string(out)), "src", "text", "template", "funcs.go")
+	file := filepath.Join(strings.TrimSpace(string(out)), "funcs.go")
 	f, err := goparser.ParseFile(token.NewFileSet(), file, nil, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", file, err)
@@ -189,6 +204,8 @@ func TestTemplateBuiltinsKnown(t *testing.T) {
 // templateDeniedNames.
 var templateAllowedQueries = []string{
 	`{app="x"} | line_format "{{.app}}"`,
+	"{app=\"x\"} | line_format `{{ .app }}\n{{ .env }}\t{{ .level }}`",
+	`{app="x"} | line_format "{{ .app }}\n{{ .env }}\t"`,
 	`{app="x"} | line_format "{{ .app | upper }} {{ .env }}"`,
 	`{app="x"} | line_format "literal . text and { braces }"`,
 	`{app="x"} | line_format "{{ \".\" }}"`,
@@ -230,6 +247,10 @@ func TestDeniedLabelTemplates(t *testing.T) {
 		if got, _, _ := DeniedLabel(mustParse(t, q), templateDeniedNames); got != want {
 			t.Errorf("DeniedLabel(%s) = %q want %q", q, got, want)
 		}
+	}
+	// The lexer rejects a literal CR in a double-quoted string.
+	if _, err := Parse("{app=\"x\"} | line_format \"{\r{ . }}\""); err == nil {
+		t.Error("literal CR in a double-quoted string must not parse")
 	}
 	// Without denied labels templates are not checked.
 	if _, found, _ := DeniedLabel(mustParse(t, `{app="x"} | line_format "{{ . }}"`), nil); found {
@@ -282,7 +303,7 @@ func templateFuncsTestFor() template.FuncMap {
 // test if the execution does not stop within a time limit.
 func runTemplate(t *testing.T, name, tmpl string, labels map[string]string) (string, error) {
 	t.Helper()
-	tp, err := template.New(name).Funcs(templateFuncsTestFor()).Parse(tmpl)
+	tp, err := template.New(name).Option("missingkey=zero").Funcs(templateFuncsTestFor()).Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
@@ -346,7 +367,7 @@ func FuzzTemplateDenied(f *testing.F) {
 		if len(tmpl) > 4096 || templateCheck(tmpl, denied) != "" {
 			return
 		}
-		for _, name := range []string{templateTreeName, "line", "label"} {
+		for _, name := range []string{templateTreeNames[0], "line", "label"} {
 			outA, errA := runTemplate(t, name, tmpl, labels(canaryA))
 			outB, errB := runTemplate(t, name, tmpl, labels(canaryB))
 			// The canaries differ, so equal results show that no denied

@@ -313,7 +313,9 @@ scan plus a template check, and over-rejects deliberately:
   the query. A label that is named like a keyword or function (`json`, `count`, `rate`, `level` in
   an unrelated clause) will block legitimate uses of that word; avoid such label names.
 * Each `line_format` and `label_format` template is parsed with Go's `text/template/parse`, and
-  every node must be in an allow-list. A template that does not parse is rejected. The allow-list
+  every node must be in an allow-list. A template that does not parse is rejected. A template
+  with a control character other than tab and newline (for example CR) or with invalid UTF-8 is
+  also rejected, because Loki can decode these characters in a different way. The allow-list
   holds text, actions, pipelines without variables, `if`/`else`, constants, fields with one name
   (`{{ .app }}`) that is not denied, and the Go and Loki template functions that cannot take or
   build a label name. A field that names a denied label is rejected. All other nodes are rejected

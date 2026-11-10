@@ -158,6 +158,10 @@ func TestDeniedLabels(t *testing.T) {
 		`{app="x"} | line_format "{{ template \"x\" . }}"`,
 		`{app="x"} | line_format "{{ index .app 0 }}"`,
 		`{app="x"} | line_format "{{ .app "`,
+		// A CR in a template: Loki can decode it in a different way.
+		"{app=\"x\"} | line_format `{\r{ . }}`",
+		"{app=\"x\"} | label_format a=`{\r{ . }}`",
+		`{app="x"} | line_format "{\r{ . }}"`,
 		"{app=\"x\"} | line_format `{{define \"line_format\"}}{{ . }}{{end}}`",
 		"{app=\"x\"} | label_format a=`{{define \"label_format\"}}{{ .secret }}{{end}}`",
 		"{app=\"x\"} | line_format `{{ .app }}{{define \"line\"}}{{ . }}{{end}}`",

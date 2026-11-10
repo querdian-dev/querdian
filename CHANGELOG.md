@@ -74,7 +74,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   templates could pass the scan and print all labels, including labels in `labels.deny` and
   `labels.redact`. Querdian now parses each template with Go's `text/template/parse` and accepts
   only an allow-list of template nodes and functions while labels are denied. A template that does
-  not parse is rejected. Literal text in a template is no longer compared with denied names. See
+  not parse, that has a `define` action, or that has a control character other than tab and newline
+  is rejected. Literal text in a template is no longer compared with denied names. See
   [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
 
 ### Documentation
