@@ -10,18 +10,19 @@ import (
 
 // Flags are the process-level settings (PLAN §5.2).
 type Flags struct {
-	ConfigFile       string
-	Listen           string
-	ManagementListen string
-	LeaderElect      bool
-	LogLevel         string
-	LogFormat        string
-	RecordUser       bool
-	RecordQueries    bool
-	UIListen         string
-	UIAuth           string
-	UIAdminGroup     string
-	UIAllowedHosts   stringList
+	ConfigFile          string
+	Listen              string
+	ManagementListen    string
+	LeaderElect         bool
+	LogLevel            string
+	LogFormat           string
+	RecordUser          bool
+	RecordQueries       bool
+	TrustInboundContext bool
+	UIListen            string
+	UIAuth              string
+	UIAdminGroup        string
+	UIAllowedHosts      stringList
 }
 
 // stringList is a flag value that each use of the flag adds to.
@@ -50,6 +51,8 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 		"repeatable (localhost, 127.0.0.1, [::1] and the host of --ui-listen are always accepted)")
 	fs.BoolVar(&f.RecordUser, "tracing.record-user", false, "add enduser.id to spans")
 	fs.BoolVar(&f.RecordQueries, "tracing.record-queries", false, "add original and rewritten query to spans")
+	fs.BoolVar(&f.TrustInboundContext, "tracing.trust-inbound-context", false,
+		"use the trace context of the client as the parent of the server span (default: start a new trace and link it)")
 	return f
 }
 

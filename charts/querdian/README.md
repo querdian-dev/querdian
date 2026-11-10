@@ -56,7 +56,8 @@ The defaults for `config` are examples. **You must set `config.auth` and `config
 | `config.backends` | example 3 backends | List of `{name,type,url,pathPrefix,namespaceLabel,tenantHeader,tenantFederation,traceByID}` (PLAN 5.1). |
 | `config.limits` | defaults | `maxPolicyTerms`, `maxFanout`, `maxMergeBytes`, `upstreamTimeout`. |
 | `oidcCA.existingSecret` / `oidcCA.existingConfigMap` / `oidcCA.key` | "" / "" / `ca.crt` | Extra CA bundle for the OIDC issuer. Mounted at `/etc/querdian-oidc-ca`; `config.auth.caFile` is set automatically. |
-| `tracing.recordUser` / `tracing.recordQueries` | `false` | Privacy-sensitive span attributes (`enduser.id`, original/rewritten query). |
+| `tracing.recordUser` / `tracing.recordQueries` | `false` | Privacy-sensitive span attributes (`enduser.id`, original/rewritten query, query string in the upstream `url.full`). |
+| `tracing.trustInboundContext` | `false` | Use the trace context of the client as the parent of the server span. When `false`, the server span starts a new trace and links the trace context of the client. Set it only when all clients are trusted. |
 | `tracing.serviceName`, `tracing.exporter`, `tracing.otlp.endpoint`, `tracing.otlp.protocol`, `tracing.sampler`, `tracing.samplerArg` | see values.yaml | Mapped to `OTEL_SERVICE_NAME`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`. Empty values are not set. Tracing stays off without exporter/endpoint. |
 | `tracing.resourceAttributes` | `{}` | Extra `OTEL_RESOURCE_ATTRIBUTES`. `k8s.pod.name`, `k8s.namespace.name`, `k8s.node.name` (Downward API) and `service.version` are always set. |
 | `resources` | 100m / 128Mi req, 512Mi mem limit | Container resources. |

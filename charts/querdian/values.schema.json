@@ -146,6 +146,9 @@
         "recordQueries": {
           "type": "boolean"
         },
+        "trustInboundContext": {
+          "type": "boolean"
+        },
         "serviceName": {
           "type": "string"
         },

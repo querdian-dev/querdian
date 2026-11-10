@@ -148,6 +148,8 @@ func run(args []string) error {
 		Gatherer:     reg,
 		Privacy:      observability.Privacy{RecordUser: flags.RecordUser, RecordQueries: flags.RecordQueries},
 		Logger:       logger,
+
+		TrustInboundTraceContext: flags.TrustInboundContext,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)

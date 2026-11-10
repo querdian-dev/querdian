@@ -424,6 +424,7 @@ spec:
             - --log-format=json
             - --tracing.record-user=true
             - --tracing.record-queries=false
+            - --tracing.trust-inbound-context=false
             - --ui-listen=:8081
             - --ui-auth=oidc
             - "--ui-admin-group=querdian-admins"

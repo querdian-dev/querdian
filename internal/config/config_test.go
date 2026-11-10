@@ -226,7 +226,7 @@ func TestFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.ConfigFile != "/etc/querdian/config.yaml" || f.Listen != ":8080" || f.ManagementListen != ":9090" ||
-		!f.LeaderElect || f.LogLevel != "info" || f.LogFormat != "json" || f.RecordUser || f.RecordQueries {
+		!f.LeaderElect || f.LogLevel != "info" || f.LogFormat != "json" || f.RecordUser || f.RecordQueries || f.TrustInboundContext {
 		t.Fatalf("defaults wrong: %+v", f)
 	}
 	if err := f.Validate(); err != nil {
@@ -257,10 +257,10 @@ func TestFlags(t *testing.T) {
 	}
 	fs = flag.NewFlagSet("t", flag.ContinueOnError)
 	f = RegisterFlags(fs)
-	if err := fs.Parse([]string{"--tracing.record-user", "--leader-elect=false", "--log-format=text"}); err != nil {
+	if err := fs.Parse([]string{"--tracing.record-user", "--leader-elect=false", "--log-format=text", "--tracing.trust-inbound-context"}); err != nil {
 		t.Fatal(err)
 	}
-	if !f.RecordUser || f.LeaderElect || f.LogFormat != "text" {
+	if !f.RecordUser || f.LeaderElect || f.LogFormat != "text" || !f.TrustInboundContext {
 		t.Fatalf("parse wrong: %+v", f)
 	}
 	if len(f.UIAllowedHosts) != 0 {

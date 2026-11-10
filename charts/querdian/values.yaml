@@ -75,8 +75,12 @@ logFormat: json # json | text
 tracing:
   # Adds enduser.id to spans (privacy-sensitive).
   recordUser: false
-  # Adds original and rewritten queries to spans (privacy-sensitive).
+  # Adds original and rewritten queries to spans, and the query string to the upstream URL
+  # (privacy-sensitive).
   recordQueries: false
+  # Uses the trace context of the client as the parent of the server span. Keep it false unless
+  # all clients are trusted: else a client can select the trace ID and force sampling.
+  trustInboundContext: false
   serviceName: querdian # OTEL_SERVICE_NAME
   exporter: "" # OTEL_TRACES_EXPORTER (e.g. otlp, none)
   otlp:
