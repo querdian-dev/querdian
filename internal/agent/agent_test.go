@@ -84,14 +84,17 @@ func newFakeClient(t *testing.T, funcs *interceptor.Funcs, objs ...client.Object
 	return b.Build()
 }
 
-// startAgent runs an agent until the test ends.
-func startAgent(t *testing.T, c client.Client, s Syncer, interval time.Duration) *Agent {
+// startAgent runs an agent until the test ends. Each function in opts changes the agent before it starts.
+func startAgent(t *testing.T, c client.Client, s Syncer, interval time.Duration, opts ...func(*Agent)) *Agent {
 	t.Helper()
 	a, err := New(Options{Reader: c, Writer: c, Syncer: s, Interval: interval, Logger: testLogger()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.minBackoff = 5 * time.Millisecond
+	for _, o := range opts {
+		o(a)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = a.Run(ctx) }()

@@ -209,6 +209,27 @@ func TestMetricsRegistry(t *testing.T) {
 	}
 }
 
+func TestAgentMetrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := observability.NewAgentMetrics(reg)
+	m.Syncs.WithLabelValues(observability.AgentSyncFullState).Inc()
+	m.LastSync.Set(1700000000)
+	want := `# HELP querdian_agent_syncs_total Sync attempts of the agent by result.
+# TYPE querdian_agent_syncs_total counter
+querdian_agent_syncs_total{result="error"} 0
+querdian_agent_syncs_total{result="full_state_sent"} 1
+querdian_agent_syncs_total{result="ok"} 0
+querdian_agent_syncs_total{result="retry"} 0
+# HELP querdian_agent_last_sync_timestamp_seconds Unix time of the last sync that the receiver accepted. 0 before the first accepted sync.
+# TYPE querdian_agent_last_sync_timestamp_seconds gauge
+querdian_agent_last_sync_timestamp_seconds 1.7e+09
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+		"querdian_agent_syncs_total", "querdian_agent_last_sync_timestamp_seconds"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClusterPolicyAge(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	ages := map[string]float64{"cluster-a": 42, "cluster-b": math.Inf(1)}

@@ -15,8 +15,12 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,6 +29,7 @@ import (
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/agent"
 	"github.com/querdian-dev/querdian/internal/config"
+	"github.com/querdian-dev/querdian/internal/observability"
 )
 
 // serviceAccountNamespaceFile holds the namespace of the pod. The agent uses it for the lease.
@@ -57,11 +62,11 @@ func registerAgentFlags(fs *flag.FlagSet) *agentFlags {
 	fs.StringVar(&f.keyFile, "tls-key-file", "", "private key of the client cert, PEM (required; read again before each request)")
 	fs.StringVar(&f.caFile, "tls-ca-file", "", "CA certs that verify the receiver cert, PEM (required; read again before each request)")
 	fs.DurationVar(&f.interval, "heartbeat-interval", agent.DefaultInterval, "time between two heartbeats (at least 10s)")
-	fs.DurationVar(&f.requestTimeout, "request-timeout", agent.DefaultRequestTimeout, "time limit for one request to the receiver")
+	fs.DurationVar(&f.requestTimeout, "request-timeout", agent.DefaultRequestTimeout, "time limit for one request to the receiver or to the spoke API server")
 	fs.BoolVar(&f.leaderElect, "leader-elect", true, "leader election, so that one agent sends at a time")
 	fs.StringVar(&f.leaseNamespace, "leader-election-namespace", "", "namespace of the lease (empty: the namespace of the pod)")
 	fs.StringVar(&f.leaseName, "leader-election-id", "querdian-agent", "name of the lease")
-	fs.StringVar(&f.managementListen, "management-listen", ":9090", "listener for /healthz and /readyz (empty: disabled)")
+	fs.StringVar(&f.managementListen, "management-listen", ":9090", "listener for /healthz, /readyz and /metrics (empty: disabled)")
 	fs.StringVar(&f.logLevel, "log-level", "info", "slog level (debug|info|warn|error)")
 	fs.StringVar(&f.logFormat, "log-format", "json", "log format (json|text)")
 	return f
@@ -133,12 +138,19 @@ func runAgent(args []string) error {
 	if err := v1.AddToScheme(scheme); err != nil {
 		return err
 	}
-	// A direct client with no cache: each heartbeat reads the API server (PLAN §18.6, rule 2).
-	kube, err := client.New(restCfg, client.Options{Scheme: scheme})
+	// A direct client with no cache: each heartbeat reads the API server (PLAN §18.6, rule 2). Each request
+	// has a time limit, so a request that does not return cannot stop the sync. The leader election keeps
+	// restCfg: it sets its own time limits.
+	kubeCfg := rest.CopyConfig(restCfg)
+	kubeCfg.Timeout = f.requestTimeout
+	kube, err := client.New(kubeCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return err
 	}
-	a, err := agent.New(agent.Options{Reader: kube, Writer: kube, Syncer: sender, Interval: f.interval, Logger: logger})
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	a, err := agent.New(agent.Options{Reader: kube, Writer: kube, Syncer: sender, Interval: f.interval, Logger: logger,
+		Metrics: observability.NewAgentMetrics(reg)})
 	if err != nil {
 		return err
 	}
@@ -151,7 +163,7 @@ func runAgent(args []string) error {
 	running := 1
 	if f.managementListen != "" {
 		running++
-		go func() { errc <- serveHealth(ctx, f.managementListen) }()
+		go func() { errc <- serveManagement(ctx, f.managementListen, reg) }()
 	}
 	go func() {
 		if !f.leaderElect {
@@ -178,12 +190,17 @@ func runAgent(args []string) error {
 	return err
 }
 
-// serveHealth serves /healthz and /readyz until ctx ends.
-func serveHealth(ctx context.Context, addr string) error {
+// serveManagement serves /healthz, /readyz and the metrics of g on /metrics until ctx ends.
+//
+// /readyz does not depend on the receiver or on the sync result. The agent serves no traffic, so readiness
+// only controls rollouts. If readiness depended on the hub, a hub outage would stop each rollout of the
+// agent. Use querdian_agent_syncs_total and querdian_agent_last_sync_timestamp_seconds to see the sync.
+func serveManagement(ctx context.Context, addr string, g prometheus.Gatherer) error {
 	mux := http.NewServeMux()
 	ok := func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }
 	mux.HandleFunc("GET /healthz", ok)
 	mux.HandleFunc("GET /readyz", ok)
+	mux.Handle("GET /metrics", promhttp.HandlerFor(g, promhttp.HandlerOpts{EnableOpenMetrics: true}))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

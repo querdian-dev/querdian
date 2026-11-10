@@ -8,7 +8,9 @@
 // At each heartbeat, the agent sends the digest of the state. If the receiver replies fullStateRequired,
 // the agent sends the full state at once. The agent writes the Ready conditions in the reply to the status
 // of the spoke objects. On 409, 429 and network errors, the agent retries with backoff, at least each
-// minute. On other errors, it retries at the next heartbeat, but also at least each minute.
+// minute. On other errors, it retries at the next heartbeat, but also at least each minute. Each attempt
+// has a time limit, so a request that does not return cannot stop the sync. An attempt that exceeds the
+// time limit is a failure, and the agent retries with backoff.
 //
 // The agent uses leader election, so one agent sends at a time. The client cert, the key and the CA of
 // the receiver come from files. The agent reads these files again before each request, so a rotated cert
@@ -51,8 +53,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
@@ -63,6 +67,10 @@ const (
 	maxRetryDelay = time.Minute
 	// defaultMinBackoff is the first wait after a failure that is retried with backoff.
 	defaultMinBackoff = time.Second
+	// minAttemptTimeout and maxAttemptTimeout are the limits of the time limit of one attempt. The time
+	// limit is two heartbeat intervals between these limits.
+	minAttemptTimeout = time.Minute
+	maxAttemptTimeout = 5 * time.Minute
 )
 
 // Syncer sends one sync request to the receiver. *Sender is the implementation.
@@ -82,6 +90,8 @@ type Options struct {
 	Interval time.Duration
 	// Logger is the logger. Nil means slog.Default().
 	Logger *slog.Logger
+	// Metrics records the sync attempts. Nil means metrics on a registry that nobody reads.
+	Metrics *observability.AgentMetrics
 }
 
 // Agent syncs the policies of one spoke to the hub receiver.
@@ -91,7 +101,10 @@ type Agent struct {
 	syncer     Syncer
 	interval   time.Duration
 	minBackoff time.Duration
-	log        *slog.Logger
+	// attemptTimeout is the time limit of one attempt: the read, the requests and the status writes.
+	attemptTimeout time.Duration
+	log            *slog.Logger
+	metrics        *observability.AgentMetrics
 }
 
 // New returns an Agent. It returns an error if a required option is missing.
@@ -108,9 +121,13 @@ func New(o Options) (*Agent, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	if o.Metrics == nil {
+		o.Metrics = observability.NewAgentMetrics(prometheus.NewRegistry())
+	}
 	return &Agent{
 		reader: o.Reader, writer: o.Writer, syncer: o.Syncer, interval: o.Interval,
-		minBackoff: defaultMinBackoff, log: o.Logger,
+		minBackoff: defaultMinBackoff, attemptTimeout: min(max(2*o.Interval, minAttemptTimeout), maxAttemptTimeout),
+		log: o.Logger, metrics: o.Metrics,
 	}, nil
 }
 
@@ -118,13 +135,29 @@ func New(o Options) (*Agent, error) {
 type outcome int
 
 const (
-	// synced: the receiver accepted the state. Wait for the next heartbeat.
+	// synced: the receiver had the same state and accepted the heartbeat. Wait for the next heartbeat.
 	synced outcome = iota
-	// retry: a read failure, a 409, a 429 or a network error. Retry with backoff.
+	// syncedFull: the receiver accepted the full state. Wait for the next heartbeat.
+	syncedFull
+	// retry: a read failure, a timeout, a 409, a 429 or a network error. Retry with backoff.
 	retry
 	// skip: a different error. Log it and wait for the next heartbeat, but at most one minute.
 	skip
 )
+
+// label returns the value of the result label of querdian_agent_syncs_total.
+func (o outcome) label() string {
+	switch o {
+	case synced:
+		return observability.AgentSyncOK
+	case syncedFull:
+		return observability.AgentSyncFullState
+	case retry:
+		return observability.AgentSyncRetry
+	default:
+		return observability.AgentSyncError
+	}
+}
 
 // Run syncs until ctx ends. It always returns nil. Call it only while this agent holds the lease.
 func (a *Agent) Run(ctx context.Context) error {
@@ -168,10 +201,23 @@ func retryDelay(backoff, hint, limit time.Duration) time.Duration {
 	return min(max(backoff, hint), limit)
 }
 
-// syncOnce does one attempt: a direct read, a heartbeat and, if necessary, a full sync. It returns the
+// syncOnce does one attempt with the time limit attemptTimeout and records its result. It returns the
 // outcome and a Retry-After hint from the receiver.
 func (a *Agent) syncOnce(ctx context.Context) (outcome, time.Duration) {
-	policies, status, err := readState(ctx, a.reader)
+	actx, cancel := context.WithTimeout(ctx, a.attemptTimeout)
+	defer cancel()
+	out, hint := a.attempt(ctx, actx)
+	if ctx.Err() == nil {
+		a.metrics.Syncs.WithLabelValues(out.label()).Inc()
+	}
+	return out, hint
+}
+
+// attempt does one attempt: a direct read, a heartbeat and, if necessary, a full sync. All calls use actx,
+// which has the time limit of the attempt. ctx is the context of Run: when ctx ends, the agent stops and
+// does not log the failure. When only actx ends, the attempt is a failure that is logged and retried.
+func (a *Agent) attempt(ctx, actx context.Context) (outcome, time.Duration) {
+	policies, status, err := readState(actx, a.reader)
 	if err != nil {
 		if ctx.Err() == nil {
 			a.log.Warn("agent: cannot read the spoke API server; nothing sent", "err", err)
@@ -183,13 +229,15 @@ func (a *Agent) syncOnce(ctx context.Context) (outcome, time.Duration) {
 		a.log.Error("agent: cannot calculate the digest; nothing sent", "err", err)
 		return retry, 0
 	}
-	resp, err := a.syncer.Send(ctx, &spokesync.Request{Digest: digest})
+	resp, err := a.syncer.Send(actx, &spokesync.Request{Digest: digest})
 	if err != nil {
 		return a.failure(ctx, "heartbeat", err)
 	}
+	out := synced
 	if resp.Result == spokesync.ResultFullStateRequired {
+		out = syncedFull
 		a.log.Info("agent: the receiver has a different state; send the full state", "policies", len(policies))
-		resp, err = a.syncer.Send(ctx, &spokesync.Request{Digest: digest, Full: true, Policies: policies})
+		resp, err = a.syncer.Send(actx, &spokesync.Request{Digest: digest, Full: true, Policies: policies})
 		if err != nil {
 			return a.failure(ctx, "full sync", err)
 		}
@@ -198,12 +246,13 @@ func (a *Agent) syncOnce(ctx context.Context) (outcome, time.Duration) {
 			return skip, 0
 		}
 	}
+	a.metrics.LastSync.SetToCurrentTime()
 	a.log.Debug("agent: sync accepted", "digest", digest, "policies", len(policies))
-	a.writeConditions(ctx, resp.Conditions, status)
-	return synced, 0
+	a.writeConditions(ctx, actx, resp.Conditions, status)
+	return out, 0
 }
 
-// failure logs a failed request and classifies it.
+// failure logs a failed request and classifies it. ctx is the context of Run.
 func (a *Agent) failure(ctx context.Context, what string, err error) (outcome, time.Duration) {
 	if ctx.Err() != nil {
 		return retry, 0

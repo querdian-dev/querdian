@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/querdian-dev/querdian/internal/observability"
 )
 
 func TestRunAgentFlagErrors(t *testing.T) {
@@ -39,30 +43,42 @@ func TestAgentFlagDefaults(t *testing.T) {
 	}
 }
 
-func TestServeHealth(t *testing.T) {
+func TestServeManagement(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
 	_ = ln.Close()
+	reg := prometheus.NewRegistry()
+	observability.NewAgentMetrics(reg)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serveHealth(ctx, addr) }()
-	var body string
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get("http://" + addr + "/readyz") //nolint:noctx // test
-		if err == nil {
-			b, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			body = string(b)
-			break
+	go func() { done <- serveManagement(ctx, addr, reg) }()
+	get := func(path string) string {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := http.Get("http://" + addr + path) //nolint:noctx // test
+			if err == nil {
+				b, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				return string(b)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
+		t.Fatalf("GET %s: no reply", path)
+		return ""
 	}
-	if !strings.Contains(body, "ok") {
+	if body := get("/readyz"); !strings.Contains(body, "ok") {
 		t.Errorf("readyz body %q", body)
+	}
+	body := get("/metrics")
+	for _, want := range []string{`querdian_agent_syncs_total{result="ok"} 0`, `querdian_agent_syncs_total{result="retry"} 0`,
+		"querdian_agent_last_sync_timestamp_seconds 0"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics: %q missing in\n%s", want, body)
+		}
 	}
 	cancel()
 	if err := <-done; err != nil {

@@ -251,3 +251,21 @@ type syncFunc func(context.Context, *spokesync.Request) (*spokesync.Response, er
 func (f syncFunc) Send(ctx context.Context, req *spokesync.Request) (*spokesync.Response, error) {
 	return f(ctx, req)
 }
+
+// logBuffer is a log output that goroutines can share.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}

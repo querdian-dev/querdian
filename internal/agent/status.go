@@ -28,13 +28,21 @@ const (
 // reasonRE is the pattern of metav1.Condition.Reason.
 var reasonRE = regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$`)
 
-// writeConditions writes the conditions from the receiver to the spoke objects. known holds the UID and the
-// status of each object from the read of this attempt, by spokesync.Key. A failure of one write does not stop the
-// others, and it does not change the sync result. The next heartbeat tries again.
-func (a *Agent) writeConditions(ctx context.Context, conds []spokesync.Condition, known map[string]readObject) {
+// writeConditions writes the conditions from the receiver to the spoke objects with actx. known holds the
+// UID and the status of each object from the read of this attempt, by spokesync.Key. A failure of one
+// write does not stop the others, and it does not change the sync result. The next heartbeat tries again.
+// A failure is not logged after ctx, the context of Run, ends.
+func (a *Agent) writeConditions(ctx, actx context.Context, conds []spokesync.Condition, known map[string]readObject) {
 	for i := range conds {
+		if actx.Err() != nil {
+			if ctx.Err() == nil {
+				a.log.Warn("agent: the attempt is out of time; the next heartbeat writes the other conditions",
+					"left", len(conds)-i)
+			}
+			return
+		}
 		c := &conds[i]
-		if err := a.writeCondition(ctx, c, known); err != nil && ctx.Err() == nil {
+		if err := a.writeCondition(actx, c, known); err != nil && ctx.Err() == nil {
 			a.log.Warn("agent: cannot write the status", "kind", string(c.Kind), "namespace", c.Namespace,
 				"name", c.Name, "err", err)
 		}

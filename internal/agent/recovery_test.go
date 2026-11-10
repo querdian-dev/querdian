@@ -3,10 +3,15 @@ package agent
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/observability"
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
@@ -178,5 +184,82 @@ func TestStatusSkipsRecreatedObject(t *testing.T) {
 	}
 	if patches.Load() != 1 || !apimeta.IsStatusConditionTrue(cp.Status.Conditions, ReadyCondition) {
 		t.Fatalf("condition not written: patches=%d status=%+v", patches.Load(), cp.Status)
+	}
+}
+
+// TestAttemptTimeout: a read and a request that do not return end at the time limit of the attempt. The
+// agent logs each failure, counts a retry and syncs again.
+func TestAttemptTimeout(t *testing.T) {
+	p := newPKI(t)
+	r := newFakeReceiver(t, p)
+	sender := newTestSender(t, p, r)
+	var hangList, hangSend atomic.Bool
+	hangList.Store(true)
+	hangSend.Store(true)
+	c := newFakeClient(t, &interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, l client.ObjectList, o ...client.ListOption) error {
+		if hangList.CompareAndSwap(true, false) {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return c.List(ctx, l, o...)
+	}}, spokeObjects()...)
+	syncer := syncFunc(func(ctx context.Context, req *spokesync.Request) (*spokesync.Response, error) {
+		if hangSend.CompareAndSwap(true, false) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return sender.Send(ctx, req)
+	})
+	m := observability.NewAgentMetrics(prometheus.NewRegistry())
+	logs := &logBuffer{}
+	startAgent(t, c, syncer, 20*time.Millisecond, func(a *Agent) {
+		a.attemptTimeout = 100 * time.Millisecond
+		a.metrics = m
+		a.log = slog.New(slog.NewTextHandler(logs, nil))
+	})
+	eventually(t, 5*time.Second, "sync after two timeouts", func() bool { return testutil.ToFloat64(m.LastSync) > 0 })
+	if n := testutil.ToFloat64(m.Syncs.WithLabelValues(observability.AgentSyncRetry)); n != 2 {
+		t.Errorf("retries = %v, want 2", n)
+	}
+	if n := strings.Count(logs.String(), "context deadline exceeded"); n != 2 {
+		t.Errorf("want 2 logged timeouts, got %d:\n%s", n, logs.String())
+	}
+}
+
+func TestAttemptTimeoutFromInterval(t *testing.T) {
+	c := newFakeClient(t, nil)
+	for _, tc := range []struct{ interval, want time.Duration }{
+		{10 * time.Second, time.Minute},
+		{time.Minute, 2 * time.Minute},
+		{time.Hour, 5 * time.Minute},
+	} {
+		a, err := New(Options{Reader: c, Writer: c, Syncer: syncFunc(nil), Interval: tc.interval})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.attemptTimeout != tc.want {
+			t.Errorf("interval %v: attempt timeout %v, want %v", tc.interval, a.attemptTimeout, tc.want)
+		}
+	}
+}
+
+// TestSyncMetrics: each attempt counts one result, and an accepted sync sets the time of the last sync.
+func TestSyncMetrics(t *testing.T) {
+	p := newPKI(t)
+	r := newFakeReceiver(t, p)
+	m := observability.NewAgentMetrics(prometheus.NewRegistry())
+	count := func(result string) float64 { return testutil.ToFloat64(m.Syncs.WithLabelValues(result)) }
+	start := time.Now()
+	r.setInject(http.StatusTooManyRequests, http.StatusInternalServerError)
+	startAgent(t, newFakeClient(t, nil, spokeObjects()...), newTestSender(t, p, r), 20*time.Millisecond,
+		func(a *Agent) { a.metrics = m })
+	eventually(t, 5*time.Second, "heartbeats", func() bool { return count(observability.AgentSyncOK) >= 2 })
+	if count(observability.AgentSyncRetry) != 1 || count(observability.AgentSyncError) != 1 ||
+		count(observability.AgentSyncFullState) != 1 {
+		t.Errorf("retry=%v error=%v full_state_sent=%v, want 1 each", count(observability.AgentSyncRetry),
+			count(observability.AgentSyncError), count(observability.AgentSyncFullState))
+	}
+	if last := testutil.ToFloat64(m.LastSync); last < float64(start.Unix()) {
+		t.Errorf("last sync time %v is before the start %v", last, start.Unix())
 	}
 }
