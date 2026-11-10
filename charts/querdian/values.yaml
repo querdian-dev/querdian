@@ -350,7 +350,7 @@ receiver:
 agent:
   # Base URL of the hub receiver, e.g. https://querdian-receiver.mla.example.com:8443. Required.
   receiverURL: ""
-  # Time between two heartbeats (--heartbeat-interval, at least 10s).
+  # Time between two heartbeats (--heartbeat-interval): <n>s, <n>m or <n>h, with an integer n, at least 10s.
   heartbeatInterval: 1m
   replicaCount: 1
   leaderElection:

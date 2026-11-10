@@ -508,8 +508,16 @@ func TestModeValuesRejected(t *testing.T) {
 		"spoke with dashboard":              {with(spoke, "ui.enabled=true"), "mode spoke installs only the agent"},
 		"agent replicas without lease":      {with(spoke, "agent.leaderElection.enabled=false", "agent.replicaCount=2"), "needs agent.replicaCount=1"},
 		"agent heartbeat not a duration":    {with(spoke, "agent.heartbeatInterval=often"), "/agent/heartbeatInterval"},
-		"agent heartbeat below 10s":         {with(spoke, "agent.heartbeatInterval=9s"), "at least 10s"},
-		"agent heartbeat in milliseconds":   {with(spoke, "agent.heartbeatInterval=9000ms"), "at least 10s"},
+		"agent heartbeat below 10s":         {with(spoke, "agent.heartbeatInterval=9s"), "must be at least 10s"},
+		"agent heartbeat of 1s":             {with(spoke, "agent.heartbeatInterval=1s"), "must be at least 10s"},
+		// The agent accepts each Go duration, but the chart accepts only <n>s, <n>m and <n>h, so that it can
+		// compare the value with 10s. The other forms can hide a value below 10s.
+		"agent heartbeat in milliseconds": {with(spoke, "agent.heartbeatInterval=9000ms"), "integer n of 1 to 6 digits"},
+		"agent heartbeat with a fraction": {with(spoke, "agent.heartbeatInterval=0.1m"), "integer n of 1 to 6 digits"},
+		"agent heartbeat leading zero":    {with(spoke, "agent.heartbeatInterval=05s"), "integer n of 1 to 6 digits"},
+		"agent heartbeat of zero":         {with(spoke, "agent.heartbeatInterval=0s"), "integer n of 1 to 6 digits"},
+		"agent heartbeat of two units":    {with(spoke, "agent.heartbeatInterval=1m30s"), "integer n of 1 to 6 digits"},
+		"agent heartbeat too many digits": {with(spoke, "agent.heartbeatInterval=99999999999999999999s"), "integer n of 1 to 6 digits"},
 		// The agent and the proxy are mutually exclusive: both write the status of the spoke policies.
 		"agent and proxy":       {with(spoke, "mode=proxy"), "A spoke runs only the agent"},
 		"agent URL with proxy":  {with(nil, "agent.receiverURL=https://hub:8443"), "A spoke runs only the agent"},
@@ -528,7 +536,7 @@ func TestModeValuesRejected(t *testing.T) {
 		})
 	}
 	// The limit of 10s accepts the values at and above it.
-	for _, d := range []string{"10s", "1m", "90s", "1h"} {
+	for _, d := range []string{"10s", "1m", "90s", "1h", "999999h"} {
 		helmTemplate(t, with(spoke, "agent.heartbeatInterval="+d)...)
 	}
 }

@@ -185,7 +185,16 @@ both, so the render stops.
 {{- if not $v.agent.receiverCA.existingSecret -}}
 {{- fail "mode spoke needs agent.receiverCA.existingSecret (the CA that verifies the receiver cert)" -}}
 {{- end -}}
-{{- if regexMatch "^(([0-9]|[0-9]\\.[0-9]*)s|[0-9.]+(ns|us|ms))$" (toString $v.agent.heartbeatInterval) -}}
+{{- /* The agent rejects an interval below 10s. A Go duration has many forms (0.1m, 05s, 9000ms), and a regular
+expression cannot compare them with 10s. So the chart accepts only <n>s, <n>m and <n>h, with an integer n of 1 to 6
+digits and no leading zero, and compares the number of seconds with 10. The digit limit keeps n below the overflow
+of atoi and of a Go duration. */ -}}
+{{- $hb := toString $v.agent.heartbeatInterval -}}
+{{- if not (regexMatch "^[1-9][0-9]{0,5}[smh]$" $hb) -}}
+{{- fail "agent.heartbeatInterval must be <n>s, <n>m or <n>h, with an integer n of 1 to 6 digits and no leading zero, and at least 10s" -}}
+{{- end -}}
+{{- $seconds := mul (atoi (trimSuffix (regexFind "[smh]$" $hb) $hb)) (get (dict "s" 1 "m" 60 "h" 3600) (regexFind "[smh]$" $hb)) -}}
+{{- if lt (int64 $seconds) 10 -}}
 {{- fail "agent.heartbeatInterval must be at least 10s" -}}
 {{- end -}}
 {{- if and (not $v.agent.leaderElection.enabled) (gt (int $v.agent.replicaCount) 1) -}}
