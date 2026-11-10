@@ -116,12 +116,14 @@ func spokeClusterName(obj any) (string, bool) {
 }
 
 // spokeSpecChanged reports whether an update of a SpokeCluster can change the compiled policies. The compiler
-// reads the name and the spec only. If the objects are not of the expected type, the result is true.
+// reads the name and the spec only, and the rules carry the UID and the generation. After a watch gap, the
+// informer can report a deleted and re-created object as an update, so a new UID counts as a change. If the
+// objects are not of the expected type, the result is true.
 func spokeSpecChanged(oldObj, newObj any) bool {
 	o, ok1 := oldObj.(*v1.SpokeCluster)
 	n, ok2 := newObj.(*v1.SpokeCluster)
 	if !ok1 || !ok2 {
 		return true
 	}
-	return o.Name != n.Name || o.Generation != n.Generation || !apiequality.Semantic.DeepEqual(o.Spec, n.Spec)
+	return o.Name != n.Name || o.UID != n.UID || o.Generation != n.Generation || !apiequality.Semantic.DeepEqual(o.Spec, n.Spec)
 }
