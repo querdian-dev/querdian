@@ -47,6 +47,8 @@ chart-crds-check:
 chart-lint: chart-crds-check
 	helm lint charts/querdian
 	helm lint charts/querdian -f charts/querdian/ci/all-features-values.yaml
+	helm lint charts/querdian -f charts/querdian/ci/hub-values.yaml
+	helm lint charts/querdian -f charts/querdian/ci/spoke-values.yaml
 	go test ./charts/...
 
 # hashicorp/go-uuid (MPL-2.0, file-level copyleft, used unmodified) arrives via prometheus/common >= v0.73.0.
