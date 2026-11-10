@@ -38,6 +38,16 @@ annotations:
       name: accesspolicies.policy.querdian.dev
       displayName: AccessPolicy
       description: Grants users or groups read access to the metrics, logs and traces of the policy's own namespace.
+    - kind: SpokeCluster
+      version: v1alpha1
+      name: spokeclusters.policy.querdian.dev
+      displayName: SpokeCluster
+      description: Registers a spoke cluster on the hub of a multi-cluster deployment, with its agent identity and tenant allow-list.
+    - kind: SpokePolicy
+      version: v1alpha1
+      name: spokepolicies.policy.querdian.dev
+      displayName: SpokePolicy
+      description: Hub copy of one policy of a spoke cluster. Only the receiver writes these objects.
   artifacthub.io/crdsExamples: |
     - apiVersion: policy.querdian.dev/v1alpha1
       kind: ClusterAccessPolicy
@@ -65,3 +75,28 @@ annotations:
                 - name: customer_id
                   strategy: Placeholder
           - backends: [logs, traces]
+    - apiVersion: policy.querdian.dev/v1alpha1
+      kind: SpokeCluster
+      metadata:
+        name: cluster-a
+      spec:
+        identity: spiffe://mla.example.com/agent/cluster-a
+        tenants: [demo]
+        defaultTenant: demo
+    - apiVersion: policy.querdian.dev/v1alpha1
+      kind: SpokePolicy
+      metadata:
+        name: sp-481bb663dbc54cddbfc3c77e4dac1c37e692fe1d8ebbe1fff46ff628834b0bcf
+        labels:
+          policy.querdian.dev/cluster: cluster-a
+      spec:
+        cluster: cluster-a
+        kind: AccessPolicy
+        namespace: order-service
+        name: order-team
+        generation: 1
+        accessPolicy:
+          subjects:
+            groups: [order-team]
+          rules:
+            - backends: [metrics]

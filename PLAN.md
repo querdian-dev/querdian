@@ -913,6 +913,11 @@ Querdian refuses to start in these conditions:
 - `hubCluster` is empty. A matcher `cluster=""` also accepts data with no cluster label.
 - `maxStaleness` is present with a zero or negative value. If it is absent, the default applies.
 - A backend has no `clusterLabel`, or the name is not valid for the backend type.
+- A Tempo backend has a `clusterLabel` that does not start with `resource.`. An application can set
+  its own span attributes, so a `span.` attribute does not identify the cluster. An application can
+  also set resource attributes, for example with `OTEL_RESOURCE_ATTRIBUTES`. Thus the `resource.`
+  attribute is correct only if the ingest gateway writes it and overwrites the value of the SDK
+  (§18.8), as §12 requires for `resource.k8s.namespace.name`.
 - A backend has `clusterLabel`, but the `multicluster` block is absent. Without the block, a hub
   `AccessPolicy` loses its cluster matcher and also matches namespace X of each spoke. This check stops an
   accidental rollback.
