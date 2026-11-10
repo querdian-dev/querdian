@@ -4,6 +4,8 @@ package multicluster
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"slices"
@@ -20,6 +22,7 @@ import (
 	"github.com/querdian-dev/querdian/internal/config"
 	"github.com/querdian-dev/querdian/internal/controller"
 	"github.com/querdian-dev/querdian/internal/policy"
+	"github.com/querdian-dev/querdian/test/e2e/framework"
 )
 
 // testIsolation: a policy of spoke A never returns data of spoke B on all three backends, also for the
@@ -113,9 +116,23 @@ func testMetadataIsolation(t *testing.T, f *fixture) {
 	t.Run("tempo-trace-by-id", func(t *testing.T) {
 		c := f.as(t, team)
 		accept := map[string]string{"Accept": "application/json"}
-		own := c.GetWith(traces.prefix+"/api/traces/"+f.b.traceID(t, rec{clusterA, nsTeam}, noTenant), window, accept)
-		if own.Status != http.StatusOK || len(own.Body) == 0 {
-			t.Errorf("trace of cluster-a/team for %s: got %d %s; want 200 with the trace", team, own.Status, own.Body)
+		ownRec := rec{clusterA, nsTeam}
+		ownID := f.b.traceID(t, ownRec, noTenant)
+		own := c.GetWith(traces.prefix+"/api/traces/"+ownID, window, accept)
+		if own.Status != http.StatusOK {
+			t.Errorf("trace of %s for %s: got %d %.300s; want 200 with the trace", ownRec, team, own.Status, own.Body)
+		} else {
+			// The seeded trace has one span, with the resource attributes of its record.
+			spans := traceSpans(t, own)
+			if len(spans) == 0 {
+				t.Errorf("trace of %s for %s: no spans in %.300s", ownRec, team, own.Body)
+			}
+			for _, sp := range spans {
+				if sp.traceID != ownID || sp.r != ownRec {
+					t.Errorf("trace of %s for %s: got a span of trace %s and record %s; want trace %s and record %s",
+						ownRec, team, sp.traceID, sp.r, ownID, ownRec)
+				}
+			}
 		}
 		for _, r := range []rec{{clusterB, nsTeam}, {hubCluster, nsTeam}, {noCluster, nsTeam}} {
 			other := c.GetWith(traces.prefix+"/api/traces/"+f.b.traceID(t, r, noTenant), window, accept)
@@ -124,6 +141,59 @@ func testMetadataIsolation(t *testing.T, f *fixture) {
 			}
 		}
 	})
+}
+
+// traceSpan is one span of a Tempo trace: its trace ID (hex) and the record of its resource attributes.
+type traceSpan struct {
+	traceID string
+	r       rec
+}
+
+// traceSpans decodes the JSON body of /api/traces/<id> (version 1: the resource spans are in batches).
+func traceSpans(t *testing.T, r *framework.Response) []traceSpan {
+	t.Helper()
+	type attr struct {
+		Key   string `json:"key"`
+		Value struct {
+			StringValue string `json:"stringValue"`
+		} `json:"value"`
+	}
+	var d struct {
+		Batches []struct {
+			Resource struct {
+				Attributes []attr `json:"attributes"`
+			} `json:"resource"`
+			ScopeSpans []struct {
+				Spans []struct {
+					TraceID string `json:"traceId"`
+				} `json:"spans"`
+			} `json:"scopeSpans"`
+		} `json:"batches"`
+	}
+	r.JSON(t, &d)
+	var out []traceSpan
+	for _, b := range d.Batches {
+		var res rec
+		for _, a := range b.Resource.Attributes {
+			switch a.Key {
+			case "cluster":
+				res.cluster = a.Value.StringValue
+			case "namespace":
+				res.ns = a.Value.StringValue
+			}
+		}
+		for _, ss := range b.ScopeSpans {
+			for _, sp := range ss.Spans {
+				// The JSON form of Tempo encodes the ID bytes in base64.
+				raw, err := base64.StdEncoding.DecodeString(sp.TraceID)
+				if err != nil {
+					t.Fatalf("trace id %q: %v", sp.TraceID, err)
+				}
+				out = append(out, traceSpan{hex.EncodeToString(raw), res})
+			}
+		}
+	}
+	return out
 }
 
 func labelValues(t *testing.T, f *fixture, group, path string, q url.Values) []string {
