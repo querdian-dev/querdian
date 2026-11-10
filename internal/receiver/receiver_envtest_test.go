@@ -517,6 +517,31 @@ func TestCrossSpokeIsolation(t *testing.T) {
 	if !lastSync(t, "a").Equal(before) {
 		t.Fatal("failed sync renewed lastSyncTime")
 	}
+
+	// An object of a with the name of policy y, but with the source of policy q: the sync fails with 500,
+	// not with a 400 that blames the policy of the spoke, and changes nothing.
+	if err := direct.Delete(ctx, squat); err != nil {
+		t.Fatal(err)
+	}
+	y := capSrc("y")
+	own := &v1.SpokePolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: spokesync.ObjectName("a", &y), Labels: map[string]string{spokesync.ClusterLabel: "a"}},
+		Spec:       v1.SpokePolicySpec{Cluster: "a", SpokePolicySource: capSrc("q")},
+	}
+	if err := direct.Create(ctx, own); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = direct.Delete(ctx, own) })
+	h.clock.Advance(time.Minute)
+	if code, _ := h.full(certA, y); code != http.StatusInternalServerError {
+		t.Fatalf("sync onto an own object of a different policy: status %d", code)
+	}
+	if err := direct.Get(ctx, client.ObjectKey{Name: own.Name}, &p); err != nil || p.Spec.Name != "q" {
+		t.Fatalf("object changed: %v", err)
+	}
+	if !lastSync(t, "a").Equal(before) {
+		t.Fatal("failed sync renewed lastSyncTime")
+	}
 }
 
 func TestConcurrentSyncConflict(t *testing.T) {

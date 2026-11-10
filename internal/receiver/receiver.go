@@ -36,7 +36,9 @@ import (
 const (
 	DefaultMaxBodyBytes = 8 << 20
 	DefaultMaxPolicies  = 2000
-	DefaultMaxInFlight  = 16
+	// DefaultMaxInFlight keeps the memory below about 512 MiB: a request with the default limits uses
+	// at most about 50 MiB (the body and the typed decode at the value limit).
+	DefaultMaxInFlight = 8
 	// DefaultRequestBurst and DefaultRequestInterval limit the requests of one identity (PLAN §18.5): a burst
 	// of DefaultRequestBurst requests, then one request for each DefaultRequestInterval. An agent with the
 	// lowest heartbeat interval (10 seconds) and a change at each heartbeat sends a heartbeat and a full sync
@@ -141,6 +143,8 @@ func New(o Options) *Receiver {
 type rejection struct {
 	status int
 	msg    string
+	// quiet logs the rejection at debug level, for repeated rejections of one cause.
+	quiet bool
 }
 
 func (e *rejection) Error() string { return e.msg }
@@ -173,8 +177,11 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			rej = &rejection{status: http.StatusInternalServerError, msg: "internal error"}
 		}
 		level := slog.LevelInfo
-		if rej.status >= http.StatusInternalServerError {
+		switch {
+		case rej.status >= http.StatusInternalServerError:
 			level = slog.LevelError
+		case rej.quiet:
+			level = slog.LevelDebug
 		}
 		r.log.Log(req.Context(), level, "sync rejected", "identity", identity, "status", rej.status, "error", err.Error())
 		switch rej.status {
@@ -316,8 +323,9 @@ func (r *Receiver) release(set map[string]bool, key string) {
 
 // bucket is the token bucket of one identity.
 type bucket struct {
-	tokens float64
-	at     time.Time // time of the last update of tokens
+	tokens  float64
+	at      time.Time // time of the last update of tokens
+	limited bool      // the last request was rejected
 }
 
 // allowRequest takes one token from the bucket of identity. A bucket holds up to r.burst tokens and gets one
@@ -338,10 +346,14 @@ func (r *Receiver) allowRequest(identity string) error {
 	if allowed {
 		b.tokens--
 	}
+	repeated := !allowed && b.limited
+	b.limited = !allowed
 	r.buckets[identity] = b
 	r.pruneBuckets(now)
 	if !allowed {
-		return reject(http.StatusTooManyRequests, "too many requests")
+		// The first rejection of a series goes to the log at info level, the others at debug level, so that
+		// a spoke in a loop cannot fill the log of the hub.
+		return &rejection{status: http.StatusTooManyRequests, msg: "too many requests", quiet: repeated}
 	}
 	return nil
 }
@@ -364,7 +376,7 @@ func (r *Receiver) pruneBuckets(now time.Time) {
 
 // allowChange records the start of a changed sync. It rejects the sync if the last changed sync of the
 // cluster started less than ChangeInterval ago. It records the time before apply on purpose: a sync that
-// then fails, for example with 409, also delays the retry. PLAN §18.5 accepts this delay of one retry.
+// then fails, for example with 409, also delays the retry. PLAN §18.6 accepts this delay of one retry.
 func (r *Receiver) allowChange(cluster string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -551,6 +563,12 @@ func (r *Receiver) apply(ctx context.Context, sc *v1.SpokeCluster, st *storedSta
 			}
 			if cur.DeletionTimestamp != nil {
 				return nil, internalError(fmt.Errorf("object %s has a deletion timestamp", it.name))
+			}
+			if spokesync.Key(&cur.Spec.SpokePolicySource) != spokesync.Key(it.src) {
+				// Only someone with write access to the hub can make such an object. The CEL rules make
+				// kind, namespace and name immutable, so an update fails. The spoke cannot repair it, and
+				// the fault is not in its policy, so the answer is 500 and the log names the object.
+				return nil, internalError(fmt.Errorf("object %s has the name of a different policy; delete it", it.name))
 			}
 		}
 		if err := r.guard(ctx, sc); err != nil {
