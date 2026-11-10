@@ -41,6 +41,7 @@ lists every reason the server can set.
 | `enforcement_error` | error | 500 | `internal` | An untyped, unexpected error in an enforcer. Fails closed. | Report a bug with the trace ID. |
 | `trace_filter_failed` | error | 500 | `internal` | The trace-by-ID filter could not be built from the user's policy (for example a tenant-bound term on Tempo or an unscoped attribute name). | Check the policy attribute names (`resource.x`, `span.x`) and tenant setup. |
 | `merge_budget_exhausted` | error | 503 | `unavailable` | The request was allowed and fanned out, but the buffered fan-out bodies of all concurrent requests of the replica reached `limits.maxInflightMergeBytes`, and an older fan-out had the first claim on the space. The request fails closed; the response has `Retry-After` (1 to 3 seconds). | Try again. If it occurs often, reduce concurrent large fan-outs (narrow queries, fewer policy terms), add replicas, or raise `maxInflightMergeBytes` together with the pod memory limit (see [operations.md](operations.md#scaling)). |
+| `write_not_bounded` | error | 500 | `internal` | The merged response of a fan-out was ready, but the response writer cannot set a write deadline (message `cannot bound the response write`). The request fails closed, because without a deadline a client that does not read could hold the memory budget. The listeners of Querdian support write deadlines, so this indicates a build or wiring problem. | Report a bug with the trace ID. |
 | `upstream_error` | error | 5xx (normally 502) | `upstream` or `merge_too_large` | The request was allowed but the response status was 5xx: the backend failed, a fan-out branch failed, the timeout elapsed, the buffered merge exceeded `limits.maxMergeBytes`, a filter could not process the body, or a WebSocket tail could not connect. | See "Upstream errors" below. |
 
 Authentication failure sub-reasons (`querdian_auth_failures_total{reason}`; the HTTP response is
@@ -113,7 +114,7 @@ topk(10, sum by (backend, endpoint, reason) (increase(querdian_requests_total{de
 Any request that failed closed unexpectedly (should be zero):
 
 ```promql
-sum by (reason) (increase(querdian_requests_total{reason=~"internal|resolve_failed|enforcement_error|trace_filter_failed|enforcer_unavailable"}[15m])) > 0
+sum by (reason) (increase(querdian_requests_total{reason=~"internal|resolve_failed|enforcement_error|trace_filter_failed|enforcer_unavailable|write_not_bounded"}[15m])) > 0
 ```
 
 Denied-label rejections and unsupported queries (the two reasons users complain about most):

@@ -165,7 +165,7 @@ func (l *Lease) Bytes() int64 {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.n
+	return max(l.n, 0) // a released lease has n = -1
 }
 
 // Resize changes the reservation of the lease to n bytes (n < 0 means 0). It returns false, and changes

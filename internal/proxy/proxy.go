@@ -64,9 +64,25 @@ type Target struct {
 	// backends print whole series label sets in some query errors (Prometheus "found duplicate series",
 	// Loki "pipeline error ... for series"), and the result rewriters only see successful responses.
 	HideUpstreamErrors bool
-	// BudgetExhausted is called when Execute rejects the request with 503 because the process-wide
-	// Budget is full. The server uses it to record the reason. Nil ignores it.
-	BudgetExhausted func()
+	// Rejected is called with a fixed reason (ReasonMergeBudgetExhausted, ReasonWriteNotBounded) when
+	// Execute rejects an allowed request for a cause in the proxy itself. The server uses it to record the
+	// reason. Nil ignores it.
+	Rejected func(reason string)
+}
+
+// Fixed reasons given to Target.Rejected.
+const (
+	// ReasonMergeBudgetExhausted: the process-wide Budget was full (503).
+	ReasonMergeBudgetExhausted = "merge_budget_exhausted"
+	// ReasonWriteNotBounded: the response writer cannot set a write deadline for a merged response (500).
+	ReasonWriteNotBounded = "write_not_bounded"
+)
+
+// reject reports reason through t.Rejected, if it is set.
+func (t Target) reject(reason string) {
+	if t.Rejected != nil {
+		t.Rejected(reason)
+	}
 }
 
 // withheldDetail replaces the upstream error text when Target.HideUpstreamErrors is set.
@@ -130,6 +146,8 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 		err = errFilterTooLarge
 	}
 	if err != nil {
+		// An error response must not hold the budget while it is written.
+		lease.Release()
 		p.logger().WarnContext(ctx, "merge failed", "backend", t.Backend.Name, "route", t.Endpoint.Template,
 			"branches", n, "error", err.Error())
 		if errors.Is(err, errFilterTooLarge) {
@@ -141,10 +159,11 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	}
 	// From now on the budget holds only the merged output, until it is written or the write fails.
 	if !lease.Resize(int64(len(out.body))) {
+		lease.Release()
 		p.writeFanoutError(w, r, t, fanout.ErrBudgetExhausted)
 		return
 	}
-	p.writeBuffered(w, r, t, out)
+	p.writeBuffered(w, r, t, out, lease)
 }
 
 // Bounds of the write of a merged response: mergeWriteBase plus one second for each MiB, at most
@@ -164,11 +183,13 @@ func (p *Proxy) mergeWriteTimeout(size int) time.Duration {
 
 // writeBuffered writes a buffered merged response with a write deadline, so that a client that does not
 // read cannot hold the buffer and its budget for an unbounded time. When the deadline cannot be set, the
-// request fails closed.
-func (p *Proxy) writeBuffered(w http.ResponseWriter, r *http.Request, t Target, out *bufferedWriter) {
+// request fails closed; the lease is released before the error is written.
+func (p *Proxy) writeBuffered(w http.ResponseWriter, r *http.Request, t Target, out *bufferedWriter, lease *fanout.Lease) {
 	rc := http.NewResponseController(w)
 	if err := rc.SetWriteDeadline(time.Now().Add(p.mergeWriteTimeout(len(out.body)))); err != nil {
+		lease.Release()
 		p.logger().WarnContext(r.Context(), "cannot set write deadline", "backend", t.Backend.Name, "error", err.Error())
+		t.reject(ReasonWriteNotBounded)
 		WriteError(w, r, http.StatusInternalServerError, "internal", "cannot bound the response write")
 		return
 	}
@@ -378,16 +399,14 @@ func (b *bufferedWriter) TakeBody(body []byte) {
 }
 
 // writeFanoutError reports a failed fan-out. With t.HideUpstreamErrors, a branch that failed with a status is
-// reported without the snippet of its body. A full budget is also reported through t.BudgetExhausted.
+// reported without the snippet of its body. A full budget is also reported through t.Rejected.
 func (p *Proxy) writeFanoutError(w http.ResponseWriter, r *http.Request, t Target, err error) {
 	var ue *fanout.UpstreamError
 	switch {
 	case errors.Is(err, fanout.ErrMergeTooLarge):
 		WriteError(w, r, http.StatusBadGateway, "merge_too_large", "merged response too large")
 	case errors.Is(err, fanout.ErrBudgetExhausted):
-		if t.BudgetExhausted != nil {
-			t.BudgetExhausted()
-		}
+		t.reject(ReasonMergeBudgetExhausted)
 		// 1 to 3 seconds, so that the clients do not all try again at the same time.
 		w.Header().Set("Retry-After", strconv.Itoa(1+rand.IntN(3))) //nolint:gosec // jitter, not a secret
 		WriteError(w, r, http.StatusServiceUnavailable, errorTypeUnavailable,

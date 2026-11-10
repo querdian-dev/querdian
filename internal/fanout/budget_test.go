@@ -227,6 +227,9 @@ func TestLeaseResize(t *testing.T) {
 		t.Fatalf("grow past the limit must fail and change nothing: in use %d", b.InUse())
 	}
 	l.Release()
+	if l.Bytes() != 0 {
+		t.Fatalf("a released lease holds %d bytes", l.Bytes())
+	}
 	if l.Resize(10) || b.InUse() != 0 {
 		t.Fatalf("a released lease must not grow: in use %d", b.InUse())
 	}

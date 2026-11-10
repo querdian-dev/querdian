@@ -364,7 +364,7 @@ func TestFanoutHeadersAndMerge(t *testing.T) {
 }
 
 // A fan-out that finds the shared budget full while an older fan-out still reads fails closed with 503 and
-// reports it through Target.BudgetExhausted. During the merge the budget holds the bodies; after the request it
+// reports it through Target.Rejected. During the merge the budget holds the bodies; after the request it
 // holds nothing.
 func TestFanoutBudgetExhausted(t *testing.T) {
 	up := httptest.NewServer((&recorder{}).handler(200, strings.Repeat("x", 400)))
@@ -374,7 +374,11 @@ func TestFanoutBudgetExhausted(t *testing.T) {
 	p.Budget = fanout.NewBudget(1000)
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
 	var exhausted int
-	target := Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query", BudgetExhausted: func() { exhausted++ }}
+	target := Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query", Rejected: func(reason string) {
+		if reason == ReasonMergeBudgetExhausted {
+			exhausted++
+		}
+	}}
 
 	// An older fan-out holds 600 bytes and still reads.
 	release := holdBudget(t, p.Budget, 600)

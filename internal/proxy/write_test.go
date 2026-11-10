@@ -129,7 +129,11 @@ func TestFanoutMergedOutputOverBudget(t *testing.T) {
 	var held *fanout.Lease
 	var exhausted int
 	target := fanoutTarget(t, strings.Repeat("x", 100))
-	target.BudgetExhausted = func() { exhausted++ }
+	target.Rejected = func(reason string) {
+		if reason == ReasonMergeBudgetExhausted {
+			exhausted++
+		}
+	}
 	w := newRecorder()
 	p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), target, fanPlan(2),
 		func(w http.ResponseWriter, _ *http.Request, _ []fanout.Response) error {
@@ -197,5 +201,75 @@ func TestFanoutClientThatDoesNotRead(t *testing.T) {
 	n, _ := io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != 200 || n != 2*branch || p.Budget.InUse() != 0 {
 		t.Fatalf("other request: %d, %d bytes, budget in use %d", resp.StatusCode, n, p.Budget.InUse())
+	}
+}
+
+// probeWriter records the bytes in use of a budget when the response is written, and fails the write.
+type probeWriter struct {
+	header http.Header
+	budget *fanout.Budget
+	status int
+	inUse  []int64
+}
+
+func (p *probeWriter) Header() http.Header  { return p.header }
+func (p *probeWriter) WriteHeader(code int) { p.status = code }
+func (p *probeWriter) Write([]byte) (int, error) {
+	p.inUse = append(p.inUse, p.budget.InUse())
+	return 0, io.ErrClosedPipe
+}
+
+// deadlineProbeWriter is a probeWriter that accepts a write deadline.
+type deadlineProbeWriter struct{ probeWriter }
+
+func (*deadlineProbeWriter) SetWriteDeadline(time.Time) error { return nil }
+
+// Each error response of a fan-out is written after the budget is released, so a client that does not
+// read an error response holds no budget. The server gets the fixed reason of a rejection by the proxy.
+func TestFanoutErrorResponsesHoldNoBudget(t *testing.T) {
+	failMerge := func(http.ResponseWriter, *http.Request, []fanout.Response) error { return io.ErrUnexpectedEOF }
+	tooLarge := func(w http.ResponseWriter, _ *http.Request, _ []fanout.Response) error {
+		_, _ = w.Write(make([]byte, 2000))
+		return nil
+	}
+	for _, tc := range []struct {
+		name       string
+		merge      Merger
+		deadline   bool
+		wantStatus int
+		wantReason string
+	}{
+		{"merge error", failMerge, true, http.StatusBadGateway, ""},
+		{"merged output too large", tooLarge, true, http.StatusBadGateway, ""},
+		{"no write deadline", concat, false, http.StatusInternalServerError, ReasonWriteNotBounded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newProxy()
+			p.Limits.MaxMergeBytes = 1000
+			p.Budget = fanout.NewBudget(1000)
+			var reason string
+			target := fanoutTarget(t, strings.Repeat("x", 400))
+			target.Rejected = func(r string) { reason = r }
+			probe := &deadlineProbeWriter{probeWriter{header: http.Header{}, budget: p.Budget}}
+			var w http.ResponseWriter = probe
+			if !tc.deadline {
+				w = &probe.probeWriter
+			}
+			p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), target, fanPlan(2), tc.merge)
+			if probe.status != tc.wantStatus || reason != tc.wantReason {
+				t.Fatalf("status %d, reason %q; want %d, %q", probe.status, reason, tc.wantStatus, tc.wantReason)
+			}
+			if len(probe.inUse) == 0 {
+				t.Fatal("no error response was written")
+			}
+			for _, n := range probe.inUse {
+				if n != 0 {
+					t.Fatalf("budget held %d bytes while the error response was written", n)
+				}
+			}
+			if got := p.Budget.InUse(); got != 0 {
+				t.Fatalf("budget in use after the request = %d", got)
+			}
+		})
 	}
 }
