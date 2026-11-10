@@ -397,9 +397,19 @@ const TemplateInvalid = "(template that does not parse)"
 // templateFuncs is the allow-list of functions that a line_format or
 // label_format template can call while labels are denied. It holds the Go
 // template built-ins and the Loki template functions that cannot take a label
-// name, build a label name, or read the whole label map. The built-ins index,
-// slice and call are not in the list: index looks up a label by a name that
-// the query can build at run time.
+// name, build a label name, or read the whole label map. The Go built-ins
+// that are not in the list are in [templateRejectedFuncs].
+//
+// The list is safe only because of two facts:
+//
+//  1. No function in the list looks up a label by name or gets the label map
+//     in a different way.
+//  2. The label map never gets to a function as an argument, because the check
+//     rejects ".", "$" variables and chained fields.
+//
+// The Loki function names come from the Loki 3.x documentation page
+// "Template functions" (the e2e suites use Loki 3.7.9). Before you add a name,
+// make sure that the function agrees with the two facts.
 var templateFuncs = map[string]struct{}{
 	// Go text/template built-ins.
 	"and": {}, "or": {}, "not": {}, "len": {}, "print": {}, "printf": {}, "println": {},
@@ -421,6 +431,15 @@ var templateFuncs = map[string]struct{}{
 	"int": {}, "float64": {},
 }
 
+// templateRejectedFuncs are the Go text/template built-ins that are not in
+// [templateFuncs]. index looks up a label by a name that the query can build
+// at run time. slice and call are not necessary for log formats.
+var templateRejectedFuncs = map[string]struct{}{"index": {}, "slice": {}, "call": {}}
+
+// templateTreeName is the name of the parse tree in [templateCheck]. The check
+// does not depend on the name that Loki gives to its templates.
+const templateTreeName = "line_format"
+
 // templateCheck parses tmpl as a Go template with the default delimiters and
 // returns "" if every node of the tree is in the allow-list. Otherwise it
 // returns the denied label that a field reads, [TemplateAllLabels] for a node
@@ -431,21 +450,33 @@ var templateFuncs = map[string]struct{}{
 // rejected, for example ".", "$" variables, chained fields such as .a.b,
 // range, with, template, block, define, break and continue.
 func templateCheck(tmpl string, denied map[string]struct{}) string {
-	tree := parse.New("line_format")
+	tree := parse.New(templateTreeName)
 	tree.Mode = parse.SkipFuncCheck
 	trees := map[string]*parse.Tree{}
 	if _, err := tree.Parse(tmpl, "", "", trees); err != nil {
 		return TemplateInvalid
 	}
-	for name := range trees {
-		if name != tree.Name {
-			return TemplateAllLabels // define or block
+	// A define or block action adds a tree. With an empty main body, a
+	// define with the name of the main tree replaces it, and text/template
+	// then runs the body of the define. Thus accept only exactly one tree,
+	// and only when it is the main tree.
+	if len(trees) != 1 || trees[tree.Name] != tree {
+		return TemplateAllLabels
+	}
+	// Check every tree in the set, not only the main tree, as a second
+	// protection.
+	for _, t := range trees {
+		if t == nil {
+			return TemplateAllLabels
+		}
+		if t.Root == nil {
+			continue
+		}
+		if r := templateNode(t.Root, denied); r != "" {
+			return r
 		}
 	}
-	if tree.Root == nil {
-		return ""
-	}
-	return templateNode(tree.Root, denied)
+	return ""
 }
 
 // templateNode checks one node of a parsed template and its children. See
@@ -506,8 +537,9 @@ func templateNode(n parse.Node, denied map[string]struct{}) string {
 		return TemplateAllLabels
 	default:
 		// DotNode, VariableNode, ChainNode, RangeNode, WithNode,
-		// TemplateNode, BreakNode, ContinueNode, CommentNode and any
-		// node type that a later Go version adds.
+		// TemplateNode (from template and block actions), BreakNode,
+		// ContinueNode, CommentNode and any node type that a later Go
+		// version adds.
 		return TemplateAllLabels
 	}
 }

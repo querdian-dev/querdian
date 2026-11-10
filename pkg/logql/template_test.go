@@ -2,6 +2,12 @@ package logql
 
 import (
 	"fmt"
+	"go/ast"
+	goparser "go/parser"
+	"go/token"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"text/template"
@@ -79,6 +85,106 @@ var templateDeniedQueries = []string{
 	`{app="x"} | label_format a="{{ if .app }}"`,
 }
 
+// templateTestTreeNames are tree names that a template engine can give to a
+// line_format or label_format template. The check must not depend on them.
+var templateTestTreeNames = []string{templateTreeName, "label_format", "line", "label", "t"}
+
+// templateDefineCases returns templates with a define action for each name of
+// templateTestTreeNames, with an empty and with a non-empty main body. The
+// check must reject all of them.
+func templateDefineCases() []string {
+	var out []string
+	for _, name := range templateTestTreeNames {
+		q := strconv.Quote(name)
+		out = append(out,
+			"{{define "+q+"}}{{ . }}{{end}}",
+			"{{define "+q+"}}{{ .secret }}{{end}}",
+			"{{ define "+q+" }}{{ .app }}{{ end }}",
+			"x{{define "+q+"}}{{ . }}{{end}}",
+			"{{ .app }}{{define "+q+"}}{{ .secret }}{{end}}",
+			"{{define "+q+"}}{{ . }}{{end}}{{ .app }}",
+			"{{block "+q+" .}}{{ .app }}{{end}}",
+		)
+	}
+	return out
+}
+
+func TestTemplateCheckDefine(t *testing.T) {
+	denied := map[string]struct{}{"secret": {}, "customer_id": {}}
+	for _, tmpl := range templateDefineCases() {
+		if templateCheck(tmpl, denied) == "" {
+			t.Errorf("templateCheck(%q) accepted a define", tmpl)
+		}
+		for _, stage := range []string{"line_format ", "label_format a="} {
+			q := `{app="x"} | ` + stage + "`" + tmpl + "`"
+			if _, found, err := DeniedLabel(mustParse(t, q), templateDeniedNames); err != nil || !found {
+				t.Errorf("DeniedLabel(%s) = %v,%v want denied", q, found, err)
+			}
+		}
+	}
+}
+
+// goTemplateBuiltins returns the names in the built-in function map of the
+// Go text/template package. It reads the source of the Go toolchain that runs
+// the test.
+func goTemplateBuiltins(t *testing.T) []string {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("go env GOROOT: %v", err)
+	}
+	file := filepath.Join(strings.TrimSpace(string(out)), "src", "text", "template", "funcs.go")
+	f, err := goparser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	var names []string
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != "builtins" || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if kv, ok := n.(*ast.KeyValueExpr); ok {
+				if lit, ok := kv.Key.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					name, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					names = append(names, name)
+				}
+			}
+			return true
+		})
+	}
+	if len(names) == 0 {
+		t.Fatalf("no built-in functions found in %s", file)
+	}
+	return names
+}
+
+// TestTemplateBuiltinsKnown fails when Go text/template gets a built-in
+// function that is not in templateFuncs or templateRejectedFuncs. Decide for
+// each new built-in if it agrees with the two facts in templateFuncs.
+func TestTemplateBuiltinsKnown(t *testing.T) {
+	builtins := goTemplateBuiltins(t)
+	for _, name := range builtins {
+		_, ok := templateFuncs[name]
+		_, rej := templateRejectedFuncs[name]
+		if ok == rej {
+			t.Errorf("Go template built-in %q must be in exactly one of templateFuncs and templateRejectedFuncs", name)
+		}
+	}
+	for name := range templateRejectedFuncs {
+		if !strings.Contains(" "+strings.Join(builtins, " ")+" ", " "+name+" ") {
+			t.Errorf("rejected function %q is not a Go built-in", name)
+		}
+	}
+	if templateCheck("{{ index .app 0 }}", nil) == "" || templateCheck("{{ len .app }}", nil) != "" {
+		t.Error("the allow-list and the reject list do not apply")
+	}
+}
+
 // templateAllowedQueries must all be accepted by [DeniedLabel] with
 // templateDeniedNames.
 var templateAllowedQueries = []string{
@@ -149,7 +255,7 @@ func templateFuncsTestFor() template.FuncMap {
 			fm[name] = stub
 		}
 	}
-	for _, name := range []string{"index", "slice", "call"} {
+	for name := range templateRejectedFuncs {
 		fm[name] = stub
 	}
 	fm["printf"] = func(format string, args ...any) (string, error) {
@@ -174,9 +280,9 @@ func templateFuncsTestFor() template.FuncMap {
 
 // runTemplate executes tmpl over labels with real text/template. It fails the
 // test if the execution does not stop within a time limit.
-func runTemplate(t *testing.T, tmpl string, labels map[string]string) (string, error) {
+func runTemplate(t *testing.T, name, tmpl string, labels map[string]string) (string, error) {
 	t.Helper()
-	tp, err := template.New("t").Funcs(templateFuncsTestFor()).Parse(tmpl)
+	tp, err := template.New(name).Funcs(templateFuncsTestFor()).Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
@@ -203,6 +309,7 @@ func runTemplate(t *testing.T, tmpl string, labels map[string]string) (string, e
 // text/template must never print the canary value of a denied label. The test
 // executes the template two times with different canary values under the
 // denied keys. The output and the error must be the same in the two runs.
+// It does this for the tree name of the check and for other tree names.
 func FuzzTemplateDenied(f *testing.F) {
 	for _, list := range [][]string{templateDeniedQueries, templateAllowedQueries} {
 		for _, q := range list {
@@ -221,6 +328,9 @@ func FuzzTemplateDenied(f *testing.F) {
 			}
 		}
 	}
+	for _, tmpl := range templateDefineCases() {
+		f.Add(tmpl)
+	}
 	denied := map[string]struct{}{}
 	for _, d := range templateDeniedNames {
 		denied[d] = struct{}{}
@@ -236,16 +346,19 @@ func FuzzTemplateDenied(f *testing.F) {
 		if len(tmpl) > 4096 || templateCheck(tmpl, denied) != "" {
 			return
 		}
-		outA, errA := runTemplate(t, tmpl, labels(canaryA))
-		outB, errB := runTemplate(t, tmpl, labels(canaryB))
-		// The canaries differ, so equal results show that no denied value
-		// reaches the output or an error. A canary in the output that the
-		// template builds from its own text is the same in both results.
-		if outA != outB || errString(errA) != errString(errB) {
-			t.Fatalf("template %q output depends on a denied label: %q / %q (%v / %v)", tmpl, outA, outB, errA, errB)
-		}
-		if strings.Contains(outA, canaryA) && !strings.Contains(tmpl, canaryA) && !strings.Contains(outB, canaryA) {
-			t.Fatalf("template %q prints the canary: %q", tmpl, outA)
+		for _, name := range []string{templateTreeName, "line", "label"} {
+			outA, errA := runTemplate(t, name, tmpl, labels(canaryA))
+			outB, errB := runTemplate(t, name, tmpl, labels(canaryB))
+			// The canaries differ, so equal results show that no denied
+			// value reaches the output or an error. A canary in the output
+			// that the template builds from its own text is the same in
+			// both results.
+			if outA != outB || errString(errA) != errString(errB) {
+				t.Fatalf("template %q (name %q) output depends on a denied label: %q / %q (%v / %v)", tmpl, name, outA, outB, errA, errB)
+			}
+			if strings.Contains(outA, canaryA) && !strings.Contains(tmpl, canaryA) && !strings.Contains(outB, canaryA) {
+				t.Fatalf("template %q (name %q) prints the canary: %q", tmpl, name, outA)
+			}
 		}
 	})
 }

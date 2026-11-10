@@ -158,6 +158,9 @@ func TestDeniedLabels(t *testing.T) {
 		`{app="x"} | line_format "{{ template \"x\" . }}"`,
 		`{app="x"} | line_format "{{ index .app 0 }}"`,
 		`{app="x"} | line_format "{{ .app "`,
+		"{app=\"x\"} | line_format `{{define \"line_format\"}}{{ . }}{{end}}`",
+		"{app=\"x\"} | label_format a=`{{define \"label_format\"}}{{ .secret }}{{end}}`",
+		"{app=\"x\"} | line_format `{{ .app }}{{define \"line\"}}{{ . }}{{end}}`",
 		`{app="x"} | label_format a="{{ end }}"`,
 	}
 	for _, q := range bad {
