@@ -881,8 +881,10 @@ central deployment needs this design before teams can use `AccessPolicy` safely.
   `mergeSingleLabel` skips a label that occurs twice in a term. A fuzz target must pin this property.
 - Under `multicluster`, each hub `ClusterAccessPolicy` rule must state its cluster scope, because a new
   spoke must not silently widen a grant. For each backend of the rule, one of these must be true:
-  - The rule has an `Equal` or `RegexMatch` matcher on the `clusterLabel` of that backend. A `NotEqual`
-    or `RegexNoMatch` matcher does not count, because it also matches each new spoke.
+  - The rule has a matcher on the `clusterLabel` of that backend that names a fixed, finite set of
+    non-empty cluster names: an `Equal`, or a `RegexMatch` such as `a|b` or `(a|b)-prod`. `NotEqual`,
+    `RegexNoMatch` and an open regex such as `.+` or `cluster-.*` do not count, because they also match
+    each new spoke. An empty value does not count, because it matches data with no cluster label.
   - The rule sets `allClusters: true`, and it has no matcher on the `clusterLabel` of that backend.
   - The rule sets `unrestricted: true`.
 
