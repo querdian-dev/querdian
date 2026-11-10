@@ -24,7 +24,10 @@ in [SECURITY.md](../../SECURITY.md). Related: [policy guide](../policy-guide.md)
 >   pod metadata; do not derive it from log content a workload controls. Do not expose the Loki
 >   push endpoint to workloads.
 > * Traces: set `resource.k8s.namespace.name` in the Collector with the `k8sattributes` processor
->   and **overwrite** whatever the SDK sent; reject spans for which the association fails.
+>   and **overwrite** whatever the SDK sent; reject spans for which the association fails. Use a
+>   `resource.` attribute as the `namespaceLabel` of a Tempo backend. Querdian also accepts a `span.`
+>   attribute there, but an application sets its span attributes itself. The `clusterLabel` of a
+>   Tempo backend must be a `resource.` attribute.
 >
 > If a workload can choose the label, it can place its data in another team's view and mislead
 > that team. If the label is derived from content that someone other than the platform controls
@@ -377,8 +380,9 @@ and the receiver, so its revocation takes longer:
   the snapshot, because expiry makes no Kubernetes event. A spoke is also expired when it is
   suspended, being deleted, has no valid sync of its current `metadata.generation`, is not yet in the
   snapshot with its current version (UID and generation, so a change of `SpokeCluster.spec`, such as
-  a smaller tenant allow-list, never applies late, also not for a deleted and re-created object), or has a `lastSyncTime` more than five minutes in the future. An expired rule keeps its `labels.deny` and
-  `labels.redact`, so expiry only narrows; a user left with no terms gets `403 policy_source_expired`.
+  a smaller tenant allow-list, never applies late, also not for a deleted and re-created object), or
+  has a `lastSyncTime` more than five minutes in the future. An expired rule keeps its `labels.deny`
+  and `labels.redact`, so expiry only narrows; a user left with no terms gets `403 policy_source_expired`.
   An open Loki tail closes within 10 seconds after a spoke in its terms expires, is suspended, or
   gets a new `SpokeCluster` version, so a smaller tenant allow-list also ends an open tail. A
   replica with the `multicluster` block is ready only after it has read all `SpokeCluster` objects.
@@ -507,7 +511,8 @@ backends ([multicluster.md](../multicluster.md#rollback)).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes, but close
    when a spoke in their terms expires, is suspended or gets a new spec (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
-7. No built-in rate limiting; memory use of merged responses scales with concurrency (section 8).
+7. The proxy has no built-in rate limiting; memory use of merged responses scales with concurrency
+   (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
 8. Multi-cluster: isolation between spokes relies on the ingest gateway overwriting the cluster label
    (section 1); a compromised receiver can grant the data of all spokes, and a stolen agent cert the
    data of its spoke until a hub admin suspends it (section 12); a revoked spoke policy stays active

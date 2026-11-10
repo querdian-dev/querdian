@@ -53,7 +53,8 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 * Grafana features that need denied endpoints degrade: for example the Prometheus metrics browser
   help text (`metadata`) is unavailable. Tempo gRPC streaming search is unsupported; disable
   streaming in the Grafana Tempo data source.
-* Nothing is rate limited or queued inside Querdian (see [operations.md](operations.md#scaling)).
+* The proxy does not rate limit or queue requests (see [operations.md](operations.md#scaling)). Only
+  `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
 * The proxy does not terminate TLS and does not authenticate to backends other than by setting the
   tenant header. Backends must be isolated at network level. The only Querdian component that
   terminates TLS is `querdian receiver` in a [multi-cluster](multicluster.md) setup: it requires an

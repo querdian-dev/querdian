@@ -332,12 +332,14 @@ receiver:
     annotations: {}
   # More flags, e.g. --max-body-bytes, --max-policies, --max-in-flight.
   extraArgs: []
+  # One request uses at most about 50 MiB with the default limits. The memory limit must be at least
+  # 64Mi plus 50Mi for each request of --max-in-flight (default 8). Raise it if you raise the flags.
   resources:
     requests:
       cpu: 50m
       memory: 64Mi
     limits:
-      memory: 256Mi
+      memory: 512Mi
   podAnnotations: {}
   podLabels: {}
   affinity: {}
@@ -356,7 +358,7 @@ agent:
   leaderElection:
     # Do not disable it with more than one replica.
     enabled: true
-  # Container port of /healthz and /readyz (--management-listen). The agent has no /metrics.
+  # Container port of /healthz, /readyz and /metrics (--management-listen).
   managementPort: 9090
   tls:
     # Secret (type kubernetes.io/tls) with tls.crt and tls.key: the client cert of the agent. Required.

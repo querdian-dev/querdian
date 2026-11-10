@@ -29,8 +29,10 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   policies; `querdian agent` runs in each spoke, reads its policies directly from the spoke API
   server, sends a digest at each heartbeat (default one minute) and the full state when it differs,
   and writes the `Ready` conditions back to the spoke objects. Both use leader election. The receiver
-  limits each agent identity to a burst of six requests, then one request each 5 seconds, and limits
-  the number of JSON values in a body.
+  limits each agent identity to a burst of six requests, then one request each 5 seconds, limits the
+  number of JSON values in a body, and handles at most 8 requests at a time (`--max-in-flight`). The
+  agent exports `querdian_agent_syncs_total{result}` and `querdian_agent_last_sync_timestamp_seconds`
+  on its management port.
 * New cluster-scoped kinds: `SpokeCluster` (short name `spoke`; a registered spoke with its agent
   identity, tenant allow-list, optional `defaultTenant`, `maxStaleness` and `suspended`) and
   `SpokePolicy` (short name `sp`; the hub copy of one spoke policy, written by the receiver only).

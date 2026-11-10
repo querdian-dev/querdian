@@ -183,6 +183,11 @@ spec:
         - {name: k8s_namespace_name, op: Equal, value: kube-system}
 ```
 
+Each matcher of a rule applies to each backend of the rule. If the backends of a rule have different
+cluster labels (`cluster` and `k8s_cluster_name` above), write one rule for each backend, as in the
+example. A rule with both backends and both cluster matchers compiles, but no data has both labels, so
+it grants nothing.
+
 Without the `multicluster` block, `allClusters` has no effect and the policy stays valid. After step 0
 you can therefore add `allClusters: true` or cluster matchers to the hub policies before you set the
 block.
@@ -400,13 +405,18 @@ the stored `SpokePolicy` objects directly from the API server, never from a cach
 | `--leader-election-namespace` | pod namespace | Namespace of the lease. |
 | `--max-body-bytes` | `8388608` (8 MiB) | Maximum size of a sync body (`413`). |
 | `--max-policies` | `2000` | Maximum number of policies in one full sync (`413`). It also sets the limit of JSON values in a body: 256 for each policy (`400`). |
-| `--max-in-flight` | `16` | Maximum number of requests in progress (`503`). |
+| `--max-in-flight` | `8` | Maximum number of requests in progress (`503`). |
 | `--log-level`, `--log-format` | `info`, `json` | As for the proxy. |
 
 Each agent identity can send a burst of six requests and then one request each 5 seconds (`429`).
 The receiver applies this limit before it reads the body, also to identities that are not registered.
 An agent sends at most a heartbeat and a full sync each heartbeat interval (at least 10 seconds), so
 the limit has no effect on a normal agent.
+
+* **Memory.** With the default limits, one request uses at most about 50 MiB: the body and the decoded
+  values at the value limit. Set the memory limit of the receiver to at least 64 MiB plus 50 MiB for
+  each request of `--max-in-flight`. The chart default is 512 MiB for `--max-in-flight=8`. If you raise
+  `--max-body-bytes`, `--max-policies` or `--max-in-flight`, raise the memory limit too.
 
 * **Readiness.** `/readyz` returns 200 only on the leader. A Service in front of the receiver
   therefore sends traffic only to the leader. One replica is the default. A second replica gives a
@@ -436,11 +446,11 @@ nothing, so an agent that has lost its API server cannot renew old policies.
 | `--tls-cert-file`, `--tls-key-file` | required | The agent cert and key. Read again before each request. |
 | `--tls-ca-file` | required | CA certs that verify the receiver cert. Read again before each request. |
 | `--heartbeat-interval` | `1m` | Time between two heartbeats, at least `10s`. |
-| `--request-timeout` | `30s` | Time limit for one request to the receiver. |
+| `--request-timeout` | `30s` | Time limit for one request to the receiver or to the spoke API server. One attempt (reads, sync and status writes) also has a time limit of two heartbeat intervals, from 1 to 5 minutes. |
 | `--leader-elect` | `true` | One agent sends at a time. |
 | `--leader-election-namespace` | pod namespace | Namespace of the lease. |
 | `--leader-election-id` | `querdian-agent` | Name of the lease. |
-| `--management-listen` | `:9090` | `/healthz` and `/readyz` (always 200). Empty disables it. |
+| `--management-listen` | `:9090` | `/healthz`, `/readyz` (always 200) and `/metrics`. Empty disables it. |
 | `--log-level`, `--log-format` | `info`, `json` | As for the proxy. |
 
 * At each heartbeat the agent sends the digest of its state. If the receiver has a different state,
@@ -452,6 +462,16 @@ nothing, so an agent that has lost its API server cannot renew old policies.
   sync reply, so spoke teams can use `kubectl get cap,ap`. The conditions show the last compile on the
   hub, so a new policy shows its state at the next heartbeat. The reply omits the hub-only
   information of `CrossTenantUnionUnsupported`: such a policy shows `Compiled`.
+* **Proxy.** The agent uses `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` for the connection to the
+  receiver. A proxy must pass TLS through, because the receiver checks the agent cert.
+* **Leader election.** With `--leader-elect=false`, run only one agent replica in a spoke. Two agents
+  with the same cert get `409` on each other's syncs and send twice the requests.
+* **Readiness and metrics.** `/readyz` does not depend on the hub, so a rollout of the agent does not
+  stop while the hub is down. Use the metrics to find a broken agent:
+  `querdian_agent_syncs_total{result}` counts the sync attempts (`ok`, `full_state_sent`, `retry`,
+  `error`), and `querdian_agent_last_sync_timestamp_seconds` is the Unix time of the last sync that
+  the receiver accepted. Alert if `time() - querdian_agent_last_sync_timestamp_seconds` is above a few
+  heartbeat intervals.
 * **RBAC.** `get`, `list`, `watch` on `clusteraccesspolicies`, `accesspolicies` and `namespaces`;
   `update`, `patch` on `clusteraccesspolicies/status` and `accesspolicies/status`; `get`, `create`,
   `update` on `coordination.k8s.io` `leases` in its own namespace. No other permission and no
