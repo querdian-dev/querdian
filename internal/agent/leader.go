@@ -102,17 +102,7 @@ func RunWithLeaderElection(ctx context.Context, le LeaderElection, run func(cont
 					done = d
 					mu.Unlock()
 					defer close(d)
-					// The loop stops when the lease is lost (lctx) or when the process stops (ctx).
-					rctx, rcancel := context.WithCancel(lctx)
-					defer rcancel()
-					defer context.AfterFunc(ctx, rcancel)()
-					if rctx.Err() != nil {
-						return // the lease was lost, or the process stopped, before this callback started
-					}
-					logger.Info("agent: this agent holds the lease", "identity", id)
-					if err := run(rctx); err != nil {
-						logger.Error("agent: sync loop stopped", "err", err)
-					}
+					lead(ctx, lctx, logger, id, run)
 				},
 				OnStoppedLeading: func() {},
 				OnNewLeader: func(holder string) {
@@ -132,6 +122,23 @@ func RunWithLeaderElection(ctx context.Context, le LeaderElection, run func(cont
 		}
 	}
 	return nil
+}
+
+// lead calls run while this agent holds the lease. The context of run ends when the lease is lost (lctx)
+// or when the process stops (ctx). If one of the two has ended already, lead does not call run.
+func lead(ctx, lctx context.Context, logger *slog.Logger, id string, run func(context.Context) error) {
+	rctx, rcancel := context.WithCancel(lctx)
+	defer rcancel()
+	defer context.AfterFunc(ctx, rcancel)()
+	// If ctx has ended already, AfterFunc calls rcancel in a different goroutine, maybe after this check.
+	// Thus check ctx here too.
+	if rctx.Err() != nil || ctx.Err() != nil {
+		return // the lease was lost, or the process stopped, before this callback started
+	}
+	logger.Info("agent: this agent holds the lease", "identity", id)
+	if err := run(rctx); err != nil {
+		logger.Error("agent: sync loop stopped", "err", err)
+	}
 }
 
 func orDefault(d, def time.Duration) time.Duration {
