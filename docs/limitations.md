@@ -55,6 +55,13 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
   streaming in the Grafana Tempo data source.
 * The proxy does not rate limit or queue requests (see [operations.md](operations.md#scaling)). Only
   `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
+* Fan-out bodies are limited per request (`limits.maxMergeBytes`, counted while the branches read)
+  and for all requests together (`limits.maxInflightMergeBytes`). When the process-wide budget is
+  full, a fan-out fails with `503 merge_budget_exhausted` and the client must try again; the proxy
+  does not wait for space. A request that holds part of the budget does not keep space for itself,
+  so under heavy load several large fan-outs can all fail at the same time. The budget counts body
+  bytes only: buffer growth, the merge step, the response filters and the trace-by-ID buffer use
+  more memory that it does not count (see [operations.md](operations.md#scaling)).
 * The proxy does not terminate TLS and does not authenticate to backends other than by setting the
   tenant header. Backends must be isolated at network level. The only Querdian component that
   terminates TLS is `querdian receiver` in a [multi-cluster](multicluster.md) setup: it requires an

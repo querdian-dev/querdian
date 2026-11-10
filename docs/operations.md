@@ -123,7 +123,8 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 |---|---|---|
 | `maxPolicyTerms` | 16 | Maximum number of terms of a user's effective policy after simplification. |
 | `maxFanout` | 16 | Maximum number of upstream requests one client request may create, and the number run in parallel. |
-| `maxMergeBytes` | 67108864 (64 MiB) | Total size of buffered upstream bodies of one merged request; also the buffer cap of the trace-by-ID filter. |
+| `maxMergeBytes` | 67108864 (64 MiB) | Total size of buffered upstream bodies of one merged request, for all branches together. The bytes are counted while the branches read, so the read stops when the total is above the limit. Also the buffer cap of the trace-by-ID filter. |
+| `maxInflightMergeBytes` | 2 x `maxMergeBytes` (128 MiB) | Total size of buffered fan-out bodies of all concurrent requests of one replica. Must be at least `maxMergeBytes`. When it is full, a fan-out fails with `503` (`merge_budget_exhausted`). |
 | `upstreamTimeout` | `5m` | Deadline of one proxied request (all of its upstream requests together). Go duration syntax. |
 
 ### Flags
@@ -190,10 +191,18 @@ snapshot keeps being used (see [Upgrade and failure behaviour](#upgrade-and-fail
 * **Fan-out multiplies upstream load**: a log query for a user with N terms is N upstream requests,
   up to `maxFanout`. Watch `querdian_policy_terms` and `querdian_upstream_requests_total`. Prefer
   policy shapes that simplify to one term (the single-label merge helps).
-* **Memory**: streaming requests use constant memory. Merged requests buffer up to
-  `maxMergeBytes` each, so plan for `peak concurrent merged requests x maxMergeBytes`. Reduce the
-  value if you expect many concurrent fan-outs. There is no built-in rate limit or concurrency cap;
-  apply one at the ingress.
+* **Memory**: streaming requests use constant memory. A merged request buffers at most
+  `maxMergeBytes` of bodies for all its branches together; all branches together can read at most
+  32 KiB each past the limit before the request fails. All merged requests of a replica together
+  buffer at most `maxInflightMergeBytes` of bodies; a fan-out that finds this budget full fails with
+  `503` and the client must try again. The budget counts body bytes only. Buffer growth (up to a
+  quarter more), the merge step (decoded data and the merged response), the response filters and
+  the Go garbage collector need more memory. Set the memory limit of the pod to about 4 x
+  `maxInflightMergeBytes`: the chart default of 512 MiB fits the default of 128 MiB. If you raise
+  `maxMergeBytes`, raise the memory limit too, or set `maxInflightMergeBytes` explicitly. Watch
+  `querdian_requests_total{reason="merge_budget_exhausted"}`. Single-request filters (trace by ID,
+  Prometheus labels/series, redaction) buffer up to their own limits outside this budget. There is
+  no built-in rate limit; apply one at the ingress.
 * The snapshot is held per replica in memory and rebuilt completely on every policy or namespace
   label change (about 250 ms after the last change). Snapshot size grows with the number of rules.
 * WebSocket tails keep one connection per client plus one per term open.
@@ -214,6 +223,7 @@ acquires the lease. With a single replica or for local runs you may use `--leade
 | `limits.maxPolicyTerms` | 16 | the user's simplified policy has more terms | `403 forbidden` | deny / `policy_too_complex` |
 | `limits.maxFanout` | 16 | the plan needs more upstream requests (terms for a fan-out; also guards a plan without requests) | `403 forbidden` | deny / `query_too_complex` |
 | `limits.maxMergeBytes` | 64 MiB | buffered bodies of the fan-out exceed it; also the trace-by-ID filter body, and the Tempo search body | `502`, errorType `merge_too_large` (fan-out) or `upstream` | error / `upstream_error` |
+| `limits.maxInflightMergeBytes` | 128 MiB | buffered fan-out bodies of all concurrent requests of the replica exceed it | `503 unavailable` with `Retry-After` | error / `merge_budget_exhausted` |
 | `limits.upstreamTimeout` | 5m | the proxied request runs longer | `502 upstream` (or a truncated stream if headers were already sent) | error / `upstream_error` |
 | selector copies (fixed) | 2048 | PromQL or-lift: selectors x terms | `403 forbidden` | deny / `query_too_complex` |
 | `match[]` expansion (fixed) | 256 | Prometheus metadata: user selectors x terms | `403 forbidden` | deny / `query_too_complex` |

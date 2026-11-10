@@ -322,7 +322,7 @@ and `test/e2e/tempo`.
 |---|---|---|
 | Policy with many terms causing fan-out | `limits.maxPolicyTerms` (16): `403 policy_too_complex`; DNF simplification merges and drops redundant terms | Operators who raise it |
 | Many upstream requests per client request | `limits.maxFanout` (16): bound on requests and on parallelism, `403 query_too_complex`; all-or-nothing: one failure cancels the rest | Load multiplier up to `maxFanout` per request |
-| Large merged responses | `limits.maxMergeBytes` (64 MiB) total per request, enforced while reading (`502 merge_too_large`); fixed 16 MiB for Prometheus labels/series filtering; trace-by-ID and Tempo search buffers use `maxMergeBytes` | Memory is `concurrency x maxMergeBytes`; no global limit |
+| Large merged responses | `limits.maxMergeBytes` (64 MiB) total per request: each branch counts each chunk of at most 32 KiB in a shared counter before it keeps it, and the first chunk above the limit stops the read and cancels the other branches (`502 merge_too_large`); buffers grow only to what the branch can keep. `limits.maxInflightMergeBytes` (default 2 x `maxMergeBytes`) bounds the fan-out bodies of all concurrent requests of a replica (`503 merge_budget_exhausted`). Fixed 16 MiB for Prometheus labels/series filtering; trace-by-ID and Tempo search buffers use `maxMergeBytes` | All branches together can read up to 32 KiB each past `maxMergeBytes`. The budgets count body bytes only, not the merge step or the single-request filter buffers, so memory is a small multiple of `maxInflightMergeBytes` plus `concurrency x maxMergeBytes` for single-request filters; a full budget rejects fan-outs (denial of service, fails closed) |
 | Selector explosion in rewrites | 2048 selector copies for PromQL or-lifting, 256 for `match[]` expansion, parser nesting limit of 100 (LogQL, TraceQL) | |
 | Large request bodies | 1 MiB limit on form bodies; `ReadHeaderTimeout` of 10 s on both listeners | No limits on header size beyond Go defaults |
 | Slow or hanging backends | `limits.upstreamTimeout` per request; dial and write timeouts on tails | Idle client connections |
@@ -542,8 +542,9 @@ backends ([multicluster.md](../multicluster.md#rollback)).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes, but close
    when a spoke in their terms expires, is suspended or gets a new spec (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
-7. The proxy has no built-in rate limiting; memory use of merged responses scales with concurrency
-   (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
+7. The proxy has no built-in rate limiting. Fan-out bodies of all requests share one budget, so many
+   concurrent fan-outs fail with 503; the single-request filter buffers are not in that budget and
+   scale with concurrency (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
 8. Multi-cluster: isolation between spokes relies on the ingest gateway overwriting the cluster label
    (section 1); a compromised receiver can grant the data of all spokes, and a stolen agent cert the
    data of its spoke until a hub admin suspends it (section 12); a revoked spoke policy stays active

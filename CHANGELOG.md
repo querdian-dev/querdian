@@ -20,6 +20,15 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   a new trace and has a span link to the trace context of the client, so a client cannot select the
   trace ID or force sampling. The new flag `--tracing.trust-inbound-context` (Helm:
   `tracing.trustInboundContext`, default `false`) restores the old behaviour for trusted clients.
+* Fan-out: the limit `limits.maxMergeBytes` now applies to all branches of a request together while
+  they read. Before, the limit did not hold for parallel branches, so one request could use much
+  more memory than documented (GHSA-hh8g-744m-9r98, affects 0.1.2 and earlier). Each branch
+  now counts each chunk before it keeps it, and the read stops at the first chunk above the limit.
+* New limit `limits.maxInflightMergeBytes` (default 2 x `maxMergeBytes`, 128 MiB) for the buffered
+  fan-out bodies of all concurrent requests of a replica. When it is full, a fan-out fails with
+  `503 unavailable` and the reason `merge_budget_exhausted`. The Helm chart accepts the field; the
+  default render does not change. See [docs/operations.md](docs/operations.md#scaling) for memory
+  sizing.
 
 ### Added
 
