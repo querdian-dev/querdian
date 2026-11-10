@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -243,3 +244,10 @@ func eventually(t *testing.T, d time.Duration, what string, cond func() bool) {
 }
 
 func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+// syncFunc is a Syncer from a function.
+type syncFunc func(context.Context, *spokesync.Request) (*spokesync.Response, error)
+
+func (f syncFunc) Send(ctx context.Context, req *spokesync.Request) (*spokesync.Response, error) {
+	return f(ctx, req)
+}

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
@@ -25,9 +26,16 @@ func ReadState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, er
 	return policies, err
 }
 
-// readState is ReadState. It also returns the status of each object by spokesync.Key, so that the agent
-// does not read an object again to find that its status is current.
-func readState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, map[string]*v1.PolicyStatus, error) {
+// readObject is the UID and the status of one policy object from the read.
+type readObject struct {
+	uid    types.UID
+	status *v1.PolicyStatus
+}
+
+// readState is ReadState. It also returns the UID and the status of each object by spokesync.Key, so that
+// the agent does not read an object again to find that its status is current, and does not write a
+// condition to a different object with the same name.
+func readState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, map[string]readObject, error) {
 	var caps v1.ClusterAccessPolicyList
 	if err := r.List(ctx, &caps); err != nil {
 		return nil, nil, fmt.Errorf("list ClusterAccessPolicy: %w", err)
@@ -51,7 +59,7 @@ func readState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, ma
 	}
 
 	out := make([]v1.SpokePolicySource, 0, len(caps.Items)+len(aps.Items))
-	status := make(map[string]*v1.PolicyStatus, len(caps.Items)+len(aps.Items))
+	status := make(map[string]readObject, len(caps.Items)+len(aps.Items))
 	for i := range caps.Items {
 		p := &caps.Items[i]
 		if p.Generation < 1 {
@@ -63,7 +71,7 @@ func readState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, ma
 			Generation:          p.Generation,
 			ClusterAccessPolicy: p.Spec.DeepCopy(),
 		})
-		status[spokesync.Key(&out[len(out)-1])] = &p.Status
+		status[spokesync.Key(&out[len(out)-1])] = readObject{uid: p.UID, status: &p.Status}
 	}
 	for i := range aps.Items {
 		p := &aps.Items[i]
@@ -85,7 +93,7 @@ func readState(ctx context.Context, r client.Reader) ([]v1.SpokePolicySource, ma
 			TenantLabel:  ns.Labels[policy.TenantLabel],
 			AccessPolicy: p.Spec.DeepCopy(),
 		})
-		status[spokesync.Key(&out[len(out)-1])] = &p.Status
+		status[spokesync.Key(&out[len(out)-1])] = readObject{uid: p.UID, status: &p.Status}
 	}
 	sort.Slice(out, func(i, j int) bool { return spokesync.Key(&out[i]) < spokesync.Key(&out[j]) })
 	return out, status, nil

@@ -13,6 +13,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -37,7 +38,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 
 func testCAP(name string, gen int64) *v1.ClusterAccessPolicy {
 	return &v1.ClusterAccessPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: gen},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: gen, UID: types.UID("uid-" + name)},
 		Spec: v1.ClusterAccessPolicySpec{
 			Subjects: v1.Subjects{Groups: []string{"sre"}},
 			Rules: []v1.ClusterRule{{Backends: []string{"metrics"},
@@ -48,7 +49,7 @@ func testCAP(name string, gen int64) *v1.ClusterAccessPolicy {
 
 func testAP(ns, name string, gen int64) *v1.AccessPolicy {
 	return &v1.AccessPolicy{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Generation: gen},
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Generation: gen, UID: types.UID("uid-" + ns + "-" + name)},
 		Spec: v1.AccessPolicySpec{
 			Subjects: v1.Subjects{Users: []string{"alice"}},
 			Rules:    []v1.Rule{{Backends: []string{"logs"}}},

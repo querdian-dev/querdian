@@ -11,6 +11,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
@@ -130,5 +131,52 @@ func TestReadRejectsNewerNamespace(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Errorf("%s: err = %v, want error %v", tc.name, err, tc.wantErr)
 		}
+	}
+}
+
+// TestStatusSkipsRecreatedObject: an object that was deleted and created again after the read has a
+// different UID, and its generation can be equal or higher. The agent does not write the condition of the
+// old object to the new object.
+func TestStatusSkipsRecreatedObject(t *testing.T) {
+	ctx := context.Background()
+	var patches atomic.Int64
+	obj := testCAP("platform", 2)
+	obj.UID = "uid-new"
+	c := newFakeClient(t, &interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			patches.Add(1)
+			return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
+		},
+	}, obj)
+	a, err := New(Options{Reader: c, Writer: c, Syncer: syncFunc(nil), Logger: testLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cond := spokesync.Condition{Kind: v1.SpokeClusterAccessPolicy, Name: "platform", SourceGeneration: 2, Ready: true, Reason: "Compiled"}
+	key := spokesync.Key(&v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "platform"})
+	for _, uid := range []types.UID{"uid-old", ""} {
+		known := map[string]readObject{key: {uid: uid, status: &v1.PolicyStatus{}}}
+		if err := a.writeCondition(ctx, &cond, known); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cp := &v1.ClusterAccessPolicy{}
+	if err := c.Get(ctx, client.ObjectKey{Name: "platform"}, cp); err != nil {
+		t.Fatal(err)
+	}
+	if patches.Load() != 0 || len(cp.Status.Conditions) != 0 {
+		t.Fatalf("condition written to a different object: patches=%d status=%+v", patches.Load(), cp.Status)
+	}
+
+	// The same UID: the agent writes the condition.
+	known := map[string]readObject{key: {uid: "uid-new", status: &v1.PolicyStatus{}}}
+	if err := a.writeCondition(ctx, &cond, known); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Name: "platform"}, cp); err != nil {
+		t.Fatal(err)
+	}
+	if patches.Load() != 1 || !apimeta.IsStatusConditionTrue(cp.Status.Conditions, ReadyCondition) {
+		t.Fatalf("condition not written: patches=%d status=%+v", patches.Load(), cp.Status)
 	}
 }

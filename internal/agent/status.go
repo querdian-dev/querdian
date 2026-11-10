@@ -28,10 +28,10 @@ const (
 // reasonRE is the pattern of metav1.Condition.Reason.
 var reasonRE = regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$`)
 
-// writeConditions writes the conditions from the receiver to the spoke objects. known holds the status of
-// each object from the read of this attempt, by spokesync.Key. A failure of one write does not stop the
+// writeConditions writes the conditions from the receiver to the spoke objects. known holds the UID and the
+// status of each object from the read of this attempt, by spokesync.Key. A failure of one write does not stop the
 // others, and it does not change the sync result. The next heartbeat tries again.
-func (a *Agent) writeConditions(ctx context.Context, conds []spokesync.Condition, known map[string]*v1.PolicyStatus) {
+func (a *Agent) writeConditions(ctx context.Context, conds []spokesync.Condition, known map[string]readObject) {
 	for i := range conds {
 		c := &conds[i]
 		if err := a.writeCondition(ctx, c, known); err != nil && ctx.Err() == nil {
@@ -44,12 +44,13 @@ func (a *Agent) writeConditions(ctx context.Context, conds []spokesync.Condition
 // writeCondition writes one condition as the Ready condition of its object, with observedGeneration set to
 // the generation that the condition describes. It skips:
 //   - an object that does not exist;
+//   - an object with a different UID than in the read (the object was deleted and created again);
 //   - an object whose generation is lower than that of the condition (the object was deleted and created
 //     again);
 //   - an object whose status describes a newer generation than the condition (for example, a reply from
 //     an older compile after a failover on the hub);
 //   - an object that has the condition already.
-func (a *Agent) writeCondition(ctx context.Context, c *spokesync.Condition, known map[string]*v1.PolicyStatus) error {
+func (a *Agent) writeCondition(ctx context.Context, c *spokesync.Condition, known map[string]readObject) error {
 	if c.Name == "" {
 		return fmt.Errorf("condition with no name")
 	}
@@ -88,8 +89,9 @@ func (a *Agent) writeCondition(ctx context.Context, c *spokesync.Condition, know
 		want.Status = metav1.ConditionTrue
 	}
 	key := spokesync.Key(&v1.SpokePolicySource{Kind: c.Kind, Namespace: c.Namespace, Name: c.Name})
-	if s, ok := known[key]; !ok || !needsWrite(s, &want) {
-		// Not in the read of this attempt (deleted), or current already: no API call.
+	k, ok := known[key]
+	if !ok || k.uid == "" || !needsWrite(k.status, &want) {
+		// Not in the read of this attempt (deleted), no UID to compare, or current already: no API call.
 		return nil
 	}
 	if err := a.reader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.Name}, obj); err != nil {
@@ -98,7 +100,7 @@ func (a *Agent) writeCondition(ctx context.Context, c *spokesync.Condition, know
 		}
 		return err
 	}
-	if c.SourceGeneration > obj.GetGeneration() || !needsWrite(status, &want) {
+	if obj.GetUID() != k.uid || c.SourceGeneration > obj.GetGeneration() || !needsWrite(status, &want) {
 		return nil
 	}
 	base := obj.DeepCopyObject().(client.Object)
