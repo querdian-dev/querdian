@@ -3,7 +3,6 @@ package policy
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"testing"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
@@ -17,12 +16,6 @@ var (
 	// fuzzForeignClusters are cluster label values of data that is not in cluster-a. "" is data with no label.
 	fuzzForeignClusters = []string{"cluster-b", hubName, "", "cluster-ab", "cluster-a-x", "Cluster-a", "xcluster-a"}
 	fuzzOps             = []v1.MatchOp{v1.MatchEqual, v1.MatchNotEqual, v1.MatchRegexMatch, v1.MatchRegexNoMatch}
-)
-
-var (
-	// fuzzCfg is loaded once; Compile does not change the config.
-	fuzzCfg     *config.Config
-	fuzzCfgOnce sync.Once
 )
 
 type fuzzBackend struct {
@@ -94,10 +87,10 @@ func foreignLabels(r *rand.Rand, b fuzzBackend) map[string]string {
 
 // checkSpokeTermsStayInCluster checks the property of T6.2: after Normalise, the terms of the rules of one
 // spoke never match a label set of a different cluster, also if the rules have their own cluster matchers.
-func checkSpokeTermsStayInCluster(t *testing.T, seed int64) {
+// The caller loads cfg one time with mcConfig; Compile does not change it.
+func checkSpokeTermsStayInCluster(t *testing.T, fuzzCfg *config.Config, seed int64) {
 	t.Helper()
 	r := rand.New(rand.NewSource(seed)) //nolint:gosec // deterministic test data
-	fuzzCfgOnce.Do(func() { fuzzCfg = mcConfig(t) })
 	a := spokeCluster("cluster-a", agentID("cluster-a"), "tenant-a", "shared")
 	a.Spec.DefaultTenant = "shared"
 	b2 := spokeCluster("cluster-b", agentID("cluster-b"), "tenant-a", "shared")
@@ -153,14 +146,17 @@ func checkSpokeTermsStayInCluster(t *testing.T, seed int64) {
 }
 
 func TestSpokeTermsStayInCluster(t *testing.T) {
+	cfg := mcConfig(t)
 	for seed := int64(0); seed < 500; seed++ {
-		checkSpokeTermsStayInCluster(t, seed)
+		checkSpokeTermsStayInCluster(t, cfg, seed)
 	}
 }
 
 func FuzzSpokeTermsStayInCluster(f *testing.F) {
+	// The config loads before the fuzz loop, so an error stops the target with a clear failure.
+	cfg := mcConfig(f)
 	for _, s := range []int64{0, 1, 42, 1 << 40} {
 		f.Add(s)
 	}
-	f.Fuzz(func(t *testing.T, seed int64) { checkSpokeTermsStayInCluster(t, seed) })
+	f.Fuzz(func(t *testing.T, seed int64) { checkSpokeTermsStayInCluster(t, cfg, seed) })
 }

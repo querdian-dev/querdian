@@ -582,8 +582,9 @@ The design is PLAN §18. Read it completely before you start a task in this mile
         not equal to the name of the `SpokeCluster`. A test covers a suffix that is not a full path
         segment, such as `.../agent/x-cluster-a` for `cluster-a`.
   - [x] The cluster scope rule in §18.3 applies for each backend of a hub rule, with the new reason
-        `InvalidClusterScope`. Tests cover `NotEqual`, `RegexNoMatch`, open regexes and empty values on the cluster label, `allClusters`
-        with a cluster matcher, a rule with several backends, and a spoke rule with `allClusters`.
+        `InvalidClusterScope`. Tests cover `NotEqual`, `RegexNoMatch`, open regexes and empty values on
+        the cluster label, `allClusters` with a cluster matcher, a rule with several backends, and a
+        spoke rule with `allClusters`.
   - [x] Without the `multicluster` block, `allClusters` has no effect and the policy stays valid.
   - [x] The tenant allow-list (§18.9) applies, with the new reason `TenantNotAllowed`.
   - [x] A fuzz target shows this property after DNF normalisation: a label set of a different cluster
