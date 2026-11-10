@@ -5,12 +5,21 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 )
 
 // MaxSyncTimeSkew is the largest distance by which a lastSyncTime can be in the future of the clock of
 // this replica. A spoke with a lastSyncTime further in the future is expired (PLAN §18.6, rule 4).
 const MaxSyncTimeSkew = 5 * time.Minute
+
+// SpokeVersion identifies one spec of one SpokeCluster object. The generation alone is not sufficient: an
+// object that is deleted and created again with the same name starts again at generation 1.
+type SpokeVersion struct {
+	UID        types.UID
+	Generation int64
+}
 
 // spokeDeadline keeps the fields of one SpokeCluster that the expiry check needs.
 type spokeDeadline struct {
@@ -20,6 +29,8 @@ type spokeDeadline struct {
 	// lastSync is the zero time if status.lastSyncTime is absent.
 	lastSync     time.Time
 	maxStaleness time.Duration
+	// version is metadata.uid and metadata.generation of the SpokeCluster.
+	version SpokeVersion
 }
 
 // Deadlines is the table of spoke deadlines (PLAN §18.6, rule 3). It is outside the snapshot, so a
@@ -32,6 +43,42 @@ type Deadlines struct {
 	mu       sync.RWMutex
 	spokes   map[string]spokeDeadline
 	complete bool
+	// compiled maps a spoke to the SpokeCluster version that the current snapshot was compiled from. It is
+	// nil until TrackCompiled; after that, a spoke is expired unless its entry has the compiled version.
+	compiled map[string]SpokeVersion
+}
+
+// TrackCompiled makes Expired also require that the current snapshot was compiled from the current
+// version (UID and generation) of the SpokeCluster. Without this check, a sync of a new generation (for
+// example a smaller tenant allow-list) or of a re-created object makes a spoke valid before the rebuild has
+// applied the new spec. Until the first
+// SetCompiled, each spoke is expired. The controller calls it when the multicluster block is set.
+func (d *Deadlines) TrackCompiled() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.compiled == nil {
+		d.compiled = map[string]SpokeVersion{}
+	}
+}
+
+// SetCompiled records the SpokeCluster versions that the current snapshot was compiled from. Call it after
+// each snapshot swap. It has no effect before TrackCompiled.
+func (d *Deadlines) SetCompiled(versions map[string]SpokeVersion) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.compiled == nil {
+		return
+	}
+	d.compiled = make(map[string]SpokeVersion, len(versions))
+	for name, v := range versions {
+		d.compiled[name] = v
+	}
 }
 
 // NewDeadlines returns an empty table.
@@ -47,7 +94,7 @@ func (d *Deadlines) Update(sc *v1.SpokeCluster, defaultMaxStaleness time.Duratio
 	if d == nil || sc == nil || sc.Name == "" {
 		return
 	}
-	e := spokeDeadline{maxStaleness: defaultMaxStaleness}
+	e := spokeDeadline{maxStaleness: defaultMaxStaleness, version: SpokeVersion{UID: sc.UID, Generation: sc.Generation}}
 	if sc.Spec.MaxStaleness != nil {
 		e.maxStaleness = sc.Spec.MaxStaleness.Duration
 	}
@@ -101,21 +148,42 @@ func (d *Deadlines) Complete() bool {
 // rule 4). It is true if any of these conditions is true: the table has no entry for the spoke, the
 // spoke is suspended or in deletion, observedGeneration differs from metadata.generation, maxStaleness is
 // zero or negative, lastSyncTime is absent or more than MaxSyncTimeSkew in the future, or maxStaleness
-// has passed since lastSyncTime. Hub rules have no origin and never expire; do not call Expired for them.
+// has passed since lastSyncTime. After TrackCompiled, it is also true while the current snapshot was compiled
+// from a different version (UID or generation) of the SpokeCluster. Hub rules have no origin and never
+// expire; do not call Expired for them.
 func (d *Deadlines) Expired(origin string, now time.Time) bool {
-	if d == nil {
-		return true
-	}
-	d.mu.RLock()
-	e, ok := d.spokes[origin]
-	d.mu.RUnlock()
-	return expiredEntry(e, ok, now)
+	_, expired := d.state(origin, now)
+	return expired
 }
 
-// expiredEntry is the check of Expired for the entry e; ok is false if the table has no entry.
-func expiredEntry(e spokeDeadline, ok bool, now time.Time) bool {
+// ExpiredFor is Expired for a rule that was compiled from version v of the SpokeCluster. It is also true if
+// the table has a different version of the object, for example because the request uses a snapshot that is
+// older than the last SetCompiled, or because the spec changed after a Loki tail started.
+func (d *Deadlines) ExpiredFor(origin string, v SpokeVersion, now time.Time) bool {
+	cur, expired := d.state(origin, now)
+	return expired || cur != v
+}
+
+// state returns the version in the table entry of the spoke and whether the spoke is expired at now.
+func (d *Deadlines) state(origin string, now time.Time) (SpokeVersion, bool) {
+	if d == nil {
+		return SpokeVersion{}, true
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	e, ok := d.spokes[origin]
+	return e.version, d.expiredLocked(origin, e, ok, now)
+}
+
+// expiredLocked is the check of Expired for the entry e of origin; ok is false if the table has no entry.
+// The caller holds d.mu.
+func (d *Deadlines) expiredLocked(origin string, e spokeDeadline, ok bool, now time.Time) bool {
+	compiled, compiledOK := d.compiled[origin]
 	switch {
 	case !ok, !e.valid, e.lastSync.IsZero():
+		return true
+	case d.compiled != nil && (!compiledOK || compiled != e.version):
+		// The snapshot does not yet contain the current spec of the spoke.
 		return true
 	case e.lastSync.After(now.Add(MaxSyncTimeSkew)):
 		return true
@@ -123,10 +191,11 @@ func expiredEntry(e spokeDeadline, ok bool, now time.Time) bool {
 	return !now.Before(e.lastSync.Add(e.maxStaleness))
 }
 
-// AnyExpired reports whether at least one of the spokes is expired at now.
-func (d *Deadlines) AnyExpired(origins []string, now time.Time) bool {
-	for _, o := range origins {
-		if d.Expired(o, now) {
+// AnyExpired reports whether ExpiredFor is true for at least one of the spokes. The map is
+// Effective.OriginVersions: the spoke versions that gave the terms of a grant.
+func (d *Deadlines) AnyExpired(origins map[string]SpokeVersion, now time.Time) bool {
+	for o, v := range origins {
+		if d.ExpiredFor(o, v, now) {
 			return true
 		}
 	}
@@ -146,7 +215,7 @@ func (d *Deadlines) ExpiredStates(now time.Time) map[string]float64 {
 	out := make(map[string]float64, len(d.spokes))
 	for name, e := range d.spokes {
 		out[name] = 0
-		if expiredEntry(e, true, now) {
+		if d.expiredLocked(name, e, true, now) {
 			out[name] = 1
 		}
 	}

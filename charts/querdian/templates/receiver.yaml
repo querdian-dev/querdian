@@ -1,0 +1,158 @@
+{{- if include "querdian.receiverEnabled" . }}
+{{- $c := dict "root" . "component" "receiver" }}
+{{- $r := .Values.receiver }}
+{{- if $r.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "querdian.componentServiceAccountName" (merge (dict "sa" $r.serviceAccount) $c) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+  {{- with $r.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+  {{- with $r.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $r.service.type }}
+  selector:
+    {{- include "querdian.componentSelectorLabels" $c | nindent 4 }}
+  {{- if and (eq $r.service.type "LoadBalancer") $r.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml $r.service.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  ports:
+    - name: receiver
+      port: {{ $r.service.port }}
+      targetPort: receiver
+      {{- if and (eq $r.service.type "NodePort") $r.service.nodePort }}
+      nodePort: {{ $r.service.nodePort }}
+      {{- end }}
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+spec:
+  replicas: {{ $r.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "querdian.componentSelectorLabels" $c | nindent 6 }}
+  # Only the leader is ready. A rolling update would wait for a new replica that cannot become ready
+  # while the old leader holds the lease. The receiver is not in the read path, so a short stop is
+  # acceptable (PLAN section 18.5).
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      {{- with $r.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "querdian.componentLabels" $c | nindent 8 }}
+        {{- with $r.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "querdian.componentServiceAccountName" (merge (dict "sa" $r.serviceAccount) $c) }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: receiver
+          image: {{ include "querdian.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - receiver
+            - --listen=:{{ $r.port }}
+            - --management-listen=:{{ $r.managementPort }}
+            - --tls-cert-file=/etc/querdian-receiver/tls/tls.crt
+            - --tls-key-file=/etc/querdian-receiver/tls/tls.key
+            - --client-ca-file=/etc/querdian-receiver/client-ca/{{ $r.clientCA.key }}
+            - --leader-elect={{ $r.leaderElection.enabled }}
+            - --log-level={{ .Values.logLevel }}
+            - --log-format={{ .Values.logFormat }}
+            {{- range $r.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: receiver
+              containerPort: {{ $r.port }}
+              protocol: TCP
+            - name: management
+              containerPort: {{ $r.managementPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          # Only the leader reports ready, so the Service sends each sync to the leader.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/querdian-receiver/tls
+              readOnly: true
+            - name: client-ca
+              mountPath: /etc/querdian-receiver/client-ca
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ $r.tls.existingSecret }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: client-ca
+          secret:
+            secretName: {{ $r.clientCA.existingSecret }}
+            items:
+              - key: {{ $r.clientCA.key }}
+                path: {{ $r.clientCA.key }}
+      {{- with $r.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

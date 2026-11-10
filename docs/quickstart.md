@@ -11,6 +11,8 @@ realistic, deterministic history** (metrics, logs and traces, with incidents) an
 > OAuth client allows the password grant (used by `verify.sh`), and nothing is persistent. Do not
 > reuse any of it in production. Querdian is alpha.
 
+For a hub and two spoke clusters, see the [multi-cluster quickstart](quickstart-multicluster.md).
+
 ```sh
 hack/quickstart/up.sh       # cluster + everything, ends with the URLs
 hack/quickstart/verify.sh   # automatic assertions (153 checks)

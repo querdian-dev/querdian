@@ -4,6 +4,14 @@ nameOverride: ""
 fullnameOverride: ""
 commonLabels: {}
 
+# What the chart installs (PLAN section 18):
+#   proxy: the proxy. This is a single cluster, or the hub of a multi-cluster deployment if you set
+#          config.multicluster (and optionally receiver.enabled).
+#   spoke: only the policy agent of a spoke cluster (see `agent`). No proxy, no proxy RBAC.
+# The agent and the proxy are mutually exclusive: both write the status of the spoke policies. Agent
+# values with mode proxy stop the render.
+mode: proxy
+
 image:
   repository: ghcr.io/querdian-dev/querdian
   # Defaults to the chart appVersion.
@@ -112,6 +120,17 @@ config:
     maxFanout: 16
     maxMergeBytes: 67108864
     upstreamTimeout: 5m
+  # Hub of a multi-cluster deployment (PLAN section 18.4). Off when absent. If you set it, each backend
+  # needs clusterLabel, and Querdian refuses to start if one backend has no clusterLabel. A backend with
+  # clusterLabel but no multicluster block is also refused. Do the steps of PLAN section 18.8 in order
+  # before you set it.
+  # multicluster:
+  #   hubCluster: mla       # cluster label value of the hub telemetry (required)
+  #   maxStaleness: 48h     # time limit of spoke policies without a valid sync (default 48h)
+  # backends:
+  #   - name: metrics
+  #     ...
+  #     clusterLabel: cluster
 
 # Extra CA bundle (PEM) trusted for the OIDC issuer. Set exactly one of the two; the chart mounts
 # it and sets config.auth.caFile automatically.
@@ -207,6 +226,9 @@ networkPolicy:
     managementFrom: []
     # Peers allowed to reach the dashboard port (only used when ui.enabled). Empty = nobody.
     uiFrom: []
+    # Peers allowed to reach the receiver port (only used when receiver.enabled), e.g. the load balancer
+    # or the TLS passthrough gateway of the spoke agents. Empty = nobody.
+    receiverFrom: []
   egress:
     dns:
       enabled: true
@@ -240,6 +262,10 @@ networkPolicy:
       enabled: false
       to: []
       ports: [4317, 4318]
+    # Hub receiver, for the agent of mode spoke only. Empty `to` allows the ports to any destination.
+    receiver:
+      to: []
+      ports: [8443]
     # Raw additional egress rules.
     extra: []
 
@@ -265,3 +291,118 @@ dashboards:
   labels:
     grafana_dashboard: "1"
   annotations: {}
+
+# Receiver of a hub (`querdian receiver`, PLAN section 18.5). It accepts the policy syncs of the spoke
+# agents over mTLS and writes SpokePolicy objects and SpokeCluster status. Needs mode proxy and
+# config.multicluster. It runs as a separate Deployment with its own ServiceAccount, so the proxy keeps no
+# write path.
+receiver:
+  enabled: false
+  # Only the leader serves and reports ready. A second replica waits and takes the lease if the leader
+  # stops. But then `kubectl rollout status` and `helm --wait` do not finish, because one replica is
+  # never ready.
+  replicaCount: 1
+  leaderElection:
+    # Do not disable it with more than one replica.
+    enabled: true
+  # Container port of the mTLS listener (--listen).
+  port: 8443
+  # Container port of /healthz and /readyz (--management-listen). The receiver has no /metrics.
+  managementPort: 9090
+  # The receiver terminates TLS itself. A load balancer or an ingress in front of it must pass TLS
+  # through. It must not terminate TLS.
+  service:
+    type: ClusterIP # ClusterIP | NodePort | LoadBalancer
+    port: 8443
+    # Only with type NodePort: a fixed node port (30000-32767), so that the receiver URL of the agents stays
+    # the same after a reinstall. Empty means a port that Kubernetes selects. The chart ignores the value
+    # for the other types, also for LoadBalancer.
+    nodePort: null
+    annotations: {}
+    # Only with type LoadBalancer.
+    loadBalancerSourceRanges: []
+  tls:
+    # Secret (type kubernetes.io/tls) with tls.crt and tls.key: the server cert of the receiver. Required.
+    # The receiver reads the cert and the client CA at startup only. Restart it after a rotation.
+    existingSecret: ""
+  clientCA:
+    # Secret with the CA bundle that verifies the agent client certs. Required. Only the hub may issue
+    # certs from this CA; a spoke must not. Do not use the CA of the ingest certs.
+    existingSecret: ""
+    key: ca.crt
+  serviceAccount:
+    create: true
+    name: "" # default: <fullname>-receiver
+    annotations: {}
+  # More flags, e.g. --max-body-bytes, --max-policies, --max-in-flight.
+  extraArgs: []
+  # One request uses at most about 50 MiB with the default limits. The memory limit must be at least
+  # 64Mi plus 50Mi for each request of --max-in-flight (default 8). Raise it if you raise the flags.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
+
+# Policy agent of a spoke (`querdian agent`, PLAN section 18.5). Installed only with mode spoke. It reads
+# the ClusterAccessPolicy, AccessPolicy and Namespace objects of the spoke and sends them to the receiver
+# of the hub. It needs only an outbound path to the receiver.
+agent:
+  # Base URL of the hub receiver, e.g. https://querdian-receiver.mla.example.com:8443. Required.
+  receiverURL: ""
+  # Time between two heartbeats (--heartbeat-interval): <n>s, <n>m or <n>h, with an integer n, at least 10s.
+  heartbeatInterval: 1m
+  replicaCount: 1
+  leaderElection:
+    # Do not disable it with more than one replica.
+    enabled: true
+  # Container port of /healthz, /readyz and /metrics (--management-listen).
+  managementPort: 9090
+  tls:
+    # Secret (type kubernetes.io/tls) with tls.crt and tls.key: the client cert of the agent. Required.
+    # Use a dedicated cert. It must not be the ingest cert of the spoke, and its URI SAN must be equal to
+    # spec.identity of the SpokeCluster object on the hub. The agent reads the files again before each
+    # request, so a rotated cert takes effect without a restart.
+    existingSecret: ""
+  receiverCA:
+    # Secret with the CA bundle that verifies the server cert of the receiver. Required. It can be the
+    # same Secret as tls.existingSecret.
+    existingSecret: ""
+    key: ca.crt
+  serviceAccount:
+    create: true
+    name: "" # default: <fullname>-agent
+    annotations: {}
+  # More flags, e.g. --request-timeout.
+  extraArgs: []
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
+
+# PrometheusRule (Prometheus Operator) with the alerts for spoke policies (PLAN section 18.6). Needs
+# config.multicluster, and Prometheus must scrape the proxy (see serviceMonitor).
+prometheusRule:
+  enabled: false
+  namespace: "" # defaults to the release namespace
+  labels: {} # e.g. release: kube-prometheus-stack
+  # QuerdianSpokePolicyStale fires if the last valid sync of a spoke is older than this value, in
+  # seconds. The default is 24 hours, half of the default maxStaleness.
+  policyAgeThresholdSeconds: 86400
+  # QuerdianSpokePolicyExpired fires if the policies of a spoke are expired or the spoke is suspended.
+  # `for` and `severity` apply to the two alerts.
+  for: 10m
+  severity: warning

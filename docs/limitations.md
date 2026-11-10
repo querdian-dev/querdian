@@ -12,7 +12,7 @@ needs a parser or rewriter change plus tests.
 Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#logql) /
 [TraceQL and Tempo](#traceql-and-tempo) / [denied labels](#denied-labels) /
 [approximate results](#approximate-results) / [policy model](#policy-model) /
-[authentication](#authentication-and-sessions)
+[multi-cluster](#multi-cluster) / [authentication](#authentication-and-sessions)
 
 ## General request handling
 
@@ -53,9 +53,13 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 * Grafana features that need denied endpoints degrade: for example the Prometheus metrics browser
   help text (`metadata`) is unavailable. Tempo gRPC streaming search is unsupported; disable
   streaming in the Grafana Tempo data source.
-* Nothing is rate limited or queued inside Querdian (see [operations.md](operations.md#scaling)).
-* Querdian does not terminate TLS and does not authenticate to backends other than by setting the
-  tenant header. Backends must be isolated at network level.
+* The proxy does not rate limit or queue requests (see [operations.md](operations.md#scaling)). Only
+  `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
+* The proxy does not terminate TLS and does not authenticate to backends other than by setting the
+  tenant header. Backends must be isolated at network level. The only Querdian component that
+  terminates TLS is `querdian receiver` in a [multi-cluster](multicluster.md) setup: it requires an
+  mTLS client cert, reads its server cert, key and client CA once at startup (a rotation needs a
+  restart), and has no certificate revocation list.
 
 ## PromQL
 
@@ -163,7 +167,10 @@ tokenised and structurally validated, not interpreted. Anything it does not reco
   and `delay_for` (`limit >= 1`, `delay_for` 0 to 5 seconds) are accepted; browser clients must come
   from the same host (cross-origin WebSocket handshakes are refused); each upstream frame is limited
   to 4 MiB and duplicates are removed with a memory of the last 10 000 entries; an invalid frame
-  closes the tail. The tail runs under the policy and token it started with.
+  closes the tail. The tail runs under the policy and token it started with, with one exception: in a
+  multi-cluster setup it closes within 10 seconds when a spoke whose rules gave terms at the start
+  expires, is suspended, or gets a new `SpokeCluster` spec or UID (close code 1008, `policy source
+  expired`).
 * `patterns` returns 404 upstream unless the pattern ingester is enabled; the non-empty response
   shape is unverified against a live Loki.
 * The `X-Loki-Response-Encoding-Flags: categorize-labels` encoding is preserved by the stream merge;
@@ -350,11 +357,58 @@ disjoint are not detected, so such results are marked approximate although they 
 * Cross-tenant unions with differing terms are only possible on backends with
   `tenantFederation: tenantIdLabel` (see [policy-guide.md](policy-guide.md#tenants)).
 
+## Multi-cluster
+
+These apply only with the `multicluster` block ([multicluster.md](multicluster.md)).
+
+* **A spoke runs only the agent.** A standalone Querdian on a spoke is not supported, also not for
+  local queries: it would write the same status fields of the spoke policies as the agent. Query spoke
+  data through the hub ([multicluster.md](multicluster.md#a-spoke-runs-only-the-agent)).
+* **Cluster scope needs a fixed set of names.** Each rule of a hub `ClusterAccessPolicy` must name a
+  fixed set of clusters for each backend: an `Equal` matcher, or a `RegexMatch` that expands to a finite
+  set of at most 1024 non-empty names (`mla|cluster-a`, `cluster-(a|b)`, `cluster-[ab]`). An open regex
+  (`.+`, `cluster-.*`), `NotEqual`, `RegexNoMatch`, an empty value, a case-insensitive regex (`(?i)`) or
+  a regex that can match the empty string (`a|`, `(mla)?`) is `InvalidClusterScope`, also if it
+  would match only existing clusters today. Use `allClusters: true` for "all clusters". The rule is
+  deliberately syntactic: Querdian does not know which clusters exist in the data.
+* **Interference between clusters.** A spoke admin can name a shared group in a spoke policy. Its
+  `labels.deny` and `labels.redact` then apply to the whole request of that group, also for other
+  clusters (a denied label applies to all terms). Too many terms give that group
+  `403 policy_too_complex` everywhere, and a rule for one tenant can change a hub grant across tenants
+  to `403 cross_tenant_union_unsupported`. No data leaks, but one spoke can reduce access to the data
+  of other spokes.
+* **Term growth.** The same namespace in several clusters merges to one term. Different namespaces in
+  different clusters do not merge, because a merge would over-grant. Such users reach
+  `maxPolicyTerms`, the or-lift limits and `maxFanout` more quickly.
+* **Old hub data.** Hub data from before the migration has no cluster label. Hub `AccessPolicy` users
+  lose access to it until it leaves retention. Querdian does not accept `cluster=""` for them, because
+  that would grant all data without the label. A hub `ClusterAccessPolicy` rule with
+  `allClusters: true` or `unrestricted: true` still matches this data.
+* **Traces across clusters.** Search redaction stays safe, but partial traces become normal: a trace
+  that crosses clusters shows only the spans of the clusters a user may read. A user whose grant
+  covers only part of a trace cannot use `rootName`, `rootServiceName` or `traceDuration` (see
+  [TraceQL and Tempo](#traceql-and-tempo)).
+* **Expired spoke policies still count as matched.** An expired or suspended spoke gives no terms, but
+  the `labels.deny` and `labels.redact` of its rules stay active, so expiry only narrows access. Its
+  policies therefore still appear as matched policies (span attributes `policies.matched` and
+  `querdian.policies`, and in the dashboard), and their denied labels still apply.
+* **Revocation takes up to one heartbeat**, and up to the time limit (`maxStaleness`, default 48 hours)
+  while the agent cannot reach the receiver. A stolen agent cert can renew grants for its spoke until
+  a hub admin suspends the spoke; there is no certificate revocation list.
+* **The cluster label is not verified.** Querdian relies on the ingest gateway to overwrite the
+  cluster label from the spoke credential, and on hub telemetry to carry `cluster="<hubCluster>"`.
+  Hub data without the label is invisible to hub `AccessPolicy` users, with no error.
+* **Tenants.** One tenant for each cluster gives cross-tenant unions as soon as a user reads two
+  clusters, with the limits of federated tenants in [LogQL](#logql) and [TraceQL](#traceql-and-tempo).
+
 ## Authentication and sessions
 
 * Bearer tokens only. Authorization is evaluated per request against the token's claims; there is no
   session, no token introspection and no revocation list, so a stolen token works until it expires.
 * An open Loki tail keeps working after the token expires or the policy changes, until either side
-  closes it.
+  closes it. The only exception is the multi-cluster time limit: a tail closes within 10 seconds after
+  a spoke whose rules gave its terms expires, is suspended, or gets a new `SpokeCluster` spec or UID
+  (for example a smaller tenant allow-list). A change of a policy does not close it, also not of a
+  spoke policy.
 * Group membership comes only from the token. A change in the identity provider takes effect when
   the user obtains a new token.

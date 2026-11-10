@@ -92,17 +92,25 @@ Grafana ──Bearer JWT, traceparent──▶ querdian
   └─ upstream    Prometheus/Thanos · Loki · Tempo   (tenant header set by proxy only)
 
 controller (same binary): informers on ClusterAccessPolicy, AccessPolicy, Namespace
-  → debounce (250ms) → compile Snapshot → atomic.Pointer swap
+  (+ SpokeCluster, SpokePolicy with the multicluster block, §18)
+  → debounce (250ms, max wait 2s) → compile Snapshot → atomic.Pointer swap
   → status conditions (leader-elected writer)
+  SpokeCluster informer → deadline table (outside the snapshot; checked by resolve, §18.6)
+
+multi-cluster (§18), same binary, other subcommands:
+  querdian agent     (each spoke)  reads spoke policies → mTLS sync → hub
+  querdian receiver  (hub)         writes SpokePolicy and SpokeCluster.status only
 ```
 
 ### Request lifecycle
 
 1. `otelhttp` server span starts; trace context extracted.
-2. If snapshot not ready → `503`.
+2. If snapshot not ready → `503`. With the `multicluster` block, a replica is also not ready until the
+   deadline table has its first complete state.
 3. Route lookup by backend prefix + path. No match → `403 endpoint not allowed`.
 4. Authenticate (Bearer JWT). Failure → `401`. All routes require authentication.
-5. Resolve effective policy for (user, groups, backend). No grant → `403`.
+5. Resolve effective policy for (user, groups, backend). No grant → `403`. With the `multicluster`
+   block, rules of an expired spoke give no terms; if no term remains → `403 policy_source_expired`.
 6. `safe` routes → proxied unchanged, tenant header set from the effective policy.
 7. Normalise request (§9). Violations → `400`.
 8. Enforcer builds a `Plan` from the query + effective policy. Parse/rewrite failure → `400`.
@@ -113,7 +121,7 @@ controller (same binary): informers on ClusterAccessPolicy, AccessPolicy, Namesp
 
 ```
 api/v1alpha1/            CRD Go types, deepcopy (controller-gen)
-cmd/querdian/         main
+cmd/querdian/         main, subcommands `receiver` and `agent`
 config/crd/              generated CRD manifests
 internal/auth/           OIDC verifier, claims, middleware
 internal/config/         static config file + flags
@@ -128,6 +136,9 @@ internal/fanout/         parallel upstream execution + merge strategies
 internal/proxy/          reverse proxy, request normalisation, error writer
 internal/observability/  tracing, metrics, logging setup
 internal/server/         HTTP servers wiring, health, readiness
+internal/spokesync/      multi-cluster wire protocol: request types, digest, object name, identity check
+internal/receiver/       `querdian receiver`: hub side of the policy transport (§18.5)
+internal/agent/          `querdian agent`: spoke side of the policy transport (§18.5)
 pkg/logql/               public: LogQL lexer, parser, injector (Apache-2.0, reusable)
 pkg/traceql/             public: TraceQL lexer, parser, injector (Apache-2.0, reusable)
 charts/querdian/      Helm chart
@@ -140,16 +151,21 @@ hack/                    scripts (quickstart, codegen)
 
 ## 4. API (CRDs) — `policy.querdian.dev/v1alpha1`
 
-Two kinds (§18 adds hub objects for spoke policies; not implemented). Both only **grant** access;
-there are no deny policies (except `labels.deny`, which narrows a grant). An invalid policy therefore grants nothing → fail closed by construction.
+Two policy kinds, `ClusterAccessPolicy` and `AccessPolicy`, and two cluster-scoped hub kinds for the
+multi-cluster mode (§4.6, §18): `SpokeCluster` and `SpokePolicy`. The policy kinds only **grant**
+access; there are no deny policies (except `labels.deny`, which narrows a grant). An invalid policy
+therefore grants nothing → fail closed by construction.
 
 ### 4.1 ClusterAccessPolicy (cluster-scoped, platform admins)
 
-May set arbitrary matchers, tenants and `unrestricted`.
+May set arbitrary matchers, tenants and `unrestricted`. With the `multicluster` block, each rule must
+also state its cluster scope for each backend: a cluster matcher that names a fixed set of clusters,
+`allClusters: true` or `unrestricted: true` (§18.3). Without the block, `allClusters` has no effect.
 
 ### 4.2 AccessPolicy (namespaced, team-owned)
 
 - Every rule is implicitly ANDed with `<backend.namespaceLabel>="<metadata.namespace>"`.
+- With the `multicluster` block, every rule also gets `<backend.clusterLabel>="<hubCluster>"` (§18.3).
 - No `unrestricted`, no `tenants`.
 - Tenant comes from the namespace label `policy.querdian.dev/tenant`. Missing while the backend
   requires a tenant → `Ready=False`, reason `TenantNotAssigned`.
@@ -197,6 +213,7 @@ type LabelFilter struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="self.unrestricted == (size(self.matchers) == 0)",message="set either unrestricted or matchers"
+// +kubebuilder:validation:XValidation:rule="!(self.allClusters && self.unrestricted)",message="allClusters and unrestricted are mutually exclusive"
 type ClusterRule struct {
 	// Backend names from the static config.
 	// +kubebuilder:validation:MinItems=1
@@ -206,6 +223,10 @@ type ClusterRule struct {
 	// +optional
 	// +kubebuilder:default=false
 	Unrestricted bool `json:"unrestricted"`
+	// All clusters, also spokes that are added later (§18.3). No effect without multicluster.
+	// +optional
+	// +kubebuilder:default=false
+	AllClusters bool `json:"allClusters"`
 	// +optional
 	// +kubebuilder:default={}
 	Matchers []Matcher `json:"matchers"`
@@ -271,16 +292,24 @@ type AccessPolicy struct {
 
 ### 4.4 Status conditions
 
-Single condition type `Ready`. Reasons:
+Single condition type `Ready`. The leader writes it on `ClusterAccessPolicy`, `AccessPolicy` and, with
+the `multicluster` block, `SpokePolicy` objects. The agent copies the conditions of spoke policies to
+the spoke objects (§18.5). Reasons:
 
 | Reason | Status | Meaning |
 |---|---|---|
 | `Compiled` | True | Policy is active |
-| `InvalidMatcher` | False | Regex does not compile / invalid label name |
+| `InvalidMatcher` | False | Regex does not compile / invalid label name / unknown operator / `unrestricted` with matchers / a `ClusterRule` with `unrestricted: false` and no matchers (the compiler does not rely on CEL) |
 | `UnknownBackend` | False | Rule references a backend not in static config |
 | `TenantRequired` | False | ClusterRule without tenants for a backend with `tenantHeader` |
-| `TenantNotAssigned` | False | AccessPolicy namespace lacks `policy.querdian.dev/tenant` label |
+| `TenantNotAssigned` | False | AccessPolicy namespace lacks `policy.querdian.dev/tenant` label (spoke: no namespace label and no `defaultTenant`) |
 | `CrossTenantUnionUnsupported` | True | Active, but some users' unions across tenants on a backend without federation support will be rejected (informational message lists backends) |
+| `InvalidClusterScope` | False | Multi-cluster: a hub `ClusterRule` does not state its cluster scope for a backend, `allClusters` with a cluster matcher or with `unrestricted`, or `allClusters` on a spoke rule (§18.3) |
+| `TenantNotAllowed` | False | Multi-cluster: a spoke policy uses a tenant that is not in `SpokeCluster.spec.tenants` (§18.9) |
+| `MulticlusterDisabled` | False | A `SpokePolicy` exists, but the static config has no `multicluster` block |
+| `SpokeClusterNotFound` | False | No `SpokeCluster` has the name in `SpokePolicy.spec.cluster` |
+| `SpokeClusterInvalid` | False | The `SpokeCluster` has the name of `hubCluster`, an identity whose last path segment is not its name, or a duplicate name |
+| `InvalidSpokePolicy` | False | The `SpokePolicy` is malformed: kind, namespace and spec do not agree, an invalid name, or an object name that is not `spokesync.ObjectName` |
 
 ### 4.5 Examples
 
@@ -328,6 +357,19 @@ spec:
     - backends: [traces]
 ```
 
+### 4.6 SpokeCluster and SpokePolicy (hub, cluster-scoped, multi-cluster only)
+
+- `SpokeCluster` (short name `spoke`): one object for each spoke. Its name is the cluster label value
+  of the spoke (at most 63 characters). Hub admins write `spec`: `identity` (URI SAN of the agent cert),
+  `tenants` (allow-list), `defaultTenant` (must be in `tenants`), `maxStaleness` (positive),
+  `suspended`. The receiver writes `status.lastSyncTime` and `status.observedGeneration`.
+- `SpokePolicy` (short name `sp`): the hub copy of one spoke policy. The receiver writes `spec`:
+  `cluster`, `kind`, `namespace`, `name`, `generation` (of the spoke object), `tenantLabel` and one of
+  `clusterAccessPolicy` or `accessPolicy` (the typed specs of §4.3). The object name is
+  `spokesync.ObjectName` (`sp-` and a SHA-256 hash). The leader writes `status` (conditions,
+  `observedGeneration`, `sourceGeneration`).
+- The Go types are in `api/v1alpha1/types.go`. The rules are in §18.4.
+
 ---
 
 ## 5. Static configuration
@@ -374,11 +416,20 @@ limits:
   maxFanout: 16                     # parallel upstream requests per client request
   maxMergeBytes: 67108864           # 64 MiB cap for buffered merge responses
   upstreamTimeout: 5m
+multicluster:                       # optional (§18.4); absent = single-cluster behaviour
+  hubCluster: mla                   # cluster label value of hub telemetry
+  maxStaleness: 48h                 # default; time limit of spoke policies
+# with multicluster, every backend also sets clusterLabel, for example:
+#   clusterLabel: cluster                     (prometheus, loki)
+#   clusterLabel: resource.k8s.cluster.name   (tempo)
 ```
 
 Validation at startup (fail to start on error): unique backend names and prefixes, valid URLs,
 known types, non-empty audiences, `traceByID` only on tempo, `forwardHeaders` valid header names
-and none of the reserved ones (§9).
+and none of the reserved ones (§9). With `multicluster`: `hubCluster` not empty, `maxStaleness`
+positive, and on each backend a `clusterLabel` that is valid for the backend type, does not start
+with `__` and is not equal to `namespaceLabel`. A `clusterLabel` without the `multicluster` block is
+an error (§18.4).
 
 ### 5.2 Flags
 
@@ -394,6 +445,9 @@ and none of the reserved ones (§9).
 | `--tracing.record-queries` | `false` | add original + rewritten query to spans |
 
 Tracing exporter/sampler config uses standard `OTEL_*` environment variables (§11.2).
+
+The subcommands `querdian receiver` and `querdian agent` (§18.5) have their own flags. They do not read
+the config file. The flags are in `docs/multicluster.md`.
 
 ---
 
@@ -715,6 +769,12 @@ data source with URL `https://proxy/<pathPrefix>` calls.
 | `querdian_snapshot_generation` | gauge | — |
 | `querdian_snapshot_rebuilds_total` | counter | `result` |
 | `querdian_policies` | gauge | `kind`, `ready` |
+| `querdian_cluster_policy_age_seconds` | gauge | `cluster` |
+| `querdian_cluster_policy_expired` | gauge | `cluster` |
+
+`querdian_policies` has the `kind` value `SpokePolicy` only with the `multicluster` block. The two
+`querdian_cluster_policy_*` metrics have one series for each `SpokeCluster` in the deadline table
+(§18.6).
 
 `endpoint` is the route template (e.g. `label/:name/values`), never the raw path.
 
@@ -766,6 +826,13 @@ tracing privacy flag is enabled.
 
 - Trust boundary: the proxy trusts the OIDC issuer and the cluster API server; it trusts nothing
   from the client except the verified token.
+- **Multi-cluster trust boundary (§18.3, §18.5).** The proxy reads only the hub API server. It trusts a
+  spoke only for the data of that spoke: a spoke policy always gets the cluster matcher of its spoke
+  and only the tenants that the hub allows. The receiver is the only component with a write path. It
+  trusts only agent certs from its own hub-controlled client CA, and it takes the cluster from the URI
+  SAN of the cert. A compromised receiver can grant the data of all spokes, but not hub data. The
+  ingest gateway must overwrite the cluster label (§18.8), in the same way as the namespace label
+  below.
 - **Namespace label integrity:** `AccessPolicy` isolation relies on `namespaceLabel` being set by
   the collection pipeline (Prometheus scrape config, OTel k8sattributes, Promtail/Alloy), not by
   workloads. Must be prominent in docs.
@@ -773,7 +840,8 @@ tracing privacy flag is enabled.
 - Backends must not be reachable by clients directly (NetworkPolicy in the chart).
 - Threat model document (`docs/security/threat-model.md`) covers: query injection via
   parser divergence, label oracle attacks (filters on denied labels), metadata leaks (Tempo root
-  fields), resource exhaustion (fan-out, merge size), token replay, snapshot staleness.
+  fields), resource exhaustion (fan-out, merge size), token replay, snapshot staleness, and the
+  multi-cluster items (cluster label, receiver, agent cert, time limit).
 
 ---
 
@@ -831,7 +899,7 @@ from Janus.
 | M3 LogQL | `pkg/logql`, enforcer, fan-out + merges, tail, tests | 3 weeks |
 | M4 TraceQL | `pkg/traceql`, enforcer, redaction, traceByID filter, tests | 2 weeks |
 | M5 Release 0.1.0 | chart, image, quickstart, docs, dashboard, OpenSSF | 1.5 weeks |
-| M6 Multi-cluster | §18: origin in the compiler, time limit, receiver, agent, tests | not estimated |
+| M6 Multi-cluster | §18: origin in the compiler, time limit, hub controller, receiver, agent (T6.1 to T6.6 done); chart, docs (T6.7) and end-to-end tests (T6.8) | not estimated |
 
 M2, M3 and M4 can run in parallel once M1 is done (separate agents).
 
@@ -848,10 +916,11 @@ M2, M3 and M4 can run in parallel once M1 is done (separate agents).
 
 ---
 
-## 18. Multi-cluster (design, not implemented)
+## 18. Multi-cluster
 
-Status: this section is a design. No code exists yet. The tasks are in `TASKS.md`, milestone M6. The
-other sections of this plan describe the current code. T6.7 changes them when the code exists.
+Status: the code exists (`TASKS.md`, milestone M6, T6.1 to T6.6). The end-to-end tests (T6.8) do not
+exist yet. The operations guide is `docs/multicluster.md`. §18.12 lists where the code adds to this
+design.
 
 ### 18.1 Goal and terms
 
@@ -973,6 +1042,9 @@ spoke: [ agent ] --mTLS, full state or digest--> hub: [ receiver ] --> SpokePoli
   `get/list/watch` on both policy kinds and `namespaces`, `update/patch` on
   `accesspolicies/status` and `clusteraccesspolicies/status`, and `coordination.k8s.io/leases` in its own
   namespace. It uses leader election, so one agent sends at a time.
+- A spoke runs only the agent, never a standalone Querdian as well. Both would write the `Ready`
+  condition and `status.observedGeneration` of the spoke policies, and the hub is the only enforcement
+  point for spoke policies. The Helm chart refuses to render the agent together with the proxy in one release.
 - `querdian receiver` runs on the hub as a separate Deployment, so the read proxy keeps no write path.
   The write path non-goal in §1 is about telemetry; the receiver writes only policy state.
 - The receiver uses leader election, and only the leader reports ready. The write order and the limit on
@@ -1026,6 +1098,19 @@ conditions, and it does not renew `lastSyncTime`:
 - more than one changed sync from one cluster in 10 seconds;
 - any sync while the `SpokeCluster` is suspended.
 
+**Load limits.** One spoke must not be able to stop the receiver, because then all spokes expire. The
+receiver applies these limits:
+
+- Each identity has a burst of six requests, then one request each 5 seconds. This limit applies to
+  heartbeats and full syncs, also from an identity that is not registered. The receiver applies it
+  before it reads the body and before it reads the API server, and it answers `429` with `Retry-After`.
+  An agent with the lowest heartbeat interval (10 seconds) sends at most a heartbeat and a full sync
+  each 10 seconds, and it retries with backoff, so the limit does not stop it.
+- The body has a size limit, and the number of JSON values in it has a limit that depends on the policy
+  limit. The receiver checks the keys and counts the values in one pass over the tokens, before the typed
+  decode. Thus the memory of one request has a fixed upper limit, also for a body of small values.
+- A fixed number of requests can be in progress at the same time.
+
 ### 18.6 Time limit
 
 If a spoke does not sync, its policies stop after `maxStaleness` (default 48 hours). Hub policies do not
@@ -1043,6 +1128,9 @@ expire.
    - `lastSyncTime` is absent, or more than five minutes in the future.
    - `status.observedGeneration` differs from `metadata.generation`.
    - `spec.maxStaleness` is zero or negative.
+   - The rule was compiled from a different version of the `SpokeCluster`. A version is the pair of
+     `metadata.uid` and `metadata.generation`. A re-created object starts again at generation 1, so the
+     generation alone is not sufficient.
 5. An expired rule loses its terms but keeps its `labels.deny` and `labels.redact`, so expiry only
    narrows access.
 6. If no term remains, `Resolve` must return an error. The `ErrNoGrant` check in `Resolve` runs before
@@ -1050,8 +1138,8 @@ expire.
    check and test. The new reason is `policy_source_expired` with status 403. It does not name the cluster.
 7. The next valid sync restores the grants with no manual work.
 8. Each 10 seconds, a Loki tail checks the deadlines of the spokes that had active terms when the tail
-   started. If one has expired, the tail closes. A suspended spoke can still send logs, so
-   documentation alone is not sufficient here.
+   started. If one has expired, or if its `SpokeCluster` has a different version than at the start, the
+   tail closes. A suspended spoke can still send logs, so documentation alone is not sufficient here.
 
 Results that operators must accept:
 
@@ -1073,10 +1161,14 @@ version has no certificate revocation list. A hub admin does these steps:
 
 1. Set `suspended: true`. The receiver rejects each sync. New requests stop when the replica sees the
    change, normally in about one second. Open tails close within 10 seconds.
-2. Issue a new agent cert with a new URI SAN, then change `spec.identity`. The old cert no longer matches.
-3. Delete the `SpokePolicy` objects of the spoke. This also removes `labels.deny` and `labels.redact` of
+2. Find the cause of the theft. If the spoke leaked the cert, fix the cause first, because a new cert on
+   that spoke would be exposed in the same way. The spoke stays suspended.
+3. Issue a new agent cert with a new URI SAN, then change `spec.identity`. The old cert no longer matches.
+4. Delete the `SpokePolicy` objects of the spoke. This also removes `labels.deny` and `labels.redact` of
    forged rules, which a suspended spoke keeps (§18.6, rule 5).
-4. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+5. Set `suspended: false`. The generation changed, so grants return only after a new valid sync.
+
+`docs/multicluster.md` is the reference for the operator procedure.
 
 ### 18.8 Label integrity
 
@@ -1094,11 +1186,19 @@ gives a verification step for each signal.
 
 Do these steps in this order. A later step does not repair a mistake in an earlier step:
 
+0. Upgrade Querdian and its CRDs without the `multicluster` block, so that the `allClusters` field exists.
 1. Examine each hub `ClusterAccessPolicy`. Add a cluster matcher or `allClusters: true` where necessary.
 2. Make sure that hub telemetry carries `cluster="<hubCluster>"`.
-3. Set the `multicluster` block and `clusterLabel`.
-4. Let the first spoke send telemetry. If spoke data arrives before step 3, each hub `AccessPolicy` for
-   namespace X also matches namespace X of that spoke. No check can find this condition.
+3. Set the `multicluster` block and `clusterLabel`, with the additional proxy RBAC.
+4. Install the receiver. Register each spoke with `suspended: true` and install its agent.
+5. Connect each spoke to the ingest gateway, which overwrites the cluster label for all three signals.
+   Test the overwrite with a forged label while the spoke is suspended. If spoke data arrives before
+   step 3, each hub `AccessPolicy` for namespace X also matches namespace X of that spoke. No check can
+   find this condition.
+6. Unsuspend each spoke only after its test passes.
+
+These numbers are the same as in `docs/multicluster.md`, which gives the full procedure for these steps
+and for a stolen agent cert (§18.7).
 
 ### 18.9 Tenants
 
@@ -1109,7 +1209,8 @@ The design does not assume a tenant setup. For a backend with a `tenantHeader`:
   value must be in `spec.tenants`.
 - Any other value makes the policy invalid (new reason `TenantNotAllowed`). Because of this, a spoke
   admin cannot select a tenant that the hub did not allow.
-- A smaller allow-list must remove the grant, so a change to `spec.tenants` starts a recompile.
+- A smaller allow-list must remove the grant, so a change to `spec.tenants` starts a recompile. An open
+  Loki tail closes, because the generation of the `SpokeCluster` changed (§18.6, rule 8).
 
 | Setup | Result |
 |---|---|
@@ -1143,3 +1244,40 @@ tenant-bound metadata endpoints and `tail` have limits, and on Tempo, tenant-bou
 1. Interference: a limit for each cluster on the rules for one subject, or deny rules for each term.
 2. One tenant for each cluster: a term could omit the `__tenant_id__` binding if ingest proves that a
    tenant holds only one cluster. Querdian cannot verify this, so it stays out of the first version.
+
+### 18.12 Implementation notes
+
+The code adds these points to the design above:
+
+- **Configuration (§18.4).** Querdian also refuses to start if a `clusterLabel` starts with `__` or is
+  equal to `namespaceLabel`.
+- **Status reasons.** In addition to `InvalidClusterScope` and `TenantNotAllowed`, the compiler uses
+  `MulticlusterDisabled`, `SpokeClusterNotFound`, `SpokeClusterInvalid` and `InvalidSpokePolicy` (§4.4).
+  A spoke `AccessPolicy` with no tenant label and no `defaultTenant` gets `TenantNotAssigned`, not
+  `TenantNotAllowed`. The tenant label of a spoke namespace is compared exactly; the label of a hub
+  namespace is trimmed.
+- **Cluster scope (§18.3).** A `RegexMatch` counts only if it expands to at most 1024 non-empty names.
+  A case-insensitive regex does not count.
+- **Expiry (§18.6, rule 4).** A spoke is also expired while its `SpokeCluster` has a deletion timestamp,
+  and while the current snapshot was not compiled from the current generation of the `SpokeCluster`.
+  A `SpokeCluster` with the hub name or a wrong identity gets no entry in the deadline table, so it
+  has no series in the two `querdian_cluster_policy_*` metrics.
+- **Tail (§18.6, rule 8).** The tail checks the deadlines once at the start and then each 5 seconds,
+  so it closes within 10 seconds. The close code is 1008 with the reason `policy source expired`.
+- **Metrics (§18.6).** The code also has `querdian_cluster_policy_expired{cluster}` (1 or 0), because
+  the age alone does not show a suspended spoke.
+- **Debounce.** A rebuild waits at most 8 debounce intervals in a stream of events, and a failed
+  rebuild runs again after one second, because heartbeats start no rebuild.
+- **Receiver (§18.5).** It also rejects: a query string or a content type other than
+  `application/json` (or with a `Content-Encoding` other than `identity`), a second request with the same identity while one
+  runs (`409`), more requests in progress than `--max-in-flight` (`503`), a `SpokeCluster` name that is
+  not a valid label value, and a `SpokeCluster` with a deletion timestamp. It reads its TLS files only
+  at startup, so a cert rotation needs a restart. It has no `/metrics` endpoint.
+- **Status reply (§18.5).** The reply does not omit a policy with `CrossTenantUnionUnsupported`. It
+  sends `Compiled` with the message "policy is active" for it.
+- **Agent (§18.5).** It reads its cert, key and CA again before each request. Its heartbeat is at least
+  10 seconds. It uses a subset of the RBAC in §18.5: `get` and `list` on the policy kinds and
+  namespaces, `patch` on the two status subresources, and `get`, `create` and `update` on its lease.
+- **SpokePolicy.** The receiver also sets the label `policy.querdian.dev/cluster`. The status has
+  `sourceGeneration`, the spoke generation of the last compile. The compiler rejects an object whose
+  name is not `spokesync.ObjectName` (`InvalidSpokePolicy`).

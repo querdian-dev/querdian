@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared settings and helpers for up.sh, down.sh and verify.sh. Source it, do not run it.
+# hack/quickstart-multicluster/lib.sh also sources it.
 #
 # Environment (all optional):
 #   CLUSTER        kind cluster name                        (default querdian-demo)
@@ -46,4 +47,26 @@ render() {
     -e "s/@@DEMO_HISTORY_HOURS@@/$DEMO_HISTORY_HOURS/g" \
     -e "s/@@RETENTION_HOURS@@/$DEMO_RETENTION_HOURS/g" \
     -e "s#@@DEMOGEN_IMAGE@@#$DEMOGEN_IMAGE#g" "$@"
+}
+
+wait_for() { # description, timeout-seconds, command...
+  local d="$1" t="$2" i=0
+  shift 2
+  until "$@" >/dev/null 2>&1; do
+    i=$((i + 2))
+    [ $i -le "$t" ] || die "timeout waiting for: $d"
+    sleep 2
+  done
+}
+
+# Makes the Keycloak host name resolve inside the cluster of the context $1 (CoreDNS rewrite to the
+# Keycloak Service). $2 is a scratch directory.
+coredns_rewrite() { # kube-context, scratch-dir
+  local ctx="$1" dir="$2"
+  kubectl --context "$ctx" -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' >"$dir/Corefile"
+  sed -i.bak "s/^\( *\)kubernetes /\1rewrite name $KC_HOST keycloak.keycloak.svc.cluster.local\n&/" "$dir/Corefile"
+  grep -q "rewrite name $KC_HOST" "$dir/Corefile" || die "could not patch the CoreDNS Corefile"
+  kubectl --context "$ctx" -n kube-system create cm coredns --from-file=Corefile="$dir/Corefile" --dry-run=client -o yaml |
+    kubectl --context "$ctx" replace -f - >/dev/null
+  kubectl --context "$ctx" -n kube-system rollout restart deploy/coredns >/dev/null
 }

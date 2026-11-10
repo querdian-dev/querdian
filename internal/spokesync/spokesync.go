@@ -94,7 +94,10 @@ func Digest(policies []v1.SpokePolicySource) (string, error) {
 		sorted[i] = &policies[i]
 	}
 	sort.Slice(sorted, func(i, j int) bool { return Key(sorted[i]) < Key(sorted[j]) })
-	canon := make([]any, len(sorted))
+	// The hash input is json.Marshal of the list of pruned policies (map keys are sorted by encoding/json).
+	// The hash gets one element at a time, so only one policy is in the generic form at a time.
+	h := sha256.New()
+	h.Write([]byte{'['})
 	for i, p := range sorted {
 		if i > 0 && Key(p) == Key(sorted[i-1]) {
 			return "", fmt.Errorf("duplicate policy %s %s/%s", p.Kind, p.Namespace, p.Name)
@@ -109,14 +112,17 @@ func Digest(policies []v1.SpokePolicySource) (string, error) {
 		if err := d.Decode(&v); err != nil {
 			return "", err
 		}
-		canon[i], _ = prune(v)
+		v, _ = prune(v)
+		if b, err = json.Marshal(v); err != nil {
+			return "", err
+		}
+		if i > 0 {
+			h.Write([]byte{','})
+		}
+		h.Write(b)
 	}
-	b, err := json.Marshal(canon) // map keys are sorted by encoding/json
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	h.Write([]byte{']'})
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // prune drops empty values from objects and reports whether v itself is non-empty. Array elements are kept

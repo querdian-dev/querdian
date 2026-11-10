@@ -1,0 +1,70 @@
+{{- if and (eq .Values.mode "spoke") .Values.rbac.create }}
+{{- $c := dict "root" . "component" "agent" }}
+{{- $sa := include "querdian.componentServiceAccountName" (merge (dict "sa" .Values.agent.serviceAccount) $c) }}
+# The RBAC of the agent from PLAN section 18.5 and the package comment of internal/agent. No other
+# permission, and no wildcard.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+rules:
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies, accesspolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [policy.querdian.dev]
+    resources: [clusteraccesspolicies/status, accesspolicies/status]
+    verbs: [update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "querdian.componentName" $c }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "querdian.componentName" $c }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+rules:
+  # create cannot have resourceNames. The lease name is the --leader-election-id of the agent.
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [{{ include "querdian.componentName" $c }}]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "querdian.componentName" $c }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "querdian.componentName" $c }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

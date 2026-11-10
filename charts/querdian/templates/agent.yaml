@@ -1,0 +1,124 @@
+{{- if eq .Values.mode "spoke" }}
+{{- $c := dict "root" . "component" "agent" }}
+{{- $a := .Values.agent }}
+{{- if $a.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "querdian.componentServiceAccountName" (merge (dict "sa" $a.serviceAccount) $c) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+  {{- with $a.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+spec:
+  replicas: {{ $a.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "querdian.componentSelectorLabels" $c | nindent 6 }}
+  template:
+    metadata:
+      {{- with $a.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "querdian.componentLabels" $c | nindent 8 }}
+        {{- with $a.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "querdian.componentServiceAccountName" (merge (dict "sa" $a.serviceAccount) $c) }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: agent
+          image: {{ include "querdian.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - agent
+            - {{ printf "--receiver-url=%s" $a.receiverURL | quote }}
+            # The agent reads these files again before each request, so a rotated cert needs no restart.
+            - --tls-cert-file=/etc/querdian-agent/tls/tls.crt
+            - --tls-key-file=/etc/querdian-agent/tls/tls.key
+            - --tls-ca-file=/etc/querdian-agent/receiver-ca/{{ $a.receiverCA.key }}
+            - --heartbeat-interval={{ $a.heartbeatInterval }}
+            - --leader-elect={{ $a.leaderElection.enabled }}
+            - --leader-election-id={{ include "querdian.componentName" $c }}
+            - --management-listen=:{{ $a.managementPort }}
+            - --log-level={{ .Values.logLevel }}
+            - --log-format={{ .Values.logFormat }}
+            {{- range $a.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: management
+              containerPort: {{ $a.managementPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml $a.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/querdian-agent/tls
+              readOnly: true
+            - name: receiver-ca
+              mountPath: /etc/querdian-agent/receiver-ca
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ $a.tls.existingSecret }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: receiver-ca
+          secret:
+            secretName: {{ $a.receiverCA.existingSecret }}
+            items:
+              - key: {{ $a.receiverCA.key }}
+                path: {{ $a.receiverCA.key }}
+      {{- with $a.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $a.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $a.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

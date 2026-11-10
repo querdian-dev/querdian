@@ -1,0 +1,17 @@
+# Helm values of a spoke (helm install querdian charts/querdian -n querdian -f this). The chart installs
+# only the policy agent (`querdian agent`), never the proxy (docs/multicluster.md, "a spoke runs only the
+# agent"). up.sh replaces @@IMAGE_TAG@@ and @@RECEIVER_URL@@ and creates the Secret querdian-agent-tls
+# (tls.crt, tls.key: the agent cert of this spoke; ca.crt: the CA of the receiver server cert).
+mode: spoke
+image:
+  repository: ghcr.io/querdian-dev/querdian
+  tag: "@@IMAGE_TAG@@"
+  pullPolicy: Never # the image is built locally and loaded into kind
+agent:
+  receiverURL: "@@RECEIVER_URL@@"
+  # Shorter than the default of 1m, so that the demo shows a sync within seconds.
+  heartbeatInterval: 15s
+  tls:
+    existingSecret: querdian-agent-tls
+  receiverCA:
+    existingSecret: querdian-agent-tls

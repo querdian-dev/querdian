@@ -81,6 +81,44 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+// Values of the result label of querdian_agent_syncs_total. The set is fixed.
+const (
+	// AgentSyncOK: the receiver had the same state and accepted the heartbeat.
+	AgentSyncOK = "ok"
+	// AgentSyncFullState: the agent sent the full state and the receiver accepted it.
+	AgentSyncFullState = "full_state_sent"
+	// AgentSyncRetry: a read failure, a timeout, a 409, a 429 or a network error. The agent retries with
+	// backoff.
+	AgentSyncRetry = "retry"
+	// AgentSyncError: a different error. The agent retries at the next heartbeat.
+	AgentSyncError = "error"
+)
+
+// AgentMetrics holds the metrics of `querdian agent`.
+type AgentMetrics struct {
+	Syncs    *prometheus.CounterVec
+	LastSync prometheus.Gauge
+}
+
+// NewAgentMetrics creates the metrics of the agent and registers them on reg. It panics if a metric is
+// already registered. Each value of the result label starts at zero.
+func NewAgentMetrics(reg prometheus.Registerer) *AgentMetrics {
+	m := &AgentMetrics{
+		Syncs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "querdian_agent_syncs_total", Help: "Sync attempts of the agent by result.",
+		}, []string{"result"}),
+		LastSync: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "querdian_agent_last_sync_timestamp_seconds",
+			Help: "Unix time of the last sync that the receiver accepted. 0 before the first accepted sync.",
+		}),
+	}
+	for _, r := range []string{AgentSyncOK, AgentSyncFullState, AgentSyncRetry, AgentSyncError} {
+		m.Syncs.WithLabelValues(r)
+	}
+	reg.MustRegister(m.Syncs, m.LastSync)
+	return m
+}
+
 // clusterGauge is a collector of one gauge with the label cluster. It reads the values at each scrape,
 // because the age and the expired state change without an event.
 type clusterGauge struct {

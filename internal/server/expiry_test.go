@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/config"
@@ -19,13 +20,18 @@ import (
 )
 
 // policiesWithOrigin compiles the cluster policies and sets the Origin of the rules of the named policies,
-// as the compiler does for a SpokePolicy (T6.2). origins maps a policy name to its spoke.
+// as the compiler does for a SpokePolicy (T6.2). origins maps a policy name to its spoke. The rules get the
+// version of validSpoke(spoke).
 func (h *harness) policiesWithOrigin(origins map[string]string, cps ...v1.ClusterAccessPolicy) {
 	c := policy.Compile(policy.Input{Config: h.cfg, ClusterPolicies: cps})
 	for _, idx := range []map[string][]*policy.CompiledRule{c.ByUser, c.ByGroup} {
 		for _, rules := range idx {
 			for _, r := range rules {
 				r.Origin = origins[strings.TrimPrefix(r.Policy, "ClusterAccessPolicy/")]
+				if r.Origin != "" {
+					sc := validSpoke(r.Origin)
+					r.OriginVersion = policy.SpokeVersion{UID: sc.UID, Generation: sc.Generation}
+				}
 			}
 		}
 	}
@@ -45,7 +51,7 @@ func match(n, v string) v1.Matcher { return v1.Matcher{Name: n, Op: v1.MatchEqua
 // validSpoke returns a SpokeCluster that synced now at its current generation.
 func validSpoke(name string, mods ...func(*v1.SpokeCluster)) *v1.SpokeCluster {
 	sc := &v1.SpokeCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Generation: 1},
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("uid-" + name), Generation: 1},
 		Status:     v1.SpokeClusterStatus{LastSyncTime: &metav1.Time{Time: time.Now()}, ObservedGeneration: 1},
 	}
 	for _, m := range mods {
@@ -232,6 +238,42 @@ func TestTailClosesOnSpokeExpiry(t *testing.T) {
 	s.tailRevokeCheck = 50 * time.Millisecond
 	c := openTail(t, h, s, "spoke")
 	waitTailClosed(t, c, 5*time.Second)
+}
+
+// TestTailClosesOnSpokeSpecChange: a new spec of the SpokeCluster (for example a smaller tenant allow-list)
+// closes the tail, also when a sync of the new spec makes the spoke valid before the next check (PLAN
+// §18.9). A status change alone, such as a heartbeat, does not close it.
+func TestTailClosesOnSpokeSpecChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		next   func(*v1.SpokeCluster)
+		closes bool
+	}{
+		{"new generation", func(sc *v1.SpokeCluster) { sc.Generation, sc.Status.ObservedGeneration = 2, 2 }, true},
+		{"re-created", func(sc *v1.SpokeCluster) { sc.UID = "uid-recreated" }, true},
+		{"heartbeat", func(*v1.SpokeCluster) {}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dl := policy.NewDeadlines()
+			dl.Update(validSpoke("cluster-a"), time.Hour)
+			h, s := tailHarness(t, dl)
+			s.tailRevokeCheck = 50 * time.Millisecond
+			c := openTail(t, h, s, "spoke")
+			dl.Update(validSpoke("cluster-a", tc.next), time.Hour)
+			if dl.Expired("cluster-a", time.Now()) {
+				t.Fatal("the new state must be valid in the table")
+			}
+			if tc.closes {
+				waitTailClosed(t, c, 5*time.Second)
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			if _, _, err := c.Read(ctx); websocket.CloseStatus(err) != -1 {
+				t.Fatalf("tail closed: %v", err)
+			}
+		})
+	}
 }
 
 // TestTailWithHubTermsOnlyIsNotChecked: a spoke that was expired at the start gave no terms, so the tail

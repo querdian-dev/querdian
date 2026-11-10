@@ -30,21 +30,34 @@ func TestRunVersionAndFlagErrors(t *testing.T) {
 	}
 }
 
-// Until M6 is complete, a multicluster block must stop startup instead of being ignored.
-func TestRunRejectsMulticluster(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	cfg := `
+// A config with the multicluster block passes each startup check and stops only where Querdian needs the
+// API server. The run without the block stops at the same point.
+func TestRunAcceptsMulticluster(t *testing.T) {
+	// An explicit kubeconfig that does not exist makes the Kubernetes config fail, so run never connects.
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
+	for name, cfg := range map[string]string{
+		"multicluster": `
 auth: {issuer: "https://idp.example.com", audiences: [q]}
 backends:
   - {name: m, type: prometheus, url: "http://p:9090", pathPrefix: /prom, namespaceLabel: namespace, clusterLabel: cluster}
 multicluster: {hubCluster: mla}
-`
-	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := run([]string{"--config=" + path})
-	if err == nil || !strings.Contains(err.Error(), "multicluster is not implemented yet") {
-		t.Fatalf("want the multicluster guard, got %v", err)
+`,
+		"single cluster": `
+auth: {issuer: "https://idp.example.com", audiences: [q]}
+backends:
+  - {name: m, type: prometheus, url: "http://p:9090", pathPrefix: /prom, namespaceLabel: namespace}
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := run([]string{"--config=" + path})
+			if err == nil || !strings.Contains(err.Error(), "kubernetes config") {
+				t.Fatalf("want a stop at the Kubernetes config, got %v", err)
+			}
+		})
 	}
 }
 

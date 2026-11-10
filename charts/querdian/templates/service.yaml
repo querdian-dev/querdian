@@ -1,3 +1,4 @@
+{{- if include "querdian.proxyEnabled" . }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,4 +61,5 @@ spec:
       nodePort: {{ .Values.ui.service.nodePort }}
       {{- end }}
       protocol: TCP
+{{- end }}
 {{- end }}

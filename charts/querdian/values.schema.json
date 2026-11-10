@@ -16,6 +16,12 @@
         "type": "string"
       }
     },
+    "mode": {
+      "enum": [
+        "proxy",
+        "spoke"
+      ]
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -247,6 +253,10 @@
                 "type": "string",
                 "minLength": 1
               },
+              "clusterLabel": {
+                "type": "string",
+                "minLength": 1
+              },
               "tenantHeader": {
                 "type": "string"
               },
@@ -300,12 +310,58 @@
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
             }
           }
+        },
+        "multicluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hubCluster": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxStaleness": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"
+            }
+          },
+          "required": [
+            "hubCluster"
+          ]
         }
       },
       "required": [
         "auth",
         "backends"
-      ]
+      ],
+      "if": {
+        "required": [
+          "multicluster"
+        ]
+      },
+      "then": {
+        "properties": {
+          "backends": {
+            "items": {
+              "required": [
+                "clusterLabel"
+              ]
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "backends": {
+            "items": {
+              "not": {
+                "required": [
+                  "clusterLabel"
+                ]
+              }
+            }
+          }
+        }
+      }
     },
     "oidcCA": {
       "type": "object",
@@ -552,6 +608,12 @@
               "items": {
                 "type": "object"
               }
+            },
+            "receiverFrom": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
             }
           }
         },
@@ -647,6 +709,26 @@
                 "enabled": {
                   "type": "boolean"
                 },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  }
+                }
+              }
+            },
+            "receiver": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
                 "to": {
                   "type": "array",
                   "items": {
@@ -785,6 +867,284 @@
               "maximum": 32767
             }
           }
+        }
+      }
+    },
+    "receiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "leaderElection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "managementPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "nodePort": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 30000,
+              "maximum": 32767
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "loadBalancerSourceRanges": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            }
+          }
+        },
+        "clientCA": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array"
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receiverURL": {
+          "type": "string",
+          "pattern": "^$|^https://[^/]+"
+        },
+        "heartbeatInterval": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,5}[smh]$"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "leaderElection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "managementPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            }
+          }
+        },
+        "receiverCA": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "type": "object"
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array"
+        }
+      }
+    },
+    "prometheusRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "policyAgeThresholdSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "for": {
+          "type": "string",
+          "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$"
+        },
+        "severity": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

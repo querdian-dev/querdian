@@ -1,10 +1,12 @@
 - title: Start
   pages:
     - quickstart
+    - quickstart-multicluster | Multi-cluster quickstart
     - policy-guide
 - title: Operate
   pages:
     - operations
+    - multicluster | Multi-cluster
     - troubleshooting
     - dashboards | Grafana dashboard
 - title: Reference

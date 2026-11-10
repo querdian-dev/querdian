@@ -10,7 +10,7 @@ function h(tag, attrs, ...kids) {
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (v !== false && v != null) e.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return e;
 }
 const chip = (t, cls) => h("span", { class: "chip " + (cls || "") }, t);
@@ -20,6 +20,14 @@ const mstr = (m) => m.name + m.op + JSON.stringify(m.value);
 const hiddenOnly = (x) => x.deniedLabels.filter((n) => !x.redactions.some((r) => r.name === n));
 const rstr = (r) => r.name + ": " + r.before + " → " + (r.after || "removed");
 const redChips = (rs) => rs.map((r) => h("span", { class: "chip redact", title: r.strategy + " · " + r.effect }, rstr(r)));
+// Multi-cluster: the ID of a spoke policy is a hash, so the dashboard names it by its source object in the
+// spoke and keeps the ID in a tooltip and in the policy details. Without the multicluster block, the API
+// sends no origin and the views are unchanged.
+const srcName = (o) => o.kind + "/" + (o.namespace ? o.namespace + "/" : "") + o.name;
+const plabel = (id, o) => (!o || o.hub ? id : o.cluster + " · " + (o.kind ? srcName(o) : id));
+const srcChip = (s) => h("span", { class: "chip" + (s.expired ? " deny" : ""), title: s.id }, plabel(s.id, s.origin), s.expired ? " · expired" : null);
+const srcChips = (ss) => (ss.length ? ss.map(srcChip) : chips([]));
+const EXPIRED_NOTE = "Expired policies grant no data. Their hidden and redacted labels still apply.";
 
 async function api(path, opts) {
   const r = await fetch("api/" + path, opts);
@@ -37,31 +45,43 @@ async function overview() {
   const o = await api("overview");
   document.getElementById("ver").textContent = o.version || "";
   const stat = (l, v) => h("div", { class: "stat" }, h("span", { class: "label" }, l), h("b", {}, v));
+  const sp = o.spokePolicies;
   page("Overview", "The policies this Querdian replica is enforcing right now.",
     h("div", { class: "stats" }, stat("Snapshot generation", o.generation), stat("Policies", o.policies.total),
       stat("Ready", o.policies.ready), stat("Not ready", o.policies.notReady),
+      sp ? [stat("Spoke policies", sp.total), stat("Expired", sp.expired)] : null,
       stat("Users", o.subjects.users), stat("Groups", o.subjects.groups), stat("Backends", o.backends)));
 }
 
 function ruleView(r) {
+  // An expired rule keeps its hidden and redacted labels, so only its matchers are struck through.
+  const grant = r.unrestricted ? chip("unrestricted") : chips(r.matchers.map(mstr), r.expired ? "void" : "");
   return h("div", { class: "rule" },
     h("span", { class: "chip z-" + r.type }, ZONE[r.type] || r.type), " ", h("b", {}, r.backend), " ",
     r.tenants.length ? h("span", { class: "muted" }, "tenants: ", r.tenants.join(", ")) : null,
-    h("div", {}, r.unrestricted ? chip("unrestricted") : chips(r.matchers.map(mstr))),
+    h("div", {}, grant, r.expired ? h("span", { class: "label" }, " Grants no data now") : null),
     hiddenOnly(r).length ? h("div", {}, h("span", { class: "label" }, "Hidden labels "), chips(hiddenOnly(r), "deny")) : null,
     r.redactions.length ? h("div", {}, h("span", { class: "label" }, "Redacted labels "), redChips(r.redactions)) : null);
 }
 
 async function policies() {
   const d = await api("policies");
+  const mc = d.policies.some((p) => p.origin);
+  const spoke = (p) => mc && !p.origin.hub;
+  // A spoke policy that is not ready has a source that the compiler did not verify.
+  const unverified = (p) => (spoke(p) && p.origin.unverified ? h("span", { class: "muted" }, " (unverified)") : null);
+  const heads = mc ? ["Policy", "Origin", "Status", "Subjects", "Backends"] : ["Policy", "Status", "Subjects", "Backends"];
   const open = new Set();
   const body = h("tbody");
   const draw = () => {
     body.replaceChildren();
     for (const p of d.policies) {
       const row = h("tr", { class: "row", tabindex: "0", "aria-expanded": String(open.has(p.id)) },
-        h("td", {}, h("b", {}, p.id)),
-        h("td", { class: p.ready ? "" : "deny" }, h("b", { class: "mono" }, p.ready ? "Ready" : "NotReady"), " ", h("span", { class: "mono muted" }, p.reason)),
+        // One unverified mark for each row, in the Origin cell: it covers the cluster and the source name.
+        h("td", {}, spoke(p) && p.origin.kind ? h("b", { title: p.id }, srcName(p.origin)) : h("b", {}, p.id)),
+        mc ? h("td", {}, spoke(p) ? [p.origin.cluster || "unknown", unverified(p)] : "Hub") : null,
+        h("td", { class: p.ready ? "" : "deny" }, h("b", { class: "mono" }, p.ready ? "Ready" : "NotReady"), " ", h("span", { class: "mono muted" }, p.reason),
+          p.expired ? h("div", {}, chip("Expired", "deny")) : null),
         h("td", {}, chips(p.groups.concat(p.users.map((u) => "user:" + u)))),
         h("td", {}, chips([...new Set(p.rules.map((r) => r.backend))])));
       const toggle = () => { open.has(p.id) ? open.delete(p.id) : open.add(p.id); draw(); };
@@ -69,28 +89,50 @@ async function policies() {
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
       body.append(row);
       if (open.has(p.id)) {
-        body.append(h("tr", {}, h("td", { colspan: "4" }, h("div", { class: "drawer" },
+        const origin = spoke(p) ? [h("dt", {}, "Origin"), h("dd", {}, "Spoke " + (p.origin.cluster || "unknown"), unverified(p)),
+          p.origin.kind ? [h("dt", {}, "Source"), h("dd", {}, srcName(p.origin), unverified(p))] : null,
+          h("dt", {}, "Hub object"), h("dd", {}, p.id)] : mc ? [h("dt", {}, "Origin"), h("dd", {}, "Hub")] : null;
+        body.append(h("tr", {}, h("td", { colspan: String(heads.length) }, h("div", { class: "drawer" },
+          p.expired ? h("p", { class: "note deny" }, h("b", {}, "Expired. "), "The spoke " + p.origin.cluster +
+            " has no valid sync within its time limit, a hub admin suspended it, or its SpokeCluster changed after the last sync. Its rules grant no data now. Their hidden and redacted labels still apply.") : null,
+          spoke(p) && p.origin.unverified ? h("p", { class: "note" }, h("b", {}, "Unverified origin. "),
+            "The cluster and the source come from the hub object, and this object did not pass the checks. Do not use them as fact.") : null,
           p.message ? h("p", { class: "mono" }, p.message) : null,
-          h("dl", { class: "kv" }, h("dt", {}, "Generation"), h("dd", {}, p.generation)),
+          h("dl", { class: "kv" }, origin, h("dt", {}, "Generation"), h("dd", {}, p.generation)),
           p.rules.length ? p.rules.map(ruleView) : h("p", { class: "muted" }, "No compiled rules (policy is not in effect).")))));
       }
     }
   };
   draw();
-  page("Policies", "Every ClusterAccessPolicy and AccessPolicy with its compile status. Select a row for its rules.",
-    h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Policy", "Status", "Subjects", "Backends"].map((t) => h("th", {}, t)))), body)));
+  page("Policies", mc ? "Every policy of the hub and of each spoke cluster, with its origin and compile status. Select a row for its rules."
+    : "Every ClusterAccessPolicy and AccessPolicy with its compile status. Select a row for its rules.",
+    h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, heads.map((t) => h("th", {}, t)))), body)));
 }
+
+// expiredLines names the expired policies of a backend; their labels are in the hidden and redacted lines.
+const expiredLines = (x) => (x.sources || []).filter((s) => s.expired).map((s) => h("span", { class: "m" }, "expired: " + plabel(s.id, s.origin)));
 
 function pass(a) {
   const zones = a.map((x) => {
-    if (!x.granted) return h("div", { class: "zone none" }, h("b", {}, (ZONE[x.type] || x.type) + " · " + x.backend), h("span", { class: "m" }, x.reason || "no grant"));
+    if (!x.granted) return h("div", { class: "zone none" }, h("b", {}, (ZONE[x.type] || x.type) + " · " + x.backend), h("span", { class: "m" }, x.reason || "no grant"), expiredLines(x));
     const lines = x.unrestricted ? ["unrestricted"] : x.terms.map((t) => (t.tenant ? t.tenant + ": " : "") + (t.matchers.map(mstr).join(", ") || "all"));
     return h("div", { class: "zone " + x.type }, h("b", {}, (ZONE[x.type] || x.type) + " · " + x.backend),
       lines.map((l) => h("span", { class: "m" }, l)),
       hiddenOnly(x).length ? h("span", { class: "m" }, "hidden: " + hiddenOnly(x).join(", ")) : null,
-      x.redactions.map((r) => h("span", { class: "m" }, "redacted: " + rstr(r) + " (" + r.effect + ")")));
+      x.redactions.map((r) => h("span", { class: "m" }, "redacted: " + rstr(r) + " (" + r.effect + ")")),
+      expiredLines(x));
   });
   return zones;
+}
+
+// fromLine lists the policies of the pass. With the multicluster block, it names spoke policies by their
+// source and marks the expired ones.
+function fromLine(a) {
+  if (!a.some((x) => x.sources)) return chips([...new Set(a.flatMap((x) => x.policies))]);
+  const byID = new Map();
+  for (const s of a.flatMap((x) => x.sources || [])) byID.set(s.id, s);
+  const all = [...byID.values()];
+  return [srcChips(all), all.some((s) => s.expired) ? h("p", { class: "fine" }, EXPIRED_NOTE) : null];
 }
 
 async function access() {
@@ -107,7 +149,7 @@ async function access() {
       out.replaceChildren(h("div", { class: "pass" }, h("div", { class: "slot" }),
         h("div", { class: "head" }, h("span", { class: "label" }, "Effective access"), h("div", { class: "name" }, name),
           h("span", { class: "mono muted" }, r.groups.join(", "))), pass(r.access),
-        h("div", { class: "head" }, h("span", { class: "label" }, "From "), chips([...new Set(r.access.flatMap((x) => x.policies))]))));
+        h("div", { class: "head" }, h("span", { class: "label" }, "From "), fromLine(r.access))));
     } catch (err) { out.replaceChildren(h("p", { class: "deny" }, err.message)); }
   };
   page("Access", "Pick a user and groups to see the exact union of rules per backend.",
@@ -124,11 +166,13 @@ async function backends() {
   page("Backends", "Configured upstreams and the policies that reach them.",
     h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Backend", "Zone", "Namespace label", "Tenant header", "Policies"].map((t) => h("th", {}, t)))),
       h("tbody", {}, d.backends.map((b) => h("tr", {}, h("td", {}, h("b", {}, b.name)), h("td", {}, h("span", { class: "chip z-" + b.type }, ZONE[b.type] || b.type)),
-        h("td", { class: "mono" }, b.namespaceLabel || "–"), h("td", { class: "mono" }, b.tenantHeader || "–"), h("td", {}, chips(b.policies))))))));
+        h("td", { class: "mono" }, b.namespaceLabel || "–"), h("td", { class: "mono" }, b.tenantHeader || "–"), h("td", {}, b.sources ? srcChips(b.sources) : chips(b.policies))))))));
 }
 
 async function test() {
   const [s, b] = await Promise.all([api("subjects"), api("backends")]);
+  // The dry run names policies by ID only; the backends view gives the readable names of spoke policies.
+  const names = new Map(b.backends.flatMap((x) => x.sources || []).map((x) => [x.id, plabel(x.id, x.origin)]));
   const user = h("input", { list: "ul", autocomplete: "off", "aria-label": "User" });
   const grp = h("input", { list: "gl", autocomplete: "off", "aria-label": "Groups" });
   const sel = h("select", { "aria-label": "Backend" }, b.backends.map((x) => h("option", { value: x.name }, x.name + " (" + (ZONE[x.type] || x.type) + ")")));
@@ -151,7 +195,7 @@ async function test() {
           strip.append(h("div", { class: "out" }, h("span", { class: "label" }, "Result labels · removed by this endpoint"),
             h("pre", { class: "redacted" }, r.redactions.map((x) => x.name).join(", "))));
         }
-        strip.append(h("div", { class: "meta" }, "strategy " + r.strategy + " · policies " + r.policies.join(", ")));
+        strip.append(h("div", { class: "meta" }, "strategy " + r.strategy + " · policies " + r.policies.map((id) => (names.has(id) ? names.get(id) : id)).join(", ")));
       } else {
         strip.append(h("div", { class: "out" }, h("span", { class: "label" }, "Refused · " + r.status), h("pre", { class: "refused" }, r.reason + (r.detail ? ": " + r.detail : ""))));
       }

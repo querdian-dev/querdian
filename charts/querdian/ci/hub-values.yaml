@@ -1,0 +1,58 @@
+# Hub of a multi-cluster deployment (PLAN section 18): the proxy with the multicluster block, the
+# receiver and the alerts for spoke policies. The Secrets must exist before the install.
+config:
+  multicluster:
+    hubCluster: mla
+    maxStaleness: 48h
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://thanos-query.monitoring:10902
+      pathPrefix: /prometheus
+      namespaceLabel: namespace
+      clusterLabel: cluster
+    - name: logs
+      type: loki
+      url: http://loki-gateway.monitoring
+      pathPrefix: /loki
+      namespaceLabel: k8s_namespace_name
+      clusterLabel: k8s_cluster_name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: tenantIdLabel
+    - name: traces
+      type: tempo
+      url: http://tempo-query-frontend.monitoring:3200
+      pathPrefix: /tempo
+      namespaceLabel: resource.k8s.namespace.name
+      clusterLabel: resource.k8s.cluster.name
+      tenantHeader: X-Scope-OrgID
+      traceByID: filter
+receiver:
+  enabled: true
+  service:
+    type: LoadBalancer
+    loadBalancerSourceRanges: [203.0.113.0/24]
+  tls:
+    existingSecret: querdian-receiver-tls
+  clientCA:
+    existingSecret: querdian-agent-ca
+serviceMonitor:
+  enabled: true
+prometheusRule:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: grafana
+    managementFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitoring
+    receiverFrom:
+      - ipBlock:
+          cidr: 203.0.113.0/24

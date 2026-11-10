@@ -5,13 +5,43 @@ It is off by default. It has no write path: it never changes a policy and never 
 
 ## Views
 
-* **Overview**: snapshot generation, policy counts (ready / not ready), users, groups, backends.
-* **Policies**: every `ClusterAccessPolicy` and `AccessPolicy` with its `Ready` reason and message.
-  Select a row for its compiled rules (backend, tenants, matchers, hidden labels, and redacted labels
-  with an example of their effect, such as `customer_id: 42 → redacted-1`).
+* **Overview**: snapshot generation, policy counts (ready / not ready), users, groups, backends. With
+  the `multicluster` block, also the number of spoke policies and of expired spoke policies.
+* **Policies**: every policy with its `Ready` reason and message: each `ClusterAccessPolicy` and
+  `AccessPolicy` of the hub and, with the `multicluster` block, each `SpokePolicy`. Select a row for its
+  compiled rules (backend, tenants, matchers, hidden labels, and redacted labels with an example of
+  their effect, such as `customer_id: 42 → redacted-1`).
 * **Access**: pick a user and groups and see the exact union of rules per backend, drawn as a pass,
   including which labels are hidden and which are redacted with which strategy.
 * **Backends**: configured backends (no URLs or credentials) and the policies that reach each.
+
+### Multi-cluster
+
+With the `multicluster` block (see [multi-cluster enforcement](multicluster.md)), the dashboard also
+shows where each policy comes from. Without the block, it looks and behaves as described above.
+
+* **Origin column**: `Hub`, or the name of the `SpokeCluster`. The ID of a spoke policy is a hash
+  (`SpokePolicy/sp-<64 hex>`), so the Policies view names it by its source object in the spoke: kind,
+  namespace and name, for example `AccessPolicy/shop/read`. The ID stays in a tooltip and in the row
+  details (Hub object). The view lists hub policies first, then spoke policies by cluster, kind,
+  namespace and name.
+* **Unverified origin**: for a spoke policy that is not ready, the cluster and the source come from the
+  spec of the hub object, which did not pass the checks. The dashboard marks them as unverified.
+* **Expired**: a ready spoke policy whose spoke is expired now (no valid sync within `maxStaleness`,
+  `suspended: true`, or a `SpokeCluster` change that the snapshot does not contain yet) has a hatched
+  Expired mark. Its rules grant no data, so their matchers are struck through. Their hidden and redacted
+  labels still apply, and the dashboard shows them as usual. The state comes from the same deadline
+  table and the same check as the proxy: a rule is expired also if the table has a different version of the
+  `SpokeCluster` than the rule was compiled from. A policy has the Expired mark when all its rules are
+  expired.
+* **Access and Backends**: the pass and the Backends view name spoke policies by their source and mark
+  the expired ones. On the pass, a refused backend lists only its expired policies, for example for
+  `policy_source_expired`.
+* **API**: `/api/policies` adds `origin` (`hub`, or `cluster`, `kind`, `namespace`, `name` and
+  `unverified`) and `expired` to each policy and rule. `/api/access` and `/api/backends` add `sources`
+  to each backend: each policy with its `id`, `origin` and `expired` state, in the order of the Policies
+  view. `/api/overview` adds `spokePolicies` (`total`, `expired`). The test bench answer does not change
+  and does not name the cluster.
 * **Test bench**: choose a user, groups, a backend and a query. The dashboard resolves the effective
   policy and runs the same enforcer as the proxy, then shows the incoming and the rewritten query, or
   the refusal and its reason. Unknown users, denied labels and unparseable queries are refused exactly
@@ -40,6 +70,10 @@ With the Helm chart set `ui.enabled=true` (and `ui.service.enabled=true` for a C
 
 The dashboard discloses group names, tenants and label matchers, which describe your tenancy. Treat it
 as an administrative surface.
+
+With the `multicluster` block, it also discloses the `SpokeCluster` names, the source objects of each
+spoke (kind, namespace and name) and the sync state of each spoke (expired or not). It shows the
+policies of all spokes to each dashboard user.
 
 * Browsers cannot send a bearer token on their own. Use `--ui-auth=oidc` behind a proxy that adds the
   token, or `--ui-auth=none` on a trusted network only (`kubectl port-forward`, a loopback address). With

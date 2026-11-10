@@ -1,0 +1,70 @@
+{{- /* NetworkPolicies for the receiver (hub) and the agent (spoke). They use the dns and kubeApi egress settings of the proxy. egress.extra applies only to the proxy. */ -}}
+{{- $np := .Values.networkPolicy }}
+{{- if and $np.enabled (include "querdian.receiverEnabled" .) }}
+{{- $c := dict "root" . "component" "receiver" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "querdian.componentSelectorLabels" $c | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- with $np.ingress.receiverFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.receiver.port }}
+          protocol: TCP
+    {{- end }}
+    {{- with $np.ingress.managementFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.receiver.managementPort }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    {{- include "querdian.componentEgress" $np | trim | nindent 4 }}
+{{- end }}
+{{- if and $np.enabled (eq .Values.mode "spoke") }}
+{{- $c := dict "root" . "component" "agent" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "querdian.componentName" $c }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "querdian.componentLabels" $c | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "querdian.componentSelectorLabels" $c | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- with $np.ingress.managementFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $.Values.agent.managementPort }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    {{- include "querdian.componentEgress" $np | trim | nindent 4 }}
+    - {{- with $np.egress.receiver.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      ports:
+        {{- range $np.egress.receiver.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+{{- end }}

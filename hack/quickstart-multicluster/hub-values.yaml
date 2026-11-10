@@ -1,0 +1,49 @@
+# Helm values of the hub, applied AFTER hack/quickstart/querdian-values.yaml:
+#   helm install querdian charts/querdian -n querdian -f hack/quickstart/querdian-values.yaml -f this
+# The image, the dashboard (NodePort 30081), tracing and the OIDC settings come from that file.
+# Helm replaces lists, so config.backends is complete here.
+
+config:
+  # docs/multicluster.md, step 3. hubCluster is the cluster label value of hub telemetry
+  # (manifests/hub-prometheus.yaml, manifests/hub-otel-collector.yaml).
+  multicluster:
+    hubCluster: hub
+    maxStaleness: 48h
+  backends:
+    - name: metrics
+      type: prometheus
+      url: http://prometheus.observability:9090
+      pathPrefix: /prom
+      namespaceLabel: namespace
+      clusterLabel: cluster
+      tenantFederation: none
+    - name: logs
+      type: loki
+      url: http://loki.observability:3100
+      pathPrefix: /loki
+      namespaceLabel: k8s_namespace_name
+      clusterLabel: k8s_cluster_name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: tenantIdLabel
+    - name: traces
+      type: tempo
+      url: http://tempo.observability:3200
+      pathPrefix: /tempo
+      namespaceLabel: resource.k8s.namespace.name
+      clusterLabel: resource.k8s.cluster.name
+      tenantHeader: X-Scope-OrgID
+      tenantFederation: none
+      traceByID: filter
+
+# docs/multicluster.md, step 4. The receiver terminates mTLS itself. The spokes reach it on the
+# Docker network "kind" at https://<hub node IP>:30443. up.sh creates both Secrets from the certs of
+# certs.sh before the install.
+receiver:
+  enabled: true
+  service:
+    type: NodePort
+    nodePort: 30443
+  tls:
+    existingSecret: querdian-receiver-tls # tls.crt, tls.key (server cert with the hub node IP)
+  clientCA:
+    existingSecret: querdian-agent-ca # ca.crt: the hub-controlled agent CA, NOT an ingest CA

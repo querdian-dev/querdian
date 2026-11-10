@@ -604,95 +604,110 @@ The design is PLAN §18. Read it completely before you start a task in this mile
   - [x] The dashboard dry run uses the same check.
   - [x] The metric `querdian_cluster_policy_age_seconds` exists.
 
-### [ ] T6.4 — Controller for the hub objects
+### [x] T6.4 — Controller for the hub objects
 - **Depends on:** T6.3
 - **Files:** `internal/controller/`
 - **Acceptance:**
-  - [ ] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table. They
+  - [x] Informers on `SpokeCluster` and `SpokePolicy` feed the snapshot and the deadline table. They
         start only if the `multicluster` block is set.
-  - [ ] A change of `lastSyncTime`, `observedGeneration`, `metadata.generation`, `suspended` or
+  - [x] A change of `lastSyncTime`, `observedGeneration`, `metadata.generation`, `suspended` or
         `spec.maxStaleness` reaches the deadline table. An envtest covers each field. A heartbeat starts
         no recompile. The current filter ignores updates that do not change the generation.
-  - [ ] A replica reports ready only when the deadline table has its first complete state.
-  - [ ] A change of `spec.tenants` or `defaultTenant` starts a recompile. A test shows that a smaller
+  - [x] A replica reports ready only when the deadline table has its first complete state.
+  - [x] A change of `spec.tenants` or `defaultTenant` starts a recompile. A test shows that a smaller
         allow-list removes the grant.
-  - [ ] An unreachable spoke does not affect startup or readiness.
-  - [ ] The leader writes status conditions on `SpokePolicy` objects.
+  - [x] An unreachable spoke does not affect startup or readiness.
+  - [x] The leader writes status conditions on `SpokePolicy` objects.
 
-### [ ] T6.5 — Receiver
+### [x] T6.5 — Receiver
 - **Depends on:** T6.1
 - **Files:** `cmd/querdian/`, new package `internal/receiver/`
 - **Acceptance:**
-  - [ ] `querdian receiver` terminates mTLS with its own required client CA and takes the cluster from
+  - [x] `querdian receiver` terminates mTLS with its own required client CA and takes the cluster from
         the cert only.
-  - [ ] It uses leader election, and only the leader reports ready. A test shows that a second sync for a
+  - [x] It uses leader election, and only the leader reports ready. A test shows that a second sync for a
         cluster gets `409` during a running sync, and that a sync for a different cluster is not affected.
-  - [ ] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
+  - [x] Tests reject a cert with no URI SAN, a cert with several URI SANs, a cert from a different CA, an
         unknown identity, and an identity on two `SpokeCluster` objects.
-  - [ ] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
+  - [x] A test shows that the cert of one spoke cannot change the objects of a different spoke, also for
         crafted names such as cluster `a-b` with policy `c`, and cluster `a` with policy `b-c`.
-  - [ ] It reads the `SpokeCluster` directly at the start of each sync and writes `status` with a
+  - [x] It reads the `SpokeCluster` directly at the start of each sync and writes `status` with a
         `resourceVersion` precondition. A test shows that a sync that overlaps a spec change validates
         nothing.
-  - [ ] Tests reject the whole sync for each condition under "Unknown input" in §18.5, and
+  - [x] Tests reject the whole sync for each condition under "Unknown input" in §18.5, and
         `lastSyncTime` does not change.
-  - [ ] It writes changed objects, then deletes, then sets `lastSyncTime` and `observedGeneration`. It
+  - [x] It writes changed objects, then deletes, then sets `lastSyncTime` and `observedGeneration`. It
         sets an owner reference on each `SpokePolicy`.
-  - [ ] A test stops a sync between the writes and the deletes. The next digest does not renew
+  - [x] A test stops a sync between the writes and the deletes. The next digest does not renew
         `lastSyncTime`.
-  - [ ] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
+  - [x] The sync reply carries the status conditions and omits `CrossTenantUnionUnsupported`. Each
         condition carries the generation of the spoke object.
 
-### [ ] T6.6 — Agent
+### [x] T6.6 — Agent
 - **Depends on:** T6.5
 - **Files:** `cmd/querdian/`, new package `internal/agent/`
 - **Acceptance:**
-  - [ ] `querdian agent` sends a digest at each heartbeat and the full state if the digest differs.
-  - [ ] It sends nothing until it has a complete read, and it reads the API server directly before each
+  - [x] `querdian agent` sends a digest at each heartbeat and the full state if the digest differs.
+  - [x] It sends nothing until it has a complete read, and it reads the API server directly before each
         heartbeat. A test shows that an agent without an API server does not renew `lastSyncTime`.
-  - [ ] It retries at least each minute after a failure, and it uses leader election.
-  - [ ] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
+  - [x] It retries at least each minute after a failure, and it uses leader election.
+  - [x] It writes status conditions to the spoke objects. Its RBAC is the minimum in §18.5, with no
         wildcard on `status`. It handles `409` with a retry.
 
-### [ ] T6.7 — Chart and documentation
+### [x] T6.7 — Chart and documentation
 - **Depends on:** T6.4, T6.6
 - **Files:** `charts/querdian/`, `docs/`, `PLAN.md`, `CHANGELOG.md`
 - **Acceptance:**
-  - [ ] The chart can install the hub with the receiver, or the agent only for a spoke. It includes the
+  - [x] The chart can install the hub with the receiver, or the agent only for a spoke. It includes the
         optional alert at 24 hours.
-  - [ ] The chart RBAC gives the receiver write access to `SpokePolicy` and `spokeclusters/status` only.
+  - [x] The chart RBAC gives the receiver write access to `SpokePolicy` and `spokeclusters/status` only.
         The proxy gets read access and `spokepolicies/status` only. A test covers this.
-  - [ ] The threat model covers these items:
+  - [x] The threat model covers these items:
         - the spoke admin as an actor, and the cluster label in section 1;
         - the receiver as a new attack surface, because a compromised receiver can grant the data of all
           spokes;
         - the agent cert, the procedure in §18.7, and the time limit in section 10;
         - the policies of all spokes in the dashboard, and the changes to the trusted set.
-  - [ ] `docs/limitations.md` lists the limits in §18.10, and the statement about TLS covers the receiver.
-  - [ ] The statements about open tails in `docs/limitations.md` and in the threat model describe the
+  - [x] `docs/limitations.md` lists the limits in §18.10, and the statement about TLS covers the receiver.
+  - [x] The statements about open tails in `docs/limitations.md` and in the threat model describe the
         close on expiry and on suspension.
-  - [ ] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
+  - [x] An operations guide describes all setups in §18.9, the requirements for the ingest gateway, the
         requirements for the agent CA, the removal of a spoke, and the risk of a rollback.
-  - [ ] The operations guide gives the ordered steps in §18.8, including the review of each hub
+  - [x] The operations guide gives the ordered steps in §18.8, including the review of each hub
         `ClusterAccessPolicy`, and a verification step for hub telemetry on each signal.
-  - [ ] `docs/limitations.md` and the policy guide describe the cluster scope rule and the old hub data.
-  - [ ] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
-  - [ ] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
-  - [ ] The chart README and `CHANGELOG.md` describe the change.
-  - [ ] The policy dashboard shows the origin and the expired state of a policy.
+  - [x] `docs/limitations.md` and the policy guide describe the cluster scope rule and the old hub data.
+  - [x] `docs/troubleshooting.md` lists `policy_source_expired`, and PLAN §4.4 lists the new reasons.
+  - [x] PLAN §3, §4, §5.1 and §12 describe the new kinds, and §18 is no longer marked as a design only.
+  - [x] The chart README and `CHANGELOG.md` describe the change.
+  - [x] The policy dashboard shows the origin and the expired state of a policy.
 
-### [ ] T6.8 — End-to-end tests
+### [x] T6.8 — End-to-end tests
 - **Depends on:** T6.7
-- **Files:** `test/e2e/`
+- **Files:** `test/e2e/multicluster/`
 - **Acceptance:**
-  - [ ] A hub and two spokes on kind. A policy in spoke A never returns data of spoke B on all three
+  - [x] A hub and two spokes, each with its own envtest API server. The hub runs the controller, the
+        proxy handler chain and the receiver in the test process, and each spoke runs the agent. The
+        backends are real Prometheus, Loki and Tempo containers. The package comment gives the reason
+        for envtest instead of kind. A policy in spoke A never returns data of spoke B on all three
         backends, also for equal namespace names.
-  - [ ] The suite covers all setups in §18.9, with the limits of federated tenants.
-  - [ ] A new spoke does not widen a hub rule with a cluster matcher. A hub `AccessPolicy` sees hub
+  - [x] The suite covers all setups in §18.9 that the backends support, with the limits of federated
+        tenants.
+  - [x] A new spoke does not widen a hub rule with a cluster matcher. A hub `AccessPolicy` sees hub
         telemetry with `cluster="<hubCluster>"`, and it does not see hub data with no cluster label.
-  - [ ] Grants stop after the time limit and return after the next sync.
-  - [ ] The procedure in §18.7 works. `suspended: true` stops new requests and closes an open Loki tail,
+  - [x] Grants stop after the time limit and return after the next sync.
+  - [x] The procedure in §18.7 works. `suspended: true` stops new requests and closes an open Loki tail,
         and grants return only after a new valid sync.
+
+### [ ] T6.9 — Kind smoke test of the chart
+- **Depends on:** T6.7, T6.8
+- **Files:** `test/`, `charts/querdian/`, `.github/workflows/`
+- **Acceptance:**
+  - [ ] A hub and one spoke on kind, installed with the chart and the real `querdian` image: the proxy,
+        the receiver and the agent as Deployments with the RBAC of the chart.
+  - [ ] The agent authenticates to its API server with a ServiceAccount token, and it reaches the
+        receiver over the network path between the clusters, with the cert files from Secrets.
+  - [ ] A smoke test shows a grant of the spoke through the proxy, its stop after `suspended: true`, and
+        its return after the next sync. The detailed cases stay in the envtest suite of T6.8.
 
 ---
 
@@ -711,7 +726,7 @@ T0.0 ─┬─ T0.1 ─┬─ T0.2
                └─ T4.1 ─ T4.2 ─ (T4.3)
 ```
 
-M6: T6.1 ─┬─ T6.2 ─ T6.3 ─ T6.4 ─┬─ T6.7 ─ T6.8
+M6: T6.1 ─┬─ T6.2 ─ T6.3 ─ T6.4 ─┬─ T6.7 ─ T6.8 ─ T6.9
           └─ T6.5 ─ T6.6 ───────┘
 
 Lexer/parser work (T3.1–T3.2, T4.1–T4.2) can start as soon as T0.5 is done, in parallel with M1.

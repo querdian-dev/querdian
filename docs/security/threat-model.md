@@ -24,7 +24,10 @@ in [SECURITY.md](../../SECURITY.md). Related: [policy guide](../policy-guide.md)
 >   pod metadata; do not derive it from log content a workload controls. Do not expose the Loki
 >   push endpoint to workloads.
 > * Traces: set `resource.k8s.namespace.name` in the Collector with the `k8sattributes` processor
->   and **overwrite** whatever the SDK sent; reject spans for which the association fails.
+>   and **overwrite** whatever the SDK sent; reject spans for which the association fails. Use a
+>   `resource.` attribute as the `namespaceLabel` of a Tempo backend. Querdian also accepts a `span.`
+>   attribute there, but an application sets its span attributes itself. The `clusterLabel` of a
+>   Tempo backend must be a `resource.` attribute.
 >
 > If a workload can choose the label, it can place its data in another team's view and mislead
 > that team. If the label is derived from content that someone other than the platform controls
@@ -44,6 +47,24 @@ in [SECURITY.md](../../SECURITY.md). Related: [policy guide](../policy-guide.md)
 >   equivalent and give Querdian the only credentials / network path. Anyone who can talk to a
 >   backend directly bypasses all policies, including setting the tenant header.
 
+**Multi-cluster: the cluster label has the same weight.** With the `multicluster` block
+([multicluster.md](../multicluster.md)), every hub `AccessPolicy` and every spoke policy gets an
+implicit matcher `<clusterLabel>="<cluster>"`, so the cluster label separates the data of the spokes
+as the namespace label separates the teams. Querdian cannot verify it:
+
+* The ingest gateway must set the label from the credential of the sending spoke and **overwrite**
+  any value that the spoke sent, for metrics, logs and traces. A gateway that only adds a missing
+  label lets a spoke write data under the name of another spoke (or of the hub), and the admin of
+  that spoke can then mislead the readers of the other cluster's data.
+* Writers on the hub that bypass the gateway (ruler output, hub agents) must not be able to set the
+  label of a spoke, and hub telemetry must carry `<clusterLabel>="<hubCluster>"`. Hub data without
+  the label is invisible to hub `AccessPolicy` users.
+* The `SpokeCluster` name must equal the label value that the gateway writes, and cluster names must
+  not change or be reused while old data with the name exists.
+* Spoke data that arrives before the `multicluster` block is set is matched by hub `AccessPolicy`
+  objects for the same namespace name. The order of the migration steps is part of the security
+  model.
+
 ## 2. Assets, actors and trust boundary
 
 **Protected:** the confidentiality of metrics, logs and traces in Prometheus/Thanos, Loki and
@@ -55,18 +76,38 @@ Write paths are out of scope: Querdian denies all of them.
 (policies and namespace labels), the operator-supplied static configuration, and the network path
 between Querdian and the backends.
 
+**Changes to the trusted set in a multi-cluster setup** (section 12):
+
+* *Added:* `querdian receiver` and its service account, which can write `SpokePolicy` objects and
+  `SpokeCluster.status`; the agent CA, which must be controlled by the hub; each agent cert, which
+  can grant the data of its own spoke; the ingest gateway, which writes the cluster label; and the
+  hub admins who write `SpokeCluster` objects (identity, tenant allow-list, suspension).
+* *Trusted for one spoke only:* the admins and the API server of each spoke. What the agent of
+  spoke A sends can grant only data labelled with cluster A, in the tenants that the hub allows for
+  A. The proxy never reads a spoke API server; it reads the hub copies.
+* *Unchanged:* hub policies, the static configuration and the OIDC issuer. All clusters share the
+  issuer, so a group name means the same in every cluster.
+
 **Not trusted:** everything in the client request except the verified token's claims: path, query
 string, form body, all headers (including tenant headers, `Forwarded`, `traceparent`, `baggage`),
 the query text, and WebSocket frames.
 
 **Actors:** an authenticated user with a narrow policy (the main adversary); a user with no
 policy; an anonymous client; a workload owner who controls what her pods emit; a namespace admin who
-can create `AccessPolicy` objects in her namespace; a client that replays or steals tokens.
+can create `AccessPolicy` objects in her namespace; a client that replays or steals tokens. In a
+multi-cluster setup also: a **spoke admin**, who controls the policies, namespaces and tenant labels
+of one spoke and can therefore grant that spoke's data to any subject (by design), and who may try to
+reach the data of the hub or of other spokes; a spoke team with `AccessPolicy` objects in the spoke;
+and whoever holds an agent cert or an ingest cert of a spoke.
 
 ```
 client --Bearer JWT--> [ Querdian ] --tenant header set by Querdian--> backends
                          auth -> resolve -> routes -> enforce -> proxy/fan-out/merge
                               ^ snapshot (policies, namespace labels) from the Kubernetes API
+
+multi-cluster:
+spoke API --> [ agent ] --mTLS (agent cert)--> [ receiver ] --> SpokePolicy, SpokeCluster.status (hub API)
+spoke telemetry --ingest cert--> [ ingest gateway: overwrites cluster label ] --> backends
 ```
 
 Properties the design maintains: default deny for unknown paths, methods, parameters and users;
@@ -302,17 +343,22 @@ the backends' own per-tenant limits.
   claims breaks the model; the trust in the issuer is absolute. Use a dedicated audience for
   Querdian.
 * A WebSocket tail authenticates only at the handshake; it continues after token expiry or policy
-  changes until it closes.
+  changes until it closes. The one exception is the multi-cluster time limit (section 10): a tail
+  closes within 10 seconds when a spoke whose rules gave its terms expires, is suspended, or gets a
+  new `SpokeCluster` spec or UID.
 * The issuer discovery runs in the background; until it succeeds all requests fail with `503`.
 
 ## 10. Snapshot staleness
 
-Policies live in an immutable snapshot rebuilt after changes (250 ms debounce) from informer caches,
+Policies live in an immutable snapshot rebuilt after changes (250 ms debounce, at most 2 s under a
+steady stream of changes) from informer caches,
 and swapped atomically; requests see either the old or the new snapshot. Consequences:
 
 * **Revocation delay** = Kubernetes watch latency + debounce + rebuild time, normally under a
-  second. In-flight requests and tails keep the policy they started with.
-* **API outage or failed rebuild**: the previous snapshot stays in use. Revoked access therefore
+  second. In-flight requests and tails keep the policy they started with (except the spoke expiry
+  below).
+* **API outage or failed rebuild**: the previous snapshot stays in use, and a failed rebuild runs
+  again after one second. Revoked access therefore
   persists while the API server is unreachable; this is the availability-over-freshness choice.
   `querdian_snapshot_rebuilds_total{result="error"}` signals failures.
 * **Replicas converge independently.** For a short time two replicas can answer the same user
@@ -321,6 +367,27 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
 * Invalid policies are excluded entirely (grant nothing); a snapshot is never partially applied.
 * Status conditions are written by the leader only and may lag or be absent when the leader is
   down; they are informational and not used for enforcement.
+
+**Multi-cluster: spoke policies and the time limit.** A spoke policy reaches the hub through the agent
+and the receiver, so its revocation takes longer:
+
+* **Revocation delay of a spoke policy** = up to one agent heartbeat (default one minute) + the
+  delay above. The limit of one changed sync in 10 seconds can add one retry. During an outage of the
+  agent, the receiver, the network path or the hub API server, a revoked spoke grant stays active until
+  the time limit.
+* **Time limit.** The policies of a spoke stop when `SpokeCluster.status.lastSyncTime` is older than
+  `maxStaleness` (default 48 hours). The check runs on each request against a deadline table outside
+  the snapshot, because expiry makes no Kubernetes event. A spoke is also expired when it is
+  suspended, being deleted, has no valid sync of its current `metadata.generation`, is not yet in the
+  snapshot with its current version (UID and generation, so a change of `SpokeCluster.spec`, such as
+  a smaller tenant allow-list, never applies late, also not for a deleted and re-created object), or
+  has a `lastSyncTime` more than five minutes in the future. An expired rule keeps its `labels.deny`
+  and `labels.redact`, so expiry only narrows; a user left with no terms gets `403 policy_source_expired`.
+  An open Loki tail closes within 10 seconds after a spoke in its terms expires, is suspended, or
+  gets a new `SpokeCluster` version, so a smaller tenant allow-list also ends an open tail. A
+  replica with the `multicluster` block is ready only after it has read all `SpokeCluster` objects.
+* The time limit does **not** protect against a stolen agent cert, which can renew `lastSyncTime`
+  (section 12). Hub policies never expire.
 
 ## 11. Other considerations
 
@@ -335,14 +402,104 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
   counts and request labels by endpoint and reason; keep it cluster-internal.
 * **Policy dashboard** (`--ui-listen`, off by default) discloses group names, tenants and matchers. It is
   read-only and its query test bench is an in-memory dry run that never contacts a backend. Authenticate
-  it (`--ui-auth=oidc`) or keep it on a trusted network; see [dashboard.md](../dashboard.md).
+  it (`--ui-auth=oidc`) or keep it on a trusted network; see [dashboard.md](../dashboard.md). On a
+  multi-cluster hub it shows the policies of **all** spokes, so a dashboard user learns the subjects,
+  matchers and tenants of every cluster. Give dashboard access only to people who may see the policies
+  of all clusters, for example with `--ui-admin-group`.
+* **Management port, multi-cluster.** `querdian_cluster_policy_age_seconds` and
+  `querdian_cluster_policy_expired` expose the names of all spokes and their sync state.
 * **Privacy.** Usernames and query text are not written to logs or traces by default; the two
   tracing flags are opt-in. `querdian.policies` records policy names.
 * **Supply chain.** Dependencies are limited to Apache-2.0 and permissive licences (checked by
   `make licenses`), commits are signed off (DCO), and CI includes CodeQL and OpenSSF Scorecard.
   There are no signed releases, SBOM or provenance yet because there is no release.
 
-## 12. Summary of residual risks
+## 12. Multi-cluster
+
+With the `multicluster` block, policies of spoke clusters are enforced on the hub
+([multicluster.md](../multicluster.md), PLAN section 18). This adds a write path for policy state and
+new credentials.
+
+**The receiver is a new attack surface.** `querdian receiver` is the only Querdian component with a
+write path, and it is reachable from the spokes.
+
+* *Impact of a compromise:* a compromised receiver (its process, its service account or its
+  Deployment) can write any `SpokePolicy` for any `SpokeCluster` and renew `lastSyncTime`. That
+  grants the data of **all spokes** to any subject. It cannot grant hub data: a `SpokeCluster` with
+  the hub cluster name grants nothing, and spoke rules always carry the cluster matcher of a
+  registered spoke. Protect the receiver's namespace, service account and RBAC like the hub
+  `ClusterAccessPolicy` objects.
+* *Mitigations in the code:* the receiver runs as a separate Deployment, so the read proxy keeps no
+  write path. It terminates mTLS itself with its own required client CA, takes the cluster only from
+  the URI SAN of the client cert (the protocol has no cluster field), rejects a cert with no or
+  several URI SANs, and requires an exact match with `spec.identity` of exactly one `SpokeCluster`
+  whose name is the last path segment of the identity. It has one path and one method, decodes
+  strictly (unknown or case-variant fields, duplicate keys and trailing data are rejected) in one
+  pass over the tokens with a limit on the number of JSON values (256 for each policy of
+  `--max-policies`), so the memory of one request has a fixed upper limit, checks
+  every policy against the CRD rules in Go, and rejects the whole sync on any doubt: a body above
+  `--max-body-bytes`, more than `--max-policies` policies, a digest that does not match, more than one
+  changed sync of a cluster in 10 seconds, a suspended or deleted `SpokeCluster`. It reads the
+  `SpokeCluster` directly from the API server at the start of each sync and before each write, and
+  writes `status` with a `resourceVersion` precondition, so a sync that overlaps a spec change
+  validates nothing. It never changes or deletes an object of a different cluster; object names are
+  a hash of cluster, kind, namespace and name. Each identity can send a burst of six requests and then
+  one request each 5 seconds (`429`); this limit applies before the body is read and before any read
+  of the API server, also to heartbeats and to identities that are not registered. Requests in
+  progress are limited (`--max-in-flight`), and one identity and one cluster can each have only one
+  sync at a time. Error
+  messages are generic and never contain data of other spokes.
+* *RBAC:* the receiver needs write access only to `spokepolicies` and `spokeclusters/status`. The
+  proxy needs read access and `spokepolicies/status` only. Only hub admins write `SpokeCluster.spec`.
+* *Remaining exposure:* there is no rate limit per source address before the TLS handshake; the
+  receiver does not reload its certs (a rotation needs a restart); and the compiler is a second line
+  of defence (it checks the object name, the kind, the `SpokeCluster` and the tenant allow-list
+  again), not an independent one.
+
+**The agent cert.** An agent cert can write any grant for its own spoke, but not for a different
+spoke and not for the hub. Its holder can also renew `lastSyncTime`, so the time limit gives no
+protection against a stolen agent cert.
+
+* The client CA of the receiver must be controlled by the hub; a spoke that can issue certs from it
+  can impersonate other spokes.
+* The agent cert must be dedicated: it must not be the ingest cert, and its identity must not occur
+  on an ingest cert. Otherwise the theft of a write-only telemetry credential would give the power to
+  grant read access. The `SpokeCluster` object, written by a hub admin only, links the agent identity
+  to the cluster name.
+* An identity on two `SpokeCluster` objects, or one whose last path segment is not the name of its
+  `SpokeCluster`, is rejected; a suffix of a segment does not match.
+* There is no certificate revocation list. A hub admin handles a stolen agent cert with the
+  procedure in [multicluster.md](../multicluster.md#stolen-agent-cert): suspend the spoke, find the
+  cause of the theft, issue a cert with a new identity, delete the `SpokePolicy` objects of the spoke,
+  and only then unsuspend it. Grants return only after a new valid sync. The time limit gives no
+  protection here, because the holder of the cert can renew `lastSyncTime`.
+
+**The spoke admin.** A spoke admin can grant the data of that spoke to any subject; this is by
+design. These rules prevent more:
+
+* Spoke rules always get `<clusterLabel>="<spoke>"`. A spoke rule never compiles to unrestricted, so
+  the queries of its users are always parsed and rewritten. `allClusters` is invalid on spoke rules.
+  A spoke matcher on the cluster label is ANDed and can only narrow (a fuzz target pins this after
+  DNF normalisation).
+* A spoke policy may only use tenants in `SpokeCluster.spec.tenants`; hub namespace labels never
+  apply to spoke policies.
+* A `SpokeCluster` with the hub cluster name grants nothing, and each hub `ClusterAccessPolicy` must
+  state its cluster scope as a fixed set of names, `allClusters` or `unrestricted`, so a new spoke
+  never widens an existing hub grant.
+* *Remaining:* a spoke admin who names a shared group can reduce that group's access elsewhere
+  (denied labels apply to the whole request, more terms, cross-tenant unions), see
+  [limitations](../limitations.md#multi-cluster). No data leaks through this.
+
+**Status back to the spoke.** The receiver returns the `Ready` conditions of the spoke's own policies
+only. It replaces `CrossTenantUnionUnsupported` with `Compiled`, because that message can reveal the
+grants of a shared subject in other tenants.
+
+**Rollback.** Without the `multicluster` block a hub `AccessPolicy` has no cluster matcher and
+matches namespace `X` of every spoke. Querdian refuses to start when a backend keeps `clusterLabel`
+without the block, but an operator who removes both re-opens this path while spoke data is in the
+backends ([multicluster.md](../multicluster.md#rollback)).
+
+## 13. Summary of residual risks
 
 1. Namespace-label integrity and RBAC on policies and namespaces are outside Querdian's control
    (section 1).
@@ -351,6 +508,12 @@ and swapped atomically; requests see either the old or the new snapshot. Consequ
 3. Denied labels do not redact results unless `labels.redact` is used, and redaction does not cover
    log lines or cardinality (section 5).
 4. Policies that cover only part of a trace rely on the root-intrinsic restriction (section 7).
-5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes (section 9).
+5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes, but close
+   when a spoke in their terms expires, is suspended or gets a new spec (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
-7. No built-in rate limiting; memory use of merged responses scales with concurrency (section 8).
+7. The proxy has no built-in rate limiting; memory use of merged responses scales with concurrency
+   (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
+8. Multi-cluster: isolation between spokes relies on the ingest gateway overwriting the cluster label
+   (section 1); a compromised receiver can grant the data of all spokes, and a stolen agent cert the
+   data of its spoke until a hub admin suspends it (section 12); a revoked spoke policy stays active
+   for up to one heartbeat, or up to the time limit during an outage (section 10).

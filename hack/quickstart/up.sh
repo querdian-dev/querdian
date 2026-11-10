@@ -42,16 +42,6 @@ on_exit() {
 }
 trap on_exit EXIT
 
-wait_for() { # description, timeout-seconds, command...
-  local d="$1" t="$2" i=0
-  shift 2
-  until "$@" >/dev/null 2>&1; do
-    i=$((i + 2))
-    [ $i -le "$t" ] || die "timeout waiting for: $d"
-    sleep 2
-  done
-}
-
 need kind kubectl helm docker make curl
 
 for p in "$KEYCLOAK_PORT" 3000; do
@@ -104,11 +94,7 @@ info "cluster created in $((SECONDS - T_CLUSTER))s"
 
 # --- 3. CoreDNS: make the Keycloak host name resolve inside the cluster ---------------------
 step "CoreDNS rewrite $KC_HOST -> keycloak.keycloak.svc"
-k -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' >"$WORK/Corefile"
-sed -i.bak "s/^\( *\)kubernetes /\1rewrite name $KC_HOST keycloak.keycloak.svc.cluster.local\n&/" "$WORK/Corefile"
-grep -q "rewrite name $KC_HOST" "$WORK/Corefile" || die "could not patch the CoreDNS Corefile"
-k -n kube-system create cm coredns --from-file=Corefile="$WORK/Corefile" --dry-run=client -o yaml | k replace -f - >/dev/null
-k -n kube-system rollout restart deploy/coredns >/dev/null
+coredns_rewrite "$KCTX" "$WORK"
 
 # --- 4. image into the cluster ---------------------------------------------------------------
 if [ -n "$BUILD_PID" ]; then

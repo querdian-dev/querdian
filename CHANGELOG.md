@@ -11,6 +11,67 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+### Added
+
+* **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the
+  policies of the hub and of several spoke clusters. Querdian takes the cluster of a policy from its
+  origin, never from its text: each spoke policy and each hub `AccessPolicy` gets an implicit matcher
+  on the cluster label, and a spoke rule never compiles to unrestricted. Without the new
+  `multicluster` configuration block nothing changes. See [docs/multicluster.md](docs/multicluster.md)
+  for the requirements on the ingest gateway and the agent CA, the ordered migration steps, the tenant
+  setups and the procedures for a stolen agent cert and for the removal of a spoke.
+* Static configuration: the `multicluster` block (`hubCluster`, `maxStaleness`, default 48h) and
+  `clusterLabel` on each backend. Querdian refuses to start with an empty `hubCluster`, a zero or
+  negative `maxStaleness`, a missing or invalid `clusterLabel`, a Tempo `clusterLabel` that is not a
+  `resource.` attribute, or a `clusterLabel` without the block.
+* New subcommands of the same binary: `querdian receiver` runs on the hub, terminates mTLS with its
+  own client CA, takes the cluster from the URI SAN of the agent cert only, and stores the spoke
+  policies; `querdian agent` runs in each spoke, reads its policies directly from the spoke API
+  server, sends a digest at each heartbeat (default one minute) and the full state when it differs,
+  and writes the `Ready` conditions back to the spoke objects. Both use leader election. The receiver
+  limits each agent identity to a burst of six requests, then one request each 5 seconds, limits the
+  number of JSON values in a body, and handles at most 8 requests at a time (`--max-in-flight`). The
+  agent exports `querdian_agent_syncs_total{result}` and `querdian_agent_last_sync_timestamp_seconds`
+  on its management port.
+* New cluster-scoped kinds: `SpokeCluster` (short name `spoke`; a registered spoke with its agent
+  identity, tenant allow-list, optional `defaultTenant`, `maxStaleness` and `suspended`) and
+  `SpokePolicy` (short name `sp`; the hub copy of one spoke policy, written by the receiver only).
+* `ClusterAccessPolicy` rules have the field `allClusters`. With the `multicluster` block, each hub
+  `ClusterAccessPolicy` rule must state its cluster scope for each backend: a cluster matcher that
+  names a fixed set of clusters, `allClusters: true`, or `unrestricted: true`. Without the block the
+  field has no effect.
+* Time limit: the policies of a spoke stop when it has not synced for `maxStaleness`, or when it is
+  suspended, and return at the next valid sync. Expired rules keep their denied and redacted labels.
+  New decision reason `policy_source_expired` (403). An open Loki tail closes within 10 seconds when a
+  spoke in its policy expires, is suspended, or gets a new `SpokeCluster` spec or UID.
+* New status reasons: `InvalidClusterScope`, `TenantNotAllowed`, `MulticlusterDisabled`,
+  `SpokeClusterNotFound`, `SpokeClusterInvalid` and `InvalidSpokePolicy`.
+* New metrics: `querdian_cluster_policy_age_seconds{cluster}` and
+  `querdian_cluster_policy_expired{cluster}`; `querdian_policies` has the kind `SpokePolicy` with the
+  `multicluster` block.
+* Helm chart: `receiver.service.nodePort` sets a fixed node port for a receiver Service of type
+  `NodePort`, so the receiver URL of the agents stays the same after a reinstall.
+* Multi-cluster quickstart on kind (`hack/quickstart-multicluster/up.sh`): one hub and two spokes on a
+  laptop, with a demo ingest gateway, the ordered migration steps, a forged-label test of the gateway
+  and checks through the proxy. See [docs/quickstart-multicluster.md](docs/quickstart-multicluster.md).
+
+### Changed
+
+* A `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers is now `InvalidMatcher` in
+  the compiler too, not only in the CRD validation. This affects only objects stored without the
+  CRD's CEL rule.
+* With the `multicluster` block, a replica is ready only after it has read all `SpokeCluster` objects
+  once, and a spoke stays expired until the current snapshot was compiled from the current generation
+  of its `SpokeCluster`, so a change of `SpokeCluster.spec` never applies late.
+* The snapshot rebuild debounce has a maximum wait of 8 intervals (2 seconds by default) under a
+  steady stream of events, and a failed rebuild runs again after one second.
+
+### Documentation
+
+* `ROADMAP.md`, the OpenSSF Best Practices checklist and the security self-assessment no longer say
+  that `make e2e` and `make chart-lint` do not run in CI: the `e2e` and `chart` jobs run on every pull
+  request.
+
 ## [0.1.2] - 2026-10-28
 
 A maintenance release: better diagnostics for OIDC issuer discovery and dependency updates. See the
