@@ -167,3 +167,15 @@ func TestIdentityMatchesName(t *testing.T) {
 		}
 	}
 }
+
+// TestDigestValue fixes the digest of one state. The agent and the receiver of different versions compare
+// digests, so a change of the value needs a change of the protocol.
+func TestDigestValue(t *testing.T) {
+	d, err := Digest([]v1.SpokePolicySource{
+		{Kind: v1.SpokeClusterAccessPolicy, Name: "b", Generation: 2, ClusterAccessPolicy: &v1.ClusterAccessPolicySpec{Subjects: v1.Subjects{Groups: []string{"g"}}, Rules: []v1.ClusterRule{{Backends: []string{"metrics"}, Unrestricted: true}}}},
+		{Kind: v1.SpokeAccessPolicy, Namespace: "shop", Name: "a", Generation: 1, TenantLabel: "t1", AccessPolicy: &v1.AccessPolicySpec{Subjects: v1.Subjects{Users: []string{"u<1>"}}, Rules: []v1.Rule{{Backends: []string{"logs"}, Matchers: []v1.Matcher{{Name: "app", Op: v1.MatchEqual, Value: "x"}}}}}},
+	})
+	if want := "sha256:f2f77ef197e2a02342d5f50a50b6cafdd113c6fc721f73eac088573a80f7de18"; err != nil || d != want {
+		t.Fatalf("Digest = %s, %v; want %s", d, err, want)
+	}
+}

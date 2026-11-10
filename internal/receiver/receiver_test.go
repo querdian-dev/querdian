@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -406,5 +407,35 @@ func TestLoadTLSConfig(t *testing.T) {
 	}
 	if _, err := LoadTLSConfig(certFile, caFile, caFile); err == nil {
 		t.Error("bad key accepted")
+	}
+}
+
+// Only the first 429 of a series goes to the log at info level; the next ones are quiet until a request
+// passes again.
+func TestRequestLimitQuietRepeats(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	r := New(Options{Logger: quiet, Now: func() time.Time { return now }, RequestBurst: 1})
+	quietOf := func(err error) (bool, bool) {
+		var rej *rejection
+		if !errors.As(err, &rej) {
+			return false, false
+		}
+		return rej.quiet, true
+	}
+	if err := r.allowRequest("id"); err != nil {
+		t.Fatal(err)
+	}
+	if q, ok := quietOf(r.allowRequest("id")); !ok || q {
+		t.Fatalf("first rejection: quiet %v, rejected %v", q, ok)
+	}
+	if q, ok := quietOf(r.allowRequest("id")); !ok || !q {
+		t.Fatalf("second rejection: quiet %v, rejected %v", q, ok)
+	}
+	now = now.Add(DefaultRequestInterval)
+	if err := r.allowRequest("id"); err != nil {
+		t.Fatal(err)
+	}
+	if q, ok := quietOf(r.allowRequest("id")); !ok || q {
+		t.Fatalf("first rejection of a new series: quiet %v, rejected %v", q, ok)
 	}
 }
