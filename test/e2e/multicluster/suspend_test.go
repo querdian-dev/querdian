@@ -142,7 +142,8 @@ func testStolenCert(t *testing.T, f *fixture) {
 		pushLoki(t, f.b.lokiSingle.URL("3100"), "", []rec{teamRec, {clusterB, nsTeam}}, time.Now(), "tail")
 		return tl.has(teamRec, "tail"), "no tail line yet"
 	})
-	if fe := tl.foreign(teamRec); len(fe) > 0 {
+	fe := tl.foreign(teamRec)
+	if len(fe) > 0 {
 		t.Errorf("the tail of %s received entries of other records: %v", team, fe)
 	}
 
@@ -180,6 +181,12 @@ func testStolenCert(t *testing.T, f *fixture) {
 		t.Errorf("the tail closed %s after the suspension; want at most 10s", at.Sub(suspended))
 	}
 	t.Logf("the tail closed %s after the suspension", at.Sub(suspended).Round(10*time.Millisecond))
+	// A line of cluster-b from the last push can arrive after the check above. The reader stopped at the
+	// close, so the tail now has all its entries. The entries are only appended, so the entries that the
+	// check above found are the first entries of the list.
+	if all := tl.foreign(teamRec); len(all) > len(fe) {
+		t.Errorf("the tail of %s received entries of other records before the close: %v", team, all[len(fe):])
+	}
 
 	// The receiver rejects each sync of a suspended spoke, and lastSyncTime does not change.
 	expectRejected(t, s.sender(t, f.h), "the SpokeCluster is suspended")
