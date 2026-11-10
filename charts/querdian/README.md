@@ -54,7 +54,7 @@ The defaults for `config` are examples. **You must set `config.auth` and `config
 | `logLevel` / `logFormat` | `info` / `json` | Process flags. |
 | `config.auth` | example Keycloak | `issuer`, `audiences` (required), `claims.username`, `claims.groups`. |
 | `config.backends` | example 3 backends | List of `{name,type,url,pathPrefix,namespaceLabel,tenantHeader,tenantFederation,traceByID}` (PLAN 5.1). |
-| `config.limits` | defaults | `maxPolicyTerms`, `maxFanout`, `maxMergeBytes`, `upstreamTimeout`. |
+| `config.limits` | defaults | `maxPolicyTerms`, `maxFanout`, `maxMergeBytes`, `maxInflightMergeBytes`, `upstreamTimeout`. |
 | `oidcCA.existingSecret` / `oidcCA.existingConfigMap` / `oidcCA.key` | "" / "" / `ca.crt` | Extra CA bundle for the OIDC issuer. Mounted at `/etc/querdian-oidc-ca`; `config.auth.caFile` is set automatically. |
 | `tracing.recordUser` / `tracing.recordQueries` | `false` | Privacy-sensitive span attributes (`enduser.id`, original/rewritten query, query string in the upstream `url.full`). |
 | `tracing.trustInboundContext` | `false` | Use the trace context of the client as the parent of the server span. When `false`, the server span starts a new trace and links the trace context of the client. Set it only when all clients are trusted. |

@@ -308,6 +308,10 @@
               "type": "integer",
               "minimum": 1
             },
+            "maxInflightMergeBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
             "upstreamTimeout": {
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"

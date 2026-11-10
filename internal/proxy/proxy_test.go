@@ -363,6 +363,49 @@ func TestFanoutHeadersAndMerge(t *testing.T) {
 	}
 }
 
+// The bodies of a fan-out stay reserved in the shared budget until the merge has written the response. A
+// fan-out that finds the budget full fails closed with 503 and reports it through Target.BudgetExhausted.
+func TestFanoutBudgetExhausted(t *testing.T) {
+	up := httptest.NewServer((&recorder{}).handler(200, strings.Repeat("x", 400)))
+	defer up.Close()
+	p := newProxy()
+	p.Limits.MaxMergeBytes = 1000
+	p.Budget = fanout.NewBudget(1000)
+	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
+	var exhausted int
+	target := Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query", BudgetExhausted: func() { exhausted++ }}
+
+	inner := httptest.NewRecorder()
+	outer := httptest.NewRecorder()
+	p.Execute(outer, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), target, fanPlan(2),
+		func(w http.ResponseWriter, r *http.Request, resps []fanout.Response) error {
+			if got := p.Budget.InUse(); got != 800 {
+				t.Errorf("budget in use during the merge = %d, want 800", got)
+			}
+			// A second request while the first still holds 800 bytes does not fit.
+			p.Execute(inner, clientRequest(http.MethodGet, "/prom/api/v1/query?query=y", ""), target, fanPlan(2), concat)
+			return concat(w, r, resps)
+		})
+	if outer.Code != 200 || outer.Body.Len() != 800 {
+		t.Fatalf("outer request: %d, %d bytes", outer.Code, outer.Body.Len())
+	}
+	var body ErrorBody
+	_ = json.Unmarshal(inner.Body.Bytes(), &body)
+	if inner.Code != http.StatusServiceUnavailable || body.ErrorType != "unavailable" || inner.Header().Get("Retry-After") == "" || exhausted != 1 {
+		t.Fatalf("inner request: %d %s, Retry-After %q, callback calls %d", inner.Code, inner.Body.String(), inner.Header().Get("Retry-After"), exhausted)
+	}
+	if got := p.Budget.InUse(); got != 0 {
+		t.Fatalf("budget in use after both requests = %d", got)
+	}
+
+	// With the budget free again, the same request passes.
+	w := httptest.NewRecorder()
+	p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), target, fanPlan(2), concat)
+	if w.Code != 200 || exhausted != 1 || p.Budget.InUse() != 0 {
+		t.Fatalf("after release: %d, callback calls %d, in use %d", w.Code, exhausted, p.Budget.InUse())
+	}
+}
+
 func TestFanoutMergeTooLargeAndBranchFailure(t *testing.T) {
 	big := httptest.NewServer((&recorder{}).handler(200, strings.Repeat("x", 600)))
 	defer big.Close()

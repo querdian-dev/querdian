@@ -29,6 +29,9 @@ type Proxy struct {
 	// Transport sends upstream requests; nil means http.DefaultTransport. T1.11 passes an otelhttp transport.
 	Transport http.RoundTripper
 	Limits    config.Limits
+	// Budget is the process-wide limit on the buffered bodies of all fan-outs (limits.maxInflightMergeBytes).
+	// Share one Budget between all proxies of a process. Nil sets no process-wide limit.
+	Budget *fanout.Budget
 	// Logger receives one warning per failed merge or fan-out, with the cause (never response bodies,
 	// except a truncated upstream error text). Nil discards.
 	Logger *slog.Logger
@@ -57,6 +60,9 @@ type Target struct {
 	// backends print whole series label sets in some query errors (Prometheus "found duplicate series",
 	// Loki "pipeline error ... for series"), and the result rewriters only see successful responses.
 	HideUpstreamErrors bool
+	// BudgetExhausted is called when Execute rejects the request with 503 because the process-wide
+	// Budget is full. The server uses it to record the reason. Nil ignores it.
+	BudgetExhausted func()
 }
 
 // withheldDetail replaces the upstream error text when Target.HideUpstreamErrors is set.
@@ -102,12 +108,18 @@ func (p *Proxy) Execute(w http.ResponseWriter, r *http.Request, t Target, plan e
 	resps, err := fanout.Run(ctx, &http.Client{Transport: p.Transport}, reqs, fanout.Options{
 		MaxParallel: p.Limits.MaxFanout,
 		MaxBytes:    p.Limits.MaxMergeBytes,
+		Budget:      p.Budget,
 	})
 	if err != nil {
 		p.logger().WarnContext(ctx, "fan-out failed", "backend", t.Backend.Name, "route", t.Endpoint.Template, "error", err.Error())
+		if errors.Is(err, fanout.ErrBudgetExhausted) && t.BudgetExhausted != nil {
+			t.BudgetExhausted()
+		}
 		writeFanoutError(w, r, err, t.HideUpstreamErrors)
 		return
 	}
+	// The bodies stay reserved in the budget until the merge has written the response.
+	defer p.Budget.Release(resps)
 	if err := merge(w, r, resps); err != nil {
 		p.logger().WarnContext(ctx, "merge failed", "backend", t.Backend.Name, "route", t.Endpoint.Template,
 			"branches", len(resps), "error", err.Error())
@@ -293,6 +305,10 @@ func writeFanoutError(w http.ResponseWriter, r *http.Request, err error, hide bo
 	switch {
 	case errors.Is(err, fanout.ErrMergeTooLarge):
 		WriteError(w, r, http.StatusBadGateway, "merge_too_large", "merged response too large")
+	case errors.Is(err, fanout.ErrBudgetExhausted):
+		w.Header().Set("Retry-After", "1")
+		WriteError(w, r, http.StatusServiceUnavailable, errorTypeUnavailable,
+			"too many large responses are in progress; try again later")
 	case errors.As(err, &ue) && hide && ue.Status != 0:
 		WriteError(w, r, http.StatusBadGateway, errorTypeUpstream,
 			fmt.Sprintf("upstream request %d failed: status %d; %s", ue.Index, ue.Status, withheldDetail))

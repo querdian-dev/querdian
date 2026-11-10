@@ -39,6 +39,9 @@ func TestDefaults(t *testing.T) {
 		c.Limits.MaxPolicyTerms != 16 || c.Backends[0].TenantFederation != FederationNone {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
+	if c.Limits.MaxInflightMergeBytes != DefaultInflightMergeFactor*DefaultMaxMergeBytes {
+		t.Fatalf("maxInflightMergeBytes default = %d", c.Limits.MaxInflightMergeBytes)
+	}
 	tempo := strings.Replace(base, "type: prometheus", "type: tempo", 1)
 	c, err = Parse([]byte(tempo))
 	if err != nil || c.Backends[0].TraceByID != TraceByIDDeny {
@@ -127,6 +130,8 @@ func TestValidation(t *testing.T) {
 		{"traceByID on non-tempo", strings.Replace(base, "namespaceLabel: namespace", "namespaceLabel: namespace, traceByID: filter", 1), "only valid on tempo"},
 		{"traceByID invalid", strings.Replace(strings.Replace(base, "prometheus", "tempo", 1), "namespaceLabel: namespace", "namespaceLabel: namespace, traceByID: maybe", 1), "traceByID"},
 		{"negative limit", base + "limits: {maxFanout: -1}\n", "limits must be positive"},
+		{"negative inflight merge bytes", base + "limits: {maxInflightMergeBytes: -1}\n", "limits must be positive"},
+		{"inflight below merge bytes", base + "limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 999}\n", "must be at least limits.maxMergeBytes"},
 		{"bad duration", base + "limits: {upstreamTimeout: soon}\n", "invalid duration"},
 	}
 	for _, tc := range tests {
@@ -327,6 +332,25 @@ func TestNormalizeHost(t *testing.T) {
 	} {
 		if got := NormalizeHost(in); got != want {
 			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestInflightMergeBytesDefault(t *testing.T) {
+	for _, tc := range []struct {
+		limits string
+		want   int64
+	}{
+		{"limits: {maxMergeBytes: 1000}\n", 2000},
+		{"limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 1000}\n", 1000},
+		{"limits: {maxMergeBytes: 9223372036854775807}\n", 9223372036854775807},
+	} {
+		c, err := Parse([]byte(base + tc.limits))
+		if err != nil {
+			t.Fatalf("%q: %v", tc.limits, err)
+		}
+		if c.Limits.MaxInflightMergeBytes != tc.want {
+			t.Errorf("%q: maxInflightMergeBytes = %d, want %d", tc.limits, c.Limits.MaxInflightMergeBytes, tc.want)
 		}
 	}
 }
