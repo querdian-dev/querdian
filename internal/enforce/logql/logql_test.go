@@ -126,7 +126,7 @@ func TestErrors(t *testing.T) {
 }
 
 func TestDeniedLabels(t *testing.T) {
-	den := []string{"secret"}
+	den := []string{"customer_id", "secret"}
 	restricted := policy.Effective{Terms: []policy.Term{term(m("ns", v1.MatchEqual, "a"))}, DeniedLabels: den}
 	unrestricted := policy.Effective{Unrestricted: true, DeniedLabels: den}
 	bad := []string{
@@ -139,11 +139,42 @@ func TestDeniedLabels(t *testing.T) {
 		// label_replace overwriting or removing (dst) or copying (src) a denied label.
 		`label_replace(rate({app="x"}[1m]), "secret", "", "", "")`,
 		`label_replace(rate({app="x"}[1m]), "d", "$1", "secret", "(.*)")`,
+		// Templates that can read a denied label or the whole label map, or do not parse.
+		"{app=\"web\"} | line_format `{{ printf \"%v\" . }}`",
+		"{app=\"web\"} | line_format `{{ printf \"}}%v\" . }}`",
+		"{app=\"web\"} | line_format `{{ printf \"%c%v%c\" '\"' . '\"' }}`",
+		"{app=\"web\"} | line_format \"{{ printf \\\"%c%v%c\\\" '`' . '`' }}\"",
+		"{app=\"web\"} | label_format leak=`{{ printf \"%c%s%c\" '\"' (index . (print \"custo\" \"mer_id\")) '\"' }}`",
+		`{app="x"} | line_format "{{ print \"}}\" (index . \"s\\x65cret\") }}"`,
+		"count_over_time({app=\"web\"} | line_format `{{ printf \"}}%v\" . }}` |= \"customer_id:42\" [5m])",
+		`{app="x"} | line_format "{{\"{{\"}}{{ . }}"`,
+		`{app="x"} | line_format "{{/* }} */}}{{ . }}"`,
+		`{app="x"} | line_format "{{- . -}}"`,
+		`{app="x"} | line_format "{{ (.) }}"`,
+		`{app="x"} | line_format "{{ .secret.x }}"`,
+		`{app="x"} | line_format "{{ $x := . }}{{ $x }}"`,
+		`{app="x"} | line_format "{{ range . }}x{{ end }}"`,
+		`{app="x"} | line_format "{{ with . }}x{{ end }}"`,
+		`{app="x"} | line_format "{{ template \"x\" . }}"`,
+		`{app="x"} | line_format "{{ index .app 0 }}"`,
+		`{app="x"} | line_format "{{ .app "`,
+		`{app="x"} | label_format a="{{ end }}"`,
 	}
 	for _, q := range bad {
 		for _, eff := range []policy.Effective{restricted, unrestricted} {
 			if _, err := plan(t, q, eff); !errors.Is(err, enforce.ErrDeniedLabel) {
 				t.Errorf("%q: err = %v, want ErrDeniedLabel", q, err)
+			}
+		}
+	}
+	// Templates that read only allowed labels with allowed functions pass.
+	for _, q := range []string{
+		`{app="x"} | line_format "{{ .app | upper }} {{\"{{\"}} {{- .env -}}"`,
+		`{app="x"} | line_format "{{ if eq .level \"error\" }}{{ .msg }}{{ end }} secret"`,
+	} {
+		for _, eff := range []policy.Effective{restricted, unrestricted} {
+			if _, err := plan(t, q, eff); err != nil {
+				t.Errorf("%q: %v", q, err)
 			}
 		}
 	}

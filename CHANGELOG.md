@@ -66,6 +66,17 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * The snapshot rebuild debounce has a maximum wait of 8 intervals (2 seconds by default) under a
   steady stream of events, and a failed rebuild runs again after one second.
 
+### Security
+
+* **LogQL templates could print denied and redacted labels**
+  ([GHSA-g593-w5rf-53qv](https://github.com/querdian-dev/querdian/security/advisories/GHSA-g593-w5rf-53qv)).
+  Versions up to 0.1.2 checked `line_format` and `label_format` templates with a text scan, and some
+  templates could pass the scan and print all labels, including labels in `labels.deny` and
+  `labels.redact`. Querdian now parses each template with Go's `text/template/parse` and accepts
+  only an allow-list of template nodes and functions while labels are denied. A template that does
+  not parse is rejected. Literal text in a template is no longer compared with denied names. See
+  [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
+
 ### Documentation
 
 * `ROADMAP.md`, the OpenSSF Best Practices checklist and the security self-assessment no longer say

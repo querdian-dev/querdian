@@ -347,8 +347,10 @@ invalid (`InvalidMatcher`).
   * LogQL (token based, conservative): any identifier or keyword token with that spelling outside
     string literals, anywhere in the query (selector, pipeline, grouping, `unwrap`); the `dst` and
     `src` string arguments of `label_replace`; and any `line_format` or `label_format` template that
-    contains the denied name as a substring, or that can read all labels without naming them
-    (`{{ . }}`, `range`, `with`, `template`, `block`, `define`, `$` variables).
+    does not parse, that reads the denied label as a field (`{{ .customer_id }}`), or that uses a
+    template node or function outside an allow-list, for example `{{ . }}`, `$` variables,
+    `{{ .a.b }}`, `range`, `with`, `template`, `block`, `define` or `index`
+    ([limitations](limitations.md#denied-label-scan-false-positives)).
   * TraceQL: any attribute or intrinsic token naming it. A scoped denied name (`span.x`) denies
     `span.x` and the unscoped `.x`; an unscoped query token `.x` is denied by `span.x` and by
     `resource.x`.

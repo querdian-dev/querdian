@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"text/template/parse"
 	"unicode/utf8"
 )
 
@@ -323,12 +324,15 @@ func hasAnchor(s *Selector) bool {
 //     unwrap), whose spelling equals a denied label;
 //   - the dst and src string arguments of label_replace, which can overwrite
 //     or copy any label (the regex and replacement are not label names);
-//   - every string of a line_format or label_format stage that contains a
-//     denied label name as a substring, because templates read labels by name;
-//   - every such template that can read ALL labels without naming them (a
-//     lone "." as in {{ . }}, {{ range . }}, {{ index . $k }}, or the
-//     range/with/template/block/define actions and "$" variables), reported as
-//     [TemplateAllLabels]. Plain field access such as {{ .app }} stays allowed.
+//   - every string of a line_format or label_format stage. Each string is
+//     parsed as a Go template with text/template/parse and every node of the
+//     tree must be in an allow-list (see [templateCheck]). A field such as
+//     {{ .secret }} that names a denied label reports that label. A node that
+//     can read labels without naming them (for example "." or "$"), a function
+//     outside the allow-list (for example index), and any other node not in
+//     the allow-list report [TemplateAllLabels]. A template that does not
+//     parse reports [TemplateInvalid]. Plain field access such as
+//     {{ .app | upper }} stays allowed.
 //
 // The result is false when q references no denied label. An error is returned
 // only if q.Source cannot be lexed, in which case the caller must reject.
@@ -371,41 +375,146 @@ func DeniedLabel(q *Query, denied []string) (string, bool, error) {
 				}
 			}
 		case *LogExpr:
-			found = templateDenied(n.Pipeline, denied)
+			found = templateDenied(n.Pipeline, set)
 		case *RangeAgg:
-			found = templateDenied(n.Range.Pipeline, denied)
+			found = templateDenied(n.Range.Pipeline, set)
 		}
 	})
 	return found, found != "", nil
 }
 
 // TemplateAllLabels is reported by [DeniedLabel] instead of a label name when a
-// line_format or label_format template can read every label (for example
-// {{ . }}) while the policy denies at least one label.
+// line_format or label_format template can read labels without naming them
+// (for example {{ . }}), or uses a template node or function that is not in
+// the allow-list, while the policy denies at least one label.
 const TemplateAllLabels = "(template reading all labels)"
 
-var (
-	templateAction = regexp.MustCompile(`(?s)\{\{(.*?)\}\}`)
-	templateQuoted = regexp.MustCompile("\"(?:[^\"\\\\]|\\\\.)*\"|`[^`]*`")
-	templateAll    = regexp.MustCompile(`\$|\b(?:range|with|template|block|define)\b|(?:^|[\s(|])\.(?:$|[\s)|])`)
-)
+// TemplateInvalid is reported by [DeniedLabel] instead of a label name when a
+// line_format or label_format template does not parse as a Go template while
+// the policy denies at least one label. The query is rejected (fail closed).
+const TemplateInvalid = "(template that does not parse)"
 
-// templateReadsAllLabels reports whether a Go template string has an action
-// that can reach labels without naming them. String literals inside actions
-// are ignored. The check is conservative: false positives only reject queries.
-func templateReadsAllLabels(tmpl string) bool {
-	for _, m := range templateAction.FindAllStringSubmatch(tmpl, -1) {
-		action := templateQuoted.ReplaceAllString(m[1], `""`)
-		if templateAll.MatchString(action) {
-			return true
-		}
-	}
-	return false
+// templateFuncs is the allow-list of functions that a line_format or
+// label_format template can call while labels are denied. It holds the Go
+// template built-ins and the Loki template functions that cannot take a label
+// name, build a label name, or read the whole label map. The built-ins index,
+// slice and call are not in the list: index looks up a label by a name that
+// the query can build at run time.
+var templateFuncs = map[string]struct{}{
+	// Go text/template built-ins.
+	"and": {}, "or": {}, "not": {}, "len": {}, "print": {}, "printf": {}, "println": {},
+	"html": {}, "js": {}, "urlquery": {}, "eq": {}, "ne": {}, "lt": {}, "le": {}, "gt": {}, "ge": {},
+	// Loki functions that read the log line or the timestamp of the entry.
+	"__line__": {}, "__timestamp__": {},
+	// Loki string functions.
+	"ToLower": {}, "ToUpper": {}, "Replace": {}, "Trim": {}, "TrimLeft": {}, "TrimRight": {},
+	"TrimPrefix": {}, "TrimSuffix": {}, "TrimSpace": {}, "lower": {}, "upper": {}, "title": {},
+	"trunc": {}, "substr": {}, "contains": {}, "hasPrefix": {}, "hasSuffix": {}, "indent": {},
+	"nindent": {}, "replace": {}, "repeat": {}, "regexReplaceAll": {}, "regexReplaceAllLiteral": {},
+	"alignLeft": {}, "alignRight": {}, "b64enc": {}, "b64dec": {}, "urlencode": {}, "urldecode": {},
+	"count": {}, "default": {}, "fromJson": {}, "sha1sum": {}, "sha256sum": {}, "sha512sum": {},
+	// Loki time and number functions.
+	"date": {}, "toDate": {}, "toDateInZone": {}, "now": {}, "unixEpoch": {}, "unixEpochMillis": {},
+	"unixEpochNanos": {}, "unixToTime": {}, "bytes": {}, "duration": {}, "duration_seconds": {},
+	"add": {}, "sub": {}, "mul": {}, "div": {}, "mod": {}, "addf": {}, "subf": {}, "mulf": {},
+	"divf": {}, "max": {}, "min": {}, "maxf": {}, "minf": {}, "ceil": {}, "floor": {}, "round": {},
+	"int": {}, "float64": {},
 }
 
-// templateDenied returns a denied label named inside a line_format or
-// label_format stage string of pipe, or "".
-func templateDenied(pipe []Token, denied []string) string {
+// templateCheck parses tmpl as a Go template with the default delimiters and
+// returns "" if every node of the tree is in the allow-list. Otherwise it
+// returns the denied label that a field reads, [TemplateAllLabels] for a node
+// or function outside the allow-list, or [TemplateInvalid] if tmpl does not
+// parse. The allowed nodes are text, actions and pipelines without variable
+// declarations, commands, if/else, constants, functions of [templateFuncs],
+// and fields with one identifier that is not in denied. All other nodes are
+// rejected, for example ".", "$" variables, chained fields such as .a.b,
+// range, with, template, block, define, break and continue.
+func templateCheck(tmpl string, denied map[string]struct{}) string {
+	tree := parse.New("line_format")
+	tree.Mode = parse.SkipFuncCheck
+	trees := map[string]*parse.Tree{}
+	if _, err := tree.Parse(tmpl, "", "", trees); err != nil {
+		return TemplateInvalid
+	}
+	for name := range trees {
+		if name != tree.Name {
+			return TemplateAllLabels // define or block
+		}
+	}
+	if tree.Root == nil {
+		return ""
+	}
+	return templateNode(tree.Root, denied)
+}
+
+// templateNode checks one node of a parsed template and its children. See
+// [templateCheck].
+func templateNode(n parse.Node, denied map[string]struct{}) string {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return ""
+		}
+		for _, c := range n.Nodes {
+			if r := templateNode(c, denied); r != "" {
+				return r
+			}
+		}
+		return ""
+	case *parse.TextNode, *parse.StringNode, *parse.NumberNode, *parse.BoolNode, *parse.NilNode:
+		return ""
+	case *parse.ActionNode:
+		return templateNode(n.Pipe, denied)
+	case *parse.IfNode:
+		if r := templateNode(n.Pipe, denied); r != "" {
+			return r
+		}
+		if r := templateNode(n.List, denied); r != "" {
+			return r
+		}
+		return templateNode(n.ElseList, denied)
+	case *parse.PipeNode:
+		if n == nil || len(n.Decl) > 0 || n.IsAssign {
+			return TemplateAllLabels
+		}
+		for _, c := range n.Cmds {
+			if r := templateNode(c, denied); r != "" {
+				return r
+			}
+		}
+		return ""
+	case *parse.CommandNode:
+		for _, a := range n.Args {
+			if r := templateNode(a, denied); r != "" {
+				return r
+			}
+		}
+		return ""
+	case *parse.FieldNode:
+		if len(n.Ident) != 1 {
+			return TemplateAllLabels
+		}
+		if _, ok := denied[n.Ident[0]]; ok {
+			return n.Ident[0]
+		}
+		return ""
+	case *parse.IdentifierNode:
+		if _, ok := templateFuncs[n.Ident]; ok {
+			return ""
+		}
+		return TemplateAllLabels
+	default:
+		// DotNode, VariableNode, ChainNode, RangeNode, WithNode,
+		// TemplateNode, BreakNode, ContinueNode, CommentNode and any
+		// node type that a later Go version adds.
+		return TemplateAllLabels
+	}
+}
+
+// templateDenied checks each line_format or label_format template string of
+// pipe with [templateCheck] and returns the first result that is not "".
+func templateDenied(pipe []Token, denied map[string]struct{}) string {
 	inTmpl := false
 	for i, t := range pipe {
 		switch {
@@ -418,13 +527,8 @@ func templateDenied(pipe []Token, denied []string) string {
 		case t.Kind == Op && lineFilterOps[t.Text]:
 			inTmpl = false
 		case inTmpl && (t.Kind == String || t.Kind == RawString):
-			for _, d := range denied {
-				if strings.Contains(t.Value, d) {
-					return d
-				}
-			}
-			if templateReadsAllLabels(t.Value) {
-				return TemplateAllLabels
+			if r := templateCheck(t.Value, denied); r != "" {
+				return r
 			}
 		}
 	}

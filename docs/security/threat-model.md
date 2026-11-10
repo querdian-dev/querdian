@@ -239,7 +239,9 @@ making the backend echo it in a listing.
 **Mitigations.** Queries that reference a denied label are rejected with `403 denied_label`
 (`by`/`without`/`on`/`ignoring`/`group_*`, matchers, `label_replace`, `label_join`, `count_values`
 in PromQL; any identifier or keyword token, `label_replace` string arguments, and templates in
-LogQL; any attribute token in TraceQL). Label listing endpoints omit denied names and value
+LogQL; any attribute token in TraceQL). A LogQL template is parsed with Go's `text/template/parse`
+and must contain only allow-listed nodes and functions; a template that does not parse is
+rejected. Label listing endpoints omit denied names and value
 endpoints for denied labels answer 403, also for the `U__`-escaped form of the name that Prometheus 3
 decodes (`U__customer__id`). A label denied by any matched rule is denied for the whole
 request.

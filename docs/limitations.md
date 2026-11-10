@@ -307,17 +307,20 @@ an attribute from the policy checks.
 ### Denied-label scan false positives
 
 The PromQL check works on the syntax tree and has no false positives. The LogQL check is a token
-and string scan and over-rejects deliberately:
+scan plus a template check, and over-rejects deliberately:
 
 * A denied name is matched against every identifier **and keyword** token, wherever it appears in
   the query. A label that is named like a keyword or function (`json`, `count`, `rate`, `level` in
   an unrelated clause) will block legitimate uses of that word; avoid such label names.
-* `line_format` and `label_format` template strings are rejected when they contain the denied name
-  as a **substring**: with `app` denied, `| line_format "{{.application}}"` or a literal text such
-  as `"appointment"` is rejected.
-* Templates that can read all labels without naming them (`{{ . }}`, `range`, `with`, `template`,
-  `block`, `define`, `$` variables) are rejected as soon as any label is denied, even if the denied
-  label is irrelevant to the query. Plain field access (`{{ .app }}`) stays allowed.
+* Each `line_format` and `label_format` template is parsed with Go's `text/template/parse`, and
+  every node must be in an allow-list. A template that does not parse is rejected. The allow-list
+  holds text, actions, pipelines without variables, `if`/`else`, constants, fields with one name
+  (`{{ .app }}`) that is not denied, and the Go and Loki template functions that cannot take or
+  build a label name. A field that names a denied label is rejected. All other nodes are rejected
+  as soon as any label is denied, even if the denied label is irrelevant to the query: `.`, `$`
+  variables, chained fields (`{{ .a.b }}`), `range`, `with`, `template`, `block`, `define`, and the
+  functions `index`, `slice`, `call` and functions that are not known. Literal text and string
+  constants are not compared with denied names.
 * The `dst` and `src` string arguments of `label_replace` are compared with denied names; the regex
   and replacement are not.
 * TraceQL: a denied scoped name denies the unscoped `.x` form and vice versa, and denied tag lists
