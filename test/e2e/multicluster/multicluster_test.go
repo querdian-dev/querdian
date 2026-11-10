@@ -22,8 +22,9 @@
 //   - The proxy manager has no leader election, so the replica is always the status writer. The rebuild
 //     debounce is 50ms instead of 250ms. There is no rebuild hook for the snapshot metrics, and the
 //     registry has no Go, process or spoke age collectors.
-//   - The receiver has no leader election and no probe server, and it uses the default limits. Its cert,
-//     key and client CA come from memory, not from files.
+//   - The receiver has no leader election and no probe server. It uses the default limits, but with a large
+//     request burst, because the heartbeat of the suite is one second. Its cert, key and client CA come
+//     from memory, not from files.
 //   - The agent uses agent.New and agent.NewSender with a heartbeat of one second, as described below,
 //     and the default lease timing. The command flags and the pod namespace file are not used.
 //   - All components log to one buffer that the test prints only if it fails.

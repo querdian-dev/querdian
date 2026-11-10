@@ -421,7 +421,9 @@ func startHub(t testing.TB, api *apiServer, b *backends) *hub {
 	}
 	rmgr := newMgr()
 	// The heartbeat of the suite is one second, which is more than the request limit of an identity
-	// permits. The receiver tests cover that limit.
+	// permits. RequestInterval keeps its default of 5s, so the limit stops an agent only after it used the
+	// burst of 1<<20 requests: more than 12 days of heartbeats. The whole suite sends much fewer requests,
+	// so the limit never stops an agent here. The receiver tests cover that limit.
 	rsrv := receiver.NewServer("127.0.0.1:0", receiver.TLSConfig(cert, pool),
 		receiver.New(receiver.Options{Client: direct, Logger: logger, RequestBurst: 1 << 20}), logger)
 	if err := rmgr.Add(rsrv); err != nil {
