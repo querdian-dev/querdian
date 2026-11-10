@@ -133,20 +133,8 @@ func run(args []string) error {
 		config.BackendLoki:       enforcelogql.New(),
 		config.BackendTempo:      enforcetraceql.New(),
 	}
-	var uiHandler http.Handler
-	if flags.UIListen != "" {
-		deps := ui.Deps{Config: cfg, Snapshots: ctl, Deadlines: deadlines, Enforcers: enforcers, Version: version, Logger: logger,
-			Listen: flags.UIListen, AllowedHosts: flags.UIAllowedHosts}
-		if flags.UIAuth == "oidc" {
-			deps.Auth = func(next http.Handler) http.Handler {
-				return authn.Middleware(server.RequireGroup(flags.UIAdminGroup, next))
-			}
-		} else {
-			logger.Warn("dashboard authentication is disabled (--ui-auth=none); expose --ui-listen only to a loopback address or a port-forward",
-				"ui", flags.UIListen)
-		}
-		uiHandler = ui.Handler(deps)
-	}
+	uiHandler := dashboard(flags, ui.Deps{Config: cfg, Snapshots: ctl, Deadlines: deadlines, Enforcers: enforcers,
+		Version: version, Logger: logger}, authn, logger)
 	srv := server.New(server.Deps{
 		UIListen:     flags.UIListen,
 		UIHandler:    uiHandler,
@@ -178,6 +166,26 @@ func run(args []string) error {
 		return nil
 	}
 	return err
+}
+
+// dashboard returns the handler of the dashboard listener, or nil when --ui-listen is empty. It sets the
+// listener, the allowed hosts and the authentication mode of deps from the flags. Each --ui-auth value other
+// than none gives the OIDC middleware.
+func dashboard(flags *config.Flags, deps ui.Deps, authn *auth.Authenticator, logger *slog.Logger) http.Handler {
+	if flags.UIListen == "" {
+		return nil
+	}
+	deps.Listen, deps.AllowedHosts = flags.UIListen, flags.UIAllowedHosts
+	if flags.UIAuth == "none" {
+		deps.Auth = ui.NoAuth()
+		logger.Warn("dashboard authentication is disabled (--ui-auth=none); expose --ui-listen only to a loopback address or a port-forward",
+			"ui", flags.UIListen)
+	} else {
+		deps.Auth = ui.AuthWith(func(next http.Handler) http.Handler {
+			return authn.Middleware(server.RequireGroup(flags.UIAdminGroup, next))
+		})
+	}
+	return ui.Handler(deps)
 }
 
 func newLogger(f *config.Flags) (*slog.Logger, error) {

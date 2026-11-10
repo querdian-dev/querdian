@@ -242,6 +242,7 @@ func TestFlags(t *testing.T) {
 		"ui host wildcard": func(f *Flags) { f.UIAllowedHosts = []string{"*.example.com"} },
 		"ui host url":      func(f *Flags) { f.UIAllowedHosts = []string{"https://querdian.example.com"} },
 		"ui host list":     func(f *Flags) { f.UIAllowedHosts = []string{"a.example.com,b.example.com"} },
+		"ui host mapped":   func(f *Flags) { f.UIAllowedHosts = []string{"::ffff:10.0.0.5"} },
 		"bad format":       func(f *Flags) { f.LogFormat = "xml" },
 		"empty config":     func(f *Flags) { f.ConfigFile = "" },
 	} {
@@ -268,11 +269,11 @@ func TestUIAllowedHostFlag(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	f := RegisterFlags(fs)
 	err := fs.Parse([]string{"--ui-listen=:8081", "--ui-allowed-host=Querdian.Example.com",
-		"--ui-allowed-host", "10.0.0.5", "--ui-allowed-host=[fd00::1]", "--ui-allowed-host=fd00::2"})
+		"--ui-allowed-host", "10.0.0.5", "--ui-allowed-host=[fd00::1]", "--ui-allowed-host=fd00:0::2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(f.UIAllowedHosts, " "); got != "Querdian.Example.com 10.0.0.5 [fd00::1] fd00::2" {
+	if got := strings.Join(f.UIAllowedHosts, " "); got != "Querdian.Example.com 10.0.0.5 [fd00::1] fd00:0::2" {
 		t.Fatalf("parse: %q", got)
 	}
 	if err := f.Validate(); err != nil {
@@ -287,6 +288,14 @@ func TestNormalizeHost(t *testing.T) {
 		"10.0.0.5":                       "10.0.0.5",
 		"[FD00::1]":                      "fd00::1",
 		"fd00::1":                        "fd00::1",
+		"fd00:0::1":                      "fd00::1",
+		"[FD00:0000:0::1]":               "fd00::1",
+		"0:0:0:0:0:0:0:1":                "::1",
+		"::ffff:1.2.3.4":                 "",
+		"[::ffff:1.2.3.4]":               "",
+		"[fd00::1":                       "",
+		"fd00::1]":                       "",
+		":::":                            "",
 		"":                               "",
 		"example.com.":                   "",
 		"-bad.example.com":               "",

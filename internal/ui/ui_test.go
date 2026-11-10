@@ -45,7 +45,7 @@ func newDeps(t *testing.T, ready bool) Deps {
 		}}
 		snap = policy.NewSnapshot(policy.Compile(policy.Input{Config: cfg, ClusterPolicies: cps}), cfg, 5)
 	}
-	return Deps{Config: cfg, Snapshots: provider{snap},
+	return Deps{Config: cfg, Snapshots: provider{snap}, Auth: NoAuth(),
 		Enforcers: map[config.BackendType]enforce.Enforcer{config.BackendPrometheus: enforcepromql.New()}}
 }
 

@@ -39,10 +39,23 @@ type Deps struct {
 	// AllowedHosts are more host names that the dashboard accepts in the Host header, with any port. The
 	// loopback names localhost, 127.0.0.1 and [::1] are always allowed.
 	AllowedHosts []string
-	// Auth wraps the dashboard inside the Host check, for example with the OIDC middleware. With nil, the
-	// dashboard has no authentication.
-	Auth func(http.Handler) http.Handler
+	// Auth is the authentication of the dashboard, inside the Host check. It must be NoAuth or AuthWith:
+	// with the zero value, the dashboard answers each request with 500.
+	Auth Auth
 }
+
+// Auth is the authentication mode of the dashboard. The zero value is not a valid mode.
+type Auth struct {
+	wrap func(http.Handler) http.Handler
+	none bool
+}
+
+// NoAuth is a dashboard without authentication. Use it only on a loopback address or through a port-forward.
+func NoAuth() Auth { return Auth{none: true} }
+
+// AuthWith wraps the dashboard with mw, for example with the OIDC middleware. With a nil mw, the mode is not
+// valid.
+func AuthWith(mw func(http.Handler) http.Handler) Auth { return Auth{wrap: mw} }
 
 type handler struct{ d Deps }
 
@@ -65,11 +78,20 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/backends", h.backends)
 	mux.HandleFunc("POST /api/test", h.test)
 	mux.Handle("GET /", http.FileServerFS(sub))
-	var next http.Handler = mux
-	if d.Auth != nil {
-		next = d.Auth(next)
+	var next http.Handler
+	switch {
+	case d.Auth.wrap != nil:
+		next = d.Auth.wrap(mux)
+	case d.Auth.none:
+		next = mux
+	default:
+		// Fail closed: a missing authentication mode is a wiring error, not a dashboard without authentication.
+		d.Logger.Error("the dashboard has no authentication mode; it answers each request with 500")
+		next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			writeErr(w, http.StatusInternalServerError, "dashboard authentication not configured")
+		})
 	}
-	return secure(guard(allowedHosts(d.Listen, d.AllowedHosts), next))
+	return secure(guard(allowedHosts(d.Listen, d.AllowedHosts), d.Logger, next))
 }
 
 // secure sets the response headers on every answer. The CSP forbids inline script and any third-party origin.

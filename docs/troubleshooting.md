@@ -260,6 +260,18 @@ Snapshot rebuilds (controller root spans):
 7. **Cross-tenant requests fail upstream with 4xx/5xx.** The backend must have federation enabled
    for `t1|t2` tenant headers; see [policy-guide.md](policy-guide.md#tenants).
 
+## Policy dashboard
+
+The [policy dashboard](dashboard.md) answers some requests with these statuses. Each has a JSON body
+`{"status":"error","error":"..."}`. With `--log-level=debug`, Querdian logs each `403` of this table as
+`dashboard request refused`, with the reason and the first 64 bytes of the `Host` header.
+
+| Status | Message | Cause | What to do |
+|---|---|---|---|
+| 403 | `host not allowed` | The `Host` header is empty or names a host that is not allowed. The dashboard accepts only `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and each `--ui-allowed-host`, with any port. This often occurs behind an Ingress or a proxy, or with a URL that uses the IP address or the DNS name of the node. | Open the dashboard through `kubectl port-forward` and `http://localhost:<port>`, or add the host name of the URL with `--ui-allowed-host` (Helm: `ui.allowedHosts`). Add only the names of your own Ingress or proxy. |
+| 403 | `cross-origin request not allowed` | A request with a method other than `GET` (the test bench) has an `Origin` header with a different host or port than the `Host` header, or a `Sec-Fetch-Site` header other than `same-origin` or `none`. A proxy that changes the `Host` header causes this. | Make the Ingress or proxy keep the `Host` header of the browser. Send test bench requests from the dashboard page only. |
+| 500 | `dashboard authentication not configured` | A wiring error: the dashboard handler has no authentication mode. It serves nothing. | Report a bug. |
+
 ## Receiver HTTP statuses
 
 In a [multi-cluster](multicluster.md) setup, `querdian receiver` answers each agent request with one

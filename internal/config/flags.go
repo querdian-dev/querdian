@@ -84,21 +84,25 @@ func (f *Flags) Validate() error {
 	return nil
 }
 
-// NormalizeHost returns the host name h in lower case, without the brackets of an IPv6 address. It returns ""
-// when h is not a host name or an IP address without a port.
+// NormalizeHost returns the host name h in lower case, or the IP address h in canonical form without
+// brackets. It returns "" when h is not a host name or an IP address without a port, and for an IPv4 address
+// in IPv6 form.
 func NormalizeHost(h string) string {
 	h = strings.ToLower(h)
-	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+	bracketed := strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]")
+	if bracketed {
 		h = h[1 : len(h)-1]
-		if ip := net.ParseIP(h); ip == nil || ip.To4() != nil {
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		if strings.Contains(h, ":") == (ip.To4() != nil) {
+			return "" // an IPv4 address in IPv6 form
+		}
+		if bracketed && ip.To4() != nil {
 			return ""
 		}
-		return h
+		return ip.String()
 	}
-	if net.ParseIP(h) != nil {
-		return h
-	}
-	if !validDNSName(h) {
+	if bracketed || !validDNSName(h) {
 		return ""
 	}
 	return h

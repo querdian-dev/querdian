@@ -195,18 +195,31 @@ func TestDashboardAllowedHosts(t *testing.T) {
 			t.Errorf("%v: unexpected --ui-allowed-host", args)
 		}
 	}
-	out := render("--set", "ui.enabled=true", "--set", "ui.allowedHosts={querdian.example.com,10.0.0.5,[fd00::1]}")
-	for _, want := range []string{"--ui-allowed-host=querdian.example.com", "--ui-allowed-host=10.0.0.5", "--ui-allowed-host=[fd00::1]"} {
+	out := render("--set", "ui.enabled=true", "--set-json",
+		`ui.allowedHosts=["querdian.example.com","10.0.0.5","[fd00::1]","fd00::2","::1","1:2:3:4:5:6:7:8"]`)
+	for _, want := range []string{"--ui-allowed-host=querdian.example.com", "--ui-allowed-host=10.0.0.5", "--ui-allowed-host=[fd00::1]",
+		"--ui-allowed-host=fd00::2", "--ui-allowed-host=::1", "--ui-allowed-host=1:2:3:4:5:6:7:8"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render lacks %q", want)
 		}
+		// The binary must accept each value that the schema accepts.
+		if v := strings.TrimPrefix(want, "--ui-allowed-host="); config.NormalizeHost(v) == "" {
+			t.Errorf("the binary refuses %q", v)
+		}
 	}
+	// Each value that the binary refuses at startup must fail in helm with the schema error of the field.
 	for _, bad := range []string{"querdian.example.com:443", "https://querdian.example.com", "*.example.com", "", "a b",
-		"querdian.example.com/x", "-bad.example.com"} {
+		"querdian.example.com/x", "-bad.example.com", "a:443", "[fd00::1", "fd00::1]", ":::", "[::ffff:1.2.3.4]",
+		"::ffff:1.2.3.4", "[10.0.0.5]", "[]"} {
 		cmd := exec.Command("helm", "template", "r", ".", "--set", "ui.enabled=true", "--set-json", //nolint:gosec // test args
 			`ui.allowedHosts=["`+bad+`"]`)
-		if out, err := cmd.CombinedOutput(); err == nil {
+		out, err := cmd.CombinedOutput()
+		if err == nil {
 			t.Errorf("ui.allowedHosts %q was accepted:\n%s", bad, out)
+			continue
+		}
+		if !strings.Contains(string(out), "/ui/allowedHosts/0") || !strings.Contains(string(out), "does not match pattern") {
+			t.Errorf("ui.allowedHosts %q: the error is not the schema error of the field:\n%s", bad, out)
 		}
 	}
 }

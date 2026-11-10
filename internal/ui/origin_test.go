@@ -85,7 +85,7 @@ func newMCFixtureWith(t *testing.T, hubs []v1.ClusterAccessPolicy, spokes []v1.S
 	dl.Update(&sc, time.Hour)
 	f := &mcFixture{dl: dl, sc: &sc, hubID: "ClusterAccessPolicy/hub-read",
 		readID: policy.KindSpokePolicy + "/" + read.Name, lostID: policy.KindSpokePolicy + "/" + lost.Name}
-	f.h = Handler(Deps{Config: cfg, Snapshots: provider{policy.NewSnapshot(c, cfg, 1)}, Deadlines: dl})
+	f.h = Handler(Deps{Config: cfg, Snapshots: provider{policy.NewSnapshot(c, cfg, 1)}, Deadlines: dl, Auth: NoAuth()})
 	return f
 }
 
