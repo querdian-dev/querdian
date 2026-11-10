@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -203,6 +206,47 @@ func TestMetricsRegistry(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.SnapshotGen); got != 3 {
 		t.Errorf("generation = %v", got)
+	}
+}
+
+func TestClusterPolicyAge(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	ages := map[string]float64{"cluster-a": 42, "cluster-b": math.Inf(1)}
+	var calledAt time.Time
+	reg.MustRegister(observability.NewClusterPolicyAge(func(now time.Time) map[string]float64 {
+		calledAt = now
+		return ages
+	}))
+	want := `# HELP querdian_cluster_policy_age_seconds Time since the last valid policy sync of a spoke cluster.
+# TYPE querdian_cluster_policy_age_seconds gauge
+querdian_cluster_policy_age_seconds{cluster="cluster-a"} 42
+querdian_cluster_policy_age_seconds{cluster="cluster-b"} +Inf
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "querdian_cluster_policy_age_seconds"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(calledAt) > time.Minute {
+		t.Fatal("ages must be read at scrape time")
+	}
+	// A deleted spoke leaves the output at the next scrape.
+	delete(ages, "cluster-b")
+	if n := testutil.CollectAndCount(observability.NewClusterPolicyAge(func(time.Time) map[string]float64 { return ages })); n != 1 {
+		t.Fatalf("series = %d", n)
+	}
+}
+
+func TestClusterPolicyExpired(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(observability.NewClusterPolicyExpired(func(time.Time) map[string]float64 {
+		return map[string]float64{"cluster-a": 0, "cluster-b": 1}
+	}))
+	want := `# HELP querdian_cluster_policy_expired 1 if the policies of a spoke cluster are expired or suspended, else 0.
+# TYPE querdian_cluster_policy_expired gauge
+querdian_cluster_policy_expired{cluster="cluster-a"} 0
+querdian_cluster_policy_expired{cluster="cluster-b"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "querdian_cluster_policy_expired"); err != nil {
+		t.Fatal(err)
 	}
 }
 

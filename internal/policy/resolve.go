@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/config"
@@ -18,11 +19,25 @@ var (
 	ErrCrossTenantUnion = errors.New("cross_tenant_union_unsupported")
 	// ErrUnknownBackend means the backend name is not in the static config.
 	ErrUnknownBackend = errors.New("unknown_backend")
+	// ErrPolicySourceExpired means that rules grant the caller access on the backend, but each rule that gives
+	// a term comes from a spoke that is expired (403, reason policy_source_expired, PLAN §18.6).
+	ErrPolicySourceExpired = errors.New("policy_source_expired")
 )
 
-// Resolve computes the exact union of all rules granted to the user and groups on a backend (PLAN §6.2, §6.4).
-// Users and groups are looked up in separate keyspaces.
+// Resolve is ResolveAt with no deadline table: each rule from a spoke is expired. Hub rules are not
+// affected, so without the multicluster block the result is the same as with a table.
 func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effective, error) {
+	return s.ResolveAt(user, groups, backend, nil, time.Time{})
+}
+
+// ResolveAt computes the exact union of all rules granted to the user and groups on a backend (PLAN §6.2,
+// §6.4). Users and groups are looked up in separate keyspaces.
+//
+// A rule from a spoke (Origin is set) that is expired in dl at now gives no term, but its DeniedLabels and
+// Redactions stay in the result, so expiry only narrows access (PLAN §18.6, rule 5). If no term remains
+// because rules expired, ResolveAt returns ErrPolicySourceExpired. It never returns an Effective with no
+// terms that is not Unrestricted.
+func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *Deadlines, now time.Time) (Effective, error) {
 	b, ok := s.cfg.Backend(backend)
 	if !ok {
 		return Effective{}, fmt.Errorf("%w: %q", ErrUnknownBackend, backend)
@@ -43,7 +58,8 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 	}
 
 	var terms []Term
-	var denied, policies []string
+	var denied, policies, origins []string
+	expired := false
 	var redactions map[string]Redaction
 	seen := make(map[*CompiledRule]bool, len(rules))
 	for _, r := range rules {
@@ -62,6 +78,18 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 			redactions[name] = red
 		}
 		policies = append(policies, r.Policy)
+		if r.Origin != "" {
+			// A spoke rule must never be unrestricted (PLAN §18.3). If the compiler gives one, it grants
+			// nothing here.
+			if r.Unrestricted {
+				continue
+			}
+			if dl.Expired(r.Origin, now) {
+				expired = true
+				continue
+			}
+			origins = append(origins, r.Origin)
+		}
 		if len(r.Tenants) == 0 {
 			terms = append(terms, Term{Matchers: r.Matchers})
 			continue
@@ -71,9 +99,20 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 		}
 	}
 
+	// The ErrNoGrant check above sees the rules before the expiry filter, and Normalise accepts an empty
+	// term list. This check makes sure that no rule with expired terms becomes an empty grant.
+	if len(terms) == 0 {
+		if expired {
+			return Effective{}, ErrPolicySourceExpired
+		}
+		return Effective{}, ErrNoGrant
+	}
 	eff, err := Normalise(terms, s.cfg.Limits)
 	if err != nil {
 		return Effective{}, err
+	}
+	if !eff.Unrestricted && len(eff.Terms) == 0 {
+		return Effective{}, ErrNoGrant
 	}
 	if len(eff.Tenants) > 1 {
 		if eff, err = bindTenants(eff, b); err != nil {
@@ -88,6 +127,7 @@ func (s *Snapshot) Resolve(user string, groups []string, backend string) (Effect
 	eff.DeniedLabels = sortedUnique(denied)
 	eff.Redactions = redactions
 	eff.Policies = sortedUnique(policies)
+	eff.Origins = sortedUnique(origins)
 	return eff, nil
 }
 

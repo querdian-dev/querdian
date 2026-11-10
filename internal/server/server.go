@@ -49,6 +49,9 @@ type TailPlanner func(ctx context.Context, params url.Values, eff policy.Effecti
 type Deps struct {
 	Config    *config.Config
 	Snapshots SnapshotProvider
+	// Deadlines is the table of spoke deadlines (PLAN §18.6). With nil, each rule from a spoke is expired.
+	// With the multicluster block, the replica is ready only when the table is complete.
+	Deadlines *policy.Deadlines
 	Auth      Authenticator
 	// Enforcers are the per-backend-type query enforcers. A backend type without one can only serve
 	// unrestricted grants and safe endpoints; everything else fails closed with 503.
@@ -82,6 +85,8 @@ type Server struct {
 	proxies map[string]*proxy.Proxy // by backend name
 	mergers map[enforce.MergeKind]proxy.Merger
 	logger  *slog.Logger
+	// tailRevokeCheck replaces the default interval of the spoke expiry check of a tail; tests only.
+	tailRevokeCheck time.Duration
 }
 
 // New builds a Server. Metrics may be nil, in which case none are recorded.
@@ -142,6 +147,8 @@ func (s *Server) ManagementHandler() http.Handler {
 		switch {
 		case s.d.Snapshots.Snapshot() == nil:
 			http.Error(w, "policy snapshot not ready", http.StatusServiceUnavailable)
+		case s.d.Config.Multicluster != nil && !s.d.Deadlines.Complete():
+			http.Error(w, "spoke deadline table not ready", http.StatusServiceUnavailable)
 		case !s.d.Auth.Ready():
 			http.Error(w, "issuer discovery not complete", http.StatusServiceUnavailable)
 		default:

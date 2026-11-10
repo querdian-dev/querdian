@@ -21,6 +21,9 @@ const (
 	defaultTailDialTimeout  = 10 * time.Second
 	defaultTailWriteTimeout = 10 * time.Second
 	defaultTailFrameBytes   = 4 << 20
+	// defaultTailRevokeCheck is the interval of the Revoked check. It is shorter than the 10 seconds of
+	// PLAN §18.6 (rule 8), so that a tail closes within 10 seconds after an expiry.
+	defaultTailRevokeCheck = 5 * time.Second
 	// maxCloseReason is the room left in a close frame (125 bytes) after the two status bytes.
 	maxCloseReason = 123
 )
@@ -42,6 +45,11 @@ type TailOptions struct {
 	// under the write lock, so it need not be safe for concurrent use. An error closes the tail; the
 	// original frame is never sent.
 	Rewrite func(frame []byte) ([]byte, error)
+	// Revoked, when set, is called at each RevokeCheckInterval while the tail is open. If it returns true,
+	// the tail closes with status 1008 and the reason "policy source expired" (PLAN §18.6, rule 8).
+	Revoked func() bool
+	// RevokeCheckInterval is the interval of the Revoked check (default 5s).
+	RevokeCheckInterval time.Duration
 }
 
 // ServeTail serves the Loki tail endpoint (PLAN §7.3): it opens one upstream WebSocket per plan request
@@ -86,6 +94,9 @@ func (o TailOptions) withDefaults() TailOptions {
 	}
 	if o.WriteTimeout <= 0 {
 		o.WriteTimeout = defaultTailWriteTimeout
+	}
+	if o.RevokeCheckInterval <= 0 {
+		o.RevokeCheckInterval = defaultTailRevokeCheck
 	}
 	return o
 }
@@ -197,12 +208,33 @@ func runTail(parent context.Context, client *websocket.Conn, ups []*websocket.Co
 		}()
 	}
 
-	select {
-	case <-clientGone.Done(): // client closed or misbehaved: close the upstreams
-		once.Do(func() { close(stop) })
-	case <-stop:
-	case <-parent.Done():
-		failWith(websocket.StatusGoingAway, "server shutting down")
+	var revokeTick <-chan time.Time
+	// The dial can take up to DialTimeout, so check one time before the first tick (PLAN §18.6, rule 8).
+	if opt.Revoked != nil && opt.Revoked() {
+		failWith(websocket.StatusPolicyViolation, "policy source expired")
+	}
+	if opt.Revoked != nil {
+		t := time.NewTicker(opt.RevokeCheckInterval)
+		defer t.Stop()
+		revokeTick = t.C
+	}
+wait:
+	for {
+		select {
+		case <-clientGone.Done(): // client closed or misbehaved: close the upstreams
+			once.Do(func() { close(stop) })
+			break wait
+		case <-stop:
+			break wait
+		case <-parent.Done():
+			failWith(websocket.StatusGoingAway, "server shutting down")
+			break wait
+		case <-revokeTick:
+			if opt.Revoked() {
+				failWith(websocket.StatusPolicyViolation, "policy source expired")
+				break wait
+			}
+		}
 	}
 	// code and reason are final once stop is closed (once.Do orders the writes before the close).
 	closeAll(client, code, reason, ups)

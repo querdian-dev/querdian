@@ -81,6 +81,45 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+// clusterGauge is a collector of one gauge with the label cluster. It reads the values at each scrape,
+// because the age and the expired state change without an event.
+type clusterGauge struct {
+	desc   *prometheus.Desc
+	values func(now time.Time) map[string]float64
+}
+
+// NewClusterPolicyAge returns the collector of querdian_cluster_policy_age_seconds{cluster} (PLAN §18.6).
+// ages gives the time in seconds since the last valid sync of each spoke cluster; policy.Deadlines.Ages
+// implements it. A spoke that has not synced has the value +Inf.
+func NewClusterPolicyAge(ages func(now time.Time) map[string]float64) prometheus.Collector {
+	return &clusterGauge{
+		desc: prometheus.NewDesc("querdian_cluster_policy_age_seconds",
+			"Time since the last valid policy sync of a spoke cluster.", []string{"cluster"}, nil),
+		values: ages,
+	}
+}
+
+// NewClusterPolicyExpired returns the collector of querdian_cluster_policy_expired{cluster} (PLAN §18.6):
+// 1 if the policies of the spoke are expired or suspended, else 0. policy.Deadlines.ExpiredStates
+// implements states.
+func NewClusterPolicyExpired(states func(now time.Time) map[string]float64) prometheus.Collector {
+	return &clusterGauge{
+		desc: prometheus.NewDesc("querdian_cluster_policy_expired",
+			"1 if the policies of a spoke cluster are expired or suspended, else 0.", []string{"cluster"}, nil),
+		values: states,
+	}
+}
+
+// Describe implements prometheus.Collector.
+func (c *clusterGauge) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+
+// Collect implements prometheus.Collector.
+func (c *clusterGauge) Collect(ch chan<- prometheus.Metric) {
+	for cluster, v := range c.values(time.Now()) {
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, v, cluster)
+	}
+}
+
 // ObserveWithExemplar records v on o and attaches the trace ID of the span in
 // ctx as exemplar when that span context is valid and sampled.
 func ObserveWithExemplar(ctx context.Context, o prometheus.Observer, v float64) {
