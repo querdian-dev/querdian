@@ -415,7 +415,7 @@ limits:
   maxPolicyTerms: 16                # DNF size cap per request
   maxFanout: 16                     # parallel upstream requests per client request
   maxMergeBytes: 67108864           # 64 MiB cap for buffered merge responses
-  maxInflightMergeBytes: 134217728  # 128 MiB cap for buffered fan-out bodies of all requests (default 2 x maxMergeBytes)
+  maxInflightMergeBytes: 67108864   # 64 MiB cap for buffered fan-out bodies of all requests (default maxMergeBytes)
   upstreamTimeout: 5m
 multicluster:                       # optional (§18.4); absent = single-cluster behaviour
   hubCluster: mla                   # cluster label value of hub telemetry

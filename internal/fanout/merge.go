@@ -85,8 +85,25 @@ func writeJSON(w http.ResponseWriter, v any) error {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(buf)
+	WriteBody(w, buf)
 	return nil
+}
+
+// BodyTaker is implemented by a response writer that buffers the response, for example the buffer of the
+// proxy for a merged response. TakeBody gives it body as the complete response body. The writer keeps body
+// without a copy, so the caller must not use or change body after the call.
+type BodyTaker interface {
+	TakeBody(body []byte)
+}
+
+// WriteBody writes body as the complete response body. A BodyTaker gets body without a copy, so the caller
+// must not use or change body after the call.
+func WriteBody(w http.ResponseWriter, body []byte) {
+	if bt, ok := w.(BodyTaker); ok {
+		bt.TakeBody(body)
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 // requestParams returns the normalised request parameters visible to a merger: r.Form when it is non-nil

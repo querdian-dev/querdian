@@ -118,7 +118,7 @@ func NewTempoTagsMerger(denied []string, valuesFor string) TempoMerger {
 func writeRawJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	WriteBody(w, body)
 }
 
 // searchTrace is the allow-listed shape of one trace in a rewritten search response.

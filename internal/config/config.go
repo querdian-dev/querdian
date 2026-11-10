@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"net/textproto"
 	"net/url"
 	"os"
@@ -134,7 +133,7 @@ type Limits struct {
 	MaxFanout      int   `json:"maxFanout"`
 	MaxMergeBytes  int64 `json:"maxMergeBytes"`
 	// MaxInflightMergeBytes caps the buffered fan-out bodies of all concurrent requests of the process.
-	// It must be at least MaxMergeBytes. The default is DefaultInflightMergeFactor x MaxMergeBytes.
+	// It must be at least MaxMergeBytes, which is also the default.
 	MaxInflightMergeBytes int64    `json:"maxInflightMergeBytes"`
 	UpstreamTimeout       Duration `json:"upstreamTimeout"`
 }
@@ -158,17 +157,13 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // Defaults for optional settings.
 const (
-	DefaultUsernameClaim  = "preferred_username"
-	DefaultGroupsClaim    = "groups"
-	DefaultMaxPolicyTerms = 16
-	DefaultMaxFanout      = 16
-	DefaultMaxMergeBytes  = 64 << 20
-	// DefaultInflightMergeFactor gives the default of limits.maxInflightMergeBytes as a multiple of
-	// limits.maxMergeBytes: 128 MiB with the defaults, which leaves space in the 512 MiB memory limit of the
-	// Helm chart for buffer growth, the merge step and the garbage collector.
-	DefaultInflightMergeFactor = 2
-	DefaultUpstreamTimeout     = 5 * time.Minute
-	DefaultMaxStaleness        = 48 * time.Hour
+	DefaultUsernameClaim   = "preferred_username"
+	DefaultGroupsClaim     = "groups"
+	DefaultMaxPolicyTerms  = 16
+	DefaultMaxFanout       = 16
+	DefaultMaxMergeBytes   = 64 << 20
+	DefaultUpstreamTimeout = 5 * time.Minute
+	DefaultMaxStaleness    = 48 * time.Hour
 )
 
 // TenantIDLabel is the reserved label used to bind terms to tenants under federation (PLAN §6.4). It is
@@ -229,11 +224,10 @@ func (c *Config) applyDefaults() {
 	if c.Limits.MaxMergeBytes == 0 {
 		c.Limits.MaxMergeBytes = DefaultMaxMergeBytes
 	}
-	if c.Limits.MaxInflightMergeBytes == 0 && c.Limits.MaxMergeBytes > 0 {
+	// The default is one maximal fan-out at a time: the merge of a fan-out needs about five times the bytes of
+	// its bodies, so with the defaults (64 MiB) it fits the 512 MiB memory limit of the Helm chart.
+	if c.Limits.MaxInflightMergeBytes == 0 {
 		c.Limits.MaxInflightMergeBytes = c.Limits.MaxMergeBytes
-		if c.Limits.MaxMergeBytes <= math.MaxInt64/DefaultInflightMergeFactor {
-			c.Limits.MaxInflightMergeBytes = DefaultInflightMergeFactor * c.Limits.MaxMergeBytes
-		}
 	}
 	if c.Limits.UpstreamTimeout == 0 {
 		c.Limits.UpstreamTimeout = Duration(DefaultUpstreamTimeout)

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // endlessBody returns 'x' bytes without end. Its first Read waits until ready is closed.
@@ -63,9 +64,9 @@ func TestRunParallelBranchesShareTheCap(t *testing.T) {
 	const n, maxBytes = 16, 1 << 20
 	d := newBarrierDoer(n)
 	budget := NewBudget(4 * maxBytes)
-	_, err := Run(context.Background(), d, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes, Budget: budget})
-	if !errors.Is(err, ErrMergeTooLarge) {
-		t.Fatalf("want ErrMergeTooLarge, got %v", err)
+	_, lease, err := Run(context.Background(), d, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes, Budget: budget})
+	if !errors.Is(err, ErrMergeTooLarge) || lease != nil {
+		t.Fatalf("want ErrMergeTooLarge and no lease, got %v %v", err, lease)
 	}
 	if got, limit := d.read.Load(), int64(maxBytes+n*readChunk); got > limit {
 		t.Fatalf("branches read %d bytes, want at most %d", got, limit)
@@ -84,7 +85,7 @@ func TestRunTotalJustBelowCap(t *testing.T) {
 	}
 	sizes[0]-- // total is maxBytes - 1
 	budget := NewBudget(maxBytes)
-	out, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes, Budget: budget})
+	out, lease, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes, Budget: budget})
 	if err != nil {
 		t.Fatalf("total below the cap must merge: %v", err)
 	}
@@ -96,100 +97,165 @@ func TestRunTotalJustBelowCap(t *testing.T) {
 			t.Fatalf("body %d has capacity %d, above the cap plus one chunk", i, cap(o.Body))
 		}
 	}
-	if got := budget.InUse(); got != maxBytes-1 {
-		t.Fatalf("budget in use = %d, want %d until release", got, maxBytes-1)
+	if got := budget.InUse(); got != maxBytes-1 || lease.Bytes() != maxBytes-1 {
+		t.Fatalf("budget in use = %d, lease = %d, want %d until release", got, lease.Bytes(), maxBytes-1)
 	}
-	budget.Release(out)
+	out[0].Body = out[0].Body[:0] // a change of the bodies does not change what the lease releases
+	lease.Release()
+	lease.Release()
 	if got := budget.InUse(); got != 0 {
 		t.Fatalf("budget in use after release = %d", got)
 	}
 
 	sizes[0] += 2 // total is maxBytes + 1
-	if _, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes}); !errors.Is(err, ErrMergeTooLarge) {
+	if _, _, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: maxBytes}); !errors.Is(err, ErrMergeTooLarge) {
 		t.Fatalf("total above the cap: want ErrMergeTooLarge, got %v", err)
 	}
 }
 
-// Concurrent calls share the process-wide budget: when it is full, a call fails with ErrBudgetExhausted
-// and the budget is never above its limit.
+// Concurrent calls share the process-wide budget. When it is full, the oldest reading call waits for space
+// and each other call fails with ErrBudgetExhausted. The budget is never above its limit, and of concurrent
+// calls that all need much space at least one succeeds.
 func TestRunGlobalBudget(t *testing.T) {
 	const n, size, calls = 4, 64 << 10, 8
 	budget := NewBudget(2 * n * size) // room for two calls
 	sizes := []int{size, size, size, size}
+	run := func(ctx context.Context) (*Lease, error) {
+		_, lease, err := Run(ctx, sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: n * size, Budget: budget})
+		return lease, err
+	}
 
 	// Two calls hold their bodies, so the budget is full.
-	var held [][]Response
+	var held []*Lease
 	for range 2 {
-		out, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: n * size, Budget: budget})
+		lease, err := run(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		held = append(held, out)
+		held = append(held, lease)
 	}
 
+	// Of the calls that find the budget full, only the oldest waits; here it waits until its context ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	var wg sync.WaitGroup
 	errs := make([]error, calls)
 	for i := range calls {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: n * size, Budget: budget})
+			_, errs[i] = run(ctx)
 		}()
 	}
 	wg.Wait()
+	cancel()
+	exhausted := 0
 	for i, err := range errs {
-		if !errors.Is(err, ErrBudgetExhausted) {
-			t.Errorf("call %d: want ErrBudgetExhausted, got %v", i, err)
+		switch {
+		case errors.Is(err, ErrBudgetExhausted):
+			exhausted++
+		case !errors.Is(err, context.DeadlineExceeded):
+			t.Errorf("call %d: want ErrBudgetExhausted or the end of its context, got %v", i, err)
 		}
+	}
+	if exhausted < calls-1 {
+		t.Errorf("%d calls failed with ErrBudgetExhausted, want at least %d", exhausted, calls-1)
 	}
 	if got := budget.InUse(); got != 2*n*size {
 		t.Fatalf("failed calls must release their bytes: in use = %d", got)
 	}
 
-	// After one release, a call succeeds again.
-	budget.Release(held[0])
-	out, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: n * size, Budget: budget})
-	if err != nil {
-		t.Fatalf("call after the release: %v", err)
+	// A waiting call continues when another call releases its bytes.
+	done := make(chan error, 1)
+	go func() {
+		lease, err := run(context.Background())
+		lease.Release()
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	held[0].Release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("waiting call: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiting call did not continue after the release")
 	}
-	budget.Release(out)
 
-	// Concurrent calls succeed or fail closed, and the budget is never above its limit.
+	// Concurrent calls with room for one: at least one succeeds, the others succeed or fail closed.
+	var ok atomic.Int32
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	for i := range calls {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, err := Run(context.Background(), sizedDoer{sizes}, reqs(t, "http://upstream", n), Options{MaxParallel: n, MaxBytes: n * size, Budget: budget})
+			lease, err := run(ctx)
 			if got := budget.InUse(); got > budget.limit {
 				t.Errorf("budget in use %d is above the limit %d", got, budget.limit)
 			}
 			switch {
 			case err == nil:
-				budget.Release(out)
+				ok.Add(1)
+				lease.Release()
 			case !errors.Is(err, ErrBudgetExhausted):
 				t.Errorf("call %d: %v", i, err)
 			}
 		}()
 	}
 	wg.Wait()
-	budget.Release(held[1])
+	if ok.Load() == 0 {
+		t.Fatal("no call succeeded")
+	}
+	held[1].Release()
 	if got := budget.InUse(); got != 0 {
 		t.Fatalf("budget in use at the end = %d", got)
 	}
 }
 
+// A lease can shrink, and grow only when the budget has space. A released lease cannot grow again.
+func TestLeaseResize(t *testing.T) {
+	b := NewBudget(100)
+	l := &Lease{b: b}
+	if !l.Resize(60) || b.InUse() != 60 {
+		t.Fatalf("grow to 60: in use %d", b.InUse())
+	}
+	if !l.Resize(20) || b.InUse() != 20 || l.Bytes() != 20 {
+		t.Fatalf("shrink to 20: in use %d", b.InUse())
+	}
+	if l.Resize(101) || b.InUse() != 20 {
+		t.Fatalf("grow past the limit must fail and change nothing: in use %d", b.InUse())
+	}
+	l.Release()
+	if l.Resize(10) || b.InUse() != 0 {
+		t.Fatalf("a released lease must not grow: in use %d", b.InUse())
+	}
+	var nilLease *Lease
+	nilLease.Release()
+	if nilLease.Resize(1) || nilLease.Bytes() != 0 {
+		t.Fatal("nil lease must hold nothing")
+	}
+}
+
 // A nil budget sets no limit, and a budget below 1 byte allows no body.
 func TestBudgetEdges(t *testing.T) {
+	ctx := context.Background()
 	var nilBudget *Budget
-	if !nilBudget.reserve(1<<40) || nilBudget.InUse() != 0 {
+	if nilBudget.reserve(ctx, nilBudget.enter(), 1<<40) != nil || nilBudget.InUse() != 0 {
 		t.Fatal("nil budget must allow everything")
 	}
-	nilBudget.Release([]Response{{Body: []byte("x")}})
-	if NewBudget(0).reserve(1) {
+	nilBudget.release(1)
+	if NewBudget(0).reserve(ctx, 0, 1) == nil {
 		t.Fatal("zero budget must allow no bytes")
 	}
 	b := NewBudget(10)
-	if !b.reserve(10) || b.reserve(1) {
+	if b.reserve(ctx, 0, 10) != nil || !errors.Is(b.reserve(ctx, 0, 1), ErrBudgetExhausted) {
 		t.Fatal("budget must allow exactly its limit")
+	}
+	// The oldest reading call does not wait for more than the limit.
+	run := b.enter()
+	defer b.leave(run)
+	if !errors.Is(b.reserve(ctx, run, 11), ErrBudgetExhausted) {
+		t.Fatal("a reservation above the limit must fail at once")
 	}
 }

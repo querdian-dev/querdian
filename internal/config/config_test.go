@@ -39,7 +39,7 @@ func TestDefaults(t *testing.T) {
 		c.Limits.MaxPolicyTerms != 16 || c.Backends[0].TenantFederation != FederationNone {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
-	if c.Limits.MaxInflightMergeBytes != DefaultInflightMergeFactor*DefaultMaxMergeBytes {
+	if c.Limits.MaxInflightMergeBytes != DefaultMaxMergeBytes {
 		t.Fatalf("maxInflightMergeBytes default = %d", c.Limits.MaxInflightMergeBytes)
 	}
 	tempo := strings.Replace(base, "type: prometheus", "type: tempo", 1)
@@ -341,8 +341,8 @@ func TestInflightMergeBytesDefault(t *testing.T) {
 		limits string
 		want   int64
 	}{
-		{"limits: {maxMergeBytes: 1000}\n", 2000},
-		{"limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 1000}\n", 1000},
+		{"limits: {maxMergeBytes: 1000}\n", 1000},
+		{"limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 3000}\n", 3000},
 		{"limits: {maxMergeBytes: 9223372036854775807}\n", 9223372036854775807},
 	} {
 		c, err := Parse([]byte(base + tc.limits))

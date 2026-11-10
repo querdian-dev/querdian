@@ -127,9 +127,9 @@ config:
     maxPolicyTerms: 16
     maxFanout: 16
     maxMergeBytes: 67108864
-    # Buffered fan-out bodies of all requests together. Default 2 x maxMergeBytes. Keep
-    # resources.limits.memory at about 4 x this value. See docs/operations.md.
-    # maxInflightMergeBytes: 134217728
+    # Buffered fan-out bodies of all requests together. Default maxMergeBytes. Keep
+    # resources.limits.memory at least 100 MiB + 6 x this value. See docs/operations.md.
+    # maxInflightMergeBytes: 67108864
     upstreamTimeout: 5m
   # Hub of a multi-cluster deployment (PLAN section 18.4). Off when absent. If you set it, each backend
   # needs clusterLabel, and Querdian refuses to start if one backend has no clusterLabel. A backend with

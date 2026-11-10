@@ -24,11 +24,14 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   they read. Before, the limit did not hold for parallel branches, so one request could use much
   more memory than documented (GHSA-hh8g-744m-9r98, affects 0.1.2 and earlier). Each branch
   now counts each chunk before it keeps it, and the read stops at the first chunk above the limit.
-* New limit `limits.maxInflightMergeBytes` (default 2 x `maxMergeBytes`, 128 MiB) for the buffered
-  fan-out bodies of all concurrent requests of a replica. When it is full, a fan-out fails with
-  `503 unavailable` and the reason `merge_budget_exhausted`. The Helm chart accepts the field; the
-  default render does not change. See [docs/operations.md](docs/operations.md#scaling) for memory
-  sizing.
+* New limit `limits.maxInflightMergeBytes` (default `maxMergeBytes`, 64 MiB) for the buffered
+  fan-out bodies of all concurrent requests of a replica. When it is full, the oldest fan-out that
+  still reads waits for space, and each other fan-out fails with `503 unavailable`, `Retry-After`
+  and the reason `merge_budget_exhausted`. After the merge, the budget holds only the merged
+  response, and the proxy writes it with a deadline.
+* The Helm chart gives the container memory limit to Querdian (`QUERDIAN_MEMORY_LIMIT`), and
+  Querdian sets the Go memory limit to 90 percent of it, unless `GOMEMLIMIT` is set. See
+  [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
 
 ### Added
 

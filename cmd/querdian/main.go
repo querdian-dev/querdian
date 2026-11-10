@@ -45,6 +45,9 @@ func main() {
 }
 
 func run(args []string) error {
+	if err := applyMemoryLimit(os.Getenv); err != nil {
+		return err
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "receiver":

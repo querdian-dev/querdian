@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -15,11 +16,22 @@ import (
 	"github.com/querdian-dev/querdian/internal/fanout"
 )
 
-// fixedDoer answers each request with size bytes.
-type fixedDoer int
+// stallDoer answers with size bytes and then waits until release is closed before the body ends.
+type stallDoer struct {
+	size    int
+	release chan struct{}
+}
 
-func (d fixedDoer) Do(*http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(make([]byte, d)))}, nil
+func (d stallDoer) Do(*http.Request) (*http.Response, error) {
+	body := io.MultiReader(bytes.NewReader(make([]byte, d.size)), waitReader(d.release))
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(body)}, nil
+}
+
+type waitReader chan struct{}
+
+func (w waitReader) Read([]byte) (int, error) {
+	<-w
+	return 0, io.EOF
 }
 
 // One budget covers all backends. When it is full, a fan-out fails closed with 503 and the reason
@@ -41,11 +53,20 @@ func TestFanoutBudgetExhaustedEndToEnd(t *testing.T) {
 	tok := h.issuer.token(t, "u", "g")
 	path := "/loki/loki/api/v1/query_range?" + url.Values{"query": {`{job="j"}`}}.Encode()
 
-	// Another request holds the whole budget.
-	r, _ := http.NewRequest(http.MethodGet, "http://other/", nil)
-	held, err := fanout.Run(context.Background(), fixedDoer(1<<20), []*http.Request{r}, fanout.Options{MaxParallel: 1, MaxBytes: 1 << 20, Budget: s.budget})
-	if err != nil {
-		t.Fatal(err)
+	// An older fan-out holds the whole budget and still reads.
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		r, _ := http.NewRequest(http.MethodGet, "http://other/", nil)
+		_, held, err := fanout.Run(context.Background(), stallDoer{size: 1 << 20, release: release}, []*http.Request{r},
+			fanout.Options{MaxParallel: 1, MaxBytes: 1 << 20, Budget: s.budget})
+		held.Release()
+		done <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); s.budget.InUse() < 1<<20; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the older fan-out did not reserve its bytes")
+		}
 	}
 	resp, body := get(t, srv, path, tok)
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -55,7 +76,10 @@ func TestFanoutBudgetExhaustedEndToEnd(t *testing.T) {
 		t.Fatalf("requests_total{reason=merge_budget_exhausted} = %v", got)
 	}
 
-	s.budget.Release(held)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 	if resp, body := get(t, srv, path, tok); resp.StatusCode != http.StatusOK {
 		t.Fatalf("after release: status %d: %s", resp.StatusCode, body)
 	}

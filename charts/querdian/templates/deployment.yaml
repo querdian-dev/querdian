@@ -85,6 +85,11 @@ spec:
                   fieldPath: spec.nodeName
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: {{ include "querdian.resourceAttributes" . | quote }}
+            # The Go runtime uses 90 percent of the container memory limit as its soft memory limit.
+            - name: QUERDIAN_MEMORY_LIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
             {{- with .Values.tracing.serviceName }}
             - name: OTEL_SERVICE_NAME
               value: {{ . | quote }}

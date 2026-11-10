@@ -56,12 +56,14 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 * The proxy does not rate limit or queue requests (see [operations.md](operations.md#scaling)). Only
   `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
 * Fan-out bodies are limited per request (`limits.maxMergeBytes`, counted while the branches read)
-  and for all requests together (`limits.maxInflightMergeBytes`). When the process-wide budget is
-  full, a fan-out fails with `503 merge_budget_exhausted` and the client must try again; the proxy
-  does not wait for space. A request that holds part of the budget does not keep space for itself,
-  so under heavy load several large fan-outs can all fail at the same time. The budget counts body
-  bytes only: buffer growth, the merge step, the response filters and the trace-by-ID buffer use
-  more memory that it does not count (see [operations.md](operations.md#scaling)).
+  and for all requests together (`limits.maxInflightMergeBytes`, default one `maxMergeBytes`).
+  When the process-wide budget is full, only the oldest fan-out that still reads waits for space;
+  each other fan-out fails with `503 merge_budget_exhausted` and the client must try again. With the
+  default, two large fan-outs at the same time thus give one `503`. The budget counts body bytes
+  only: buffer growth, the merge step, the response filters and the trace-by-ID buffer use more
+  memory that it does not count (see [operations.md](operations.md#scaling)). A merged response
+  is written with a deadline; a client that reads more slowly than about 1 MiB/s does not get the
+  complete response.
 * The proxy does not terminate TLS and does not authenticate to backends other than by setting the
   tenant header. Backends must be isolated at network level. The only Querdian component that
   terminates TLS is `querdian receiver` in a [multi-cluster](multicluster.md) setup: it requires an
