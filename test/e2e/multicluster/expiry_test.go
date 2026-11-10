@@ -44,15 +44,22 @@ func testTimeLimit(t *testing.T, f *fixture) {
 		f.sees(t, team, metrics, []rec{{clusterA, nsTeam}})
 	}
 
-	// After the limit: 403 policy_source_expired. The check runs for each request.
+	// After the limit: 403 policy_source_expired. The check runs for each request. stopped is the time
+	// before the first denied request, so the proxy denied it at stopped or later, and stopped is a strict
+	// lower bound. A denied request that started before the limit and ended after it does not show on
+	// which side of the limit the proxy denied it, so the next request decides.
 	var stopped time.Time
 	eventually(t, shortMaxStaleness+15*time.Second, "grant of cluster-a expired", func() (bool, string) {
+		sent := time.Now()
 		res := f.b.query(t, f.as(t, team), metrics, "")
-		if denied(res, msgExpired) {
-			stopped = time.Now()
-			return true, ""
+		if !denied(res, msgExpired) {
+			return false, res.String()
 		}
-		return false, res.String()
+		if sent.Before(limit) && !time.Now().Before(limit) {
+			return false, "the denied request started before the limit and ended after it"
+		}
+		stopped = sent
+		return true, ""
 	})
 	if stopped.Before(limit) {
 		t.Errorf("the grant stopped at %s, before the limit %s (lastSyncTime %s + maxStaleness %s)",
