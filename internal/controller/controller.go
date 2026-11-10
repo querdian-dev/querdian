@@ -201,17 +201,25 @@ func (b *builder) Start(ctx context.Context) error {
 		if err := c.rebuild(ctx, "event"); err != nil {
 			// The previous snapshot stays. Retry without a new event: with the multicluster block, a spoke
 			// whose spec changed stays expired until a rebuild succeeds, and heartbeats start no rebuild.
-			time.AfterFunc(rebuildRetry, c.notify)
+			// After the stop, no retry is necessary.
+			if ctx.Err() == nil {
+				time.AfterFunc(rebuildRetry, c.notify)
+			}
 		}
 	})
 	return nil
 }
 
-// relevantChange ignores updates that cannot change compilation, in particular our own status writes.
+// relevantChange ignores updates that cannot change compilation, in particular our own status writes. After a
+// watch gap, the informer can report a deleted and re-created object as an update with the same generation,
+// so a new UID counts as a change.
 func relevantChange(oldObj, newObj any) bool {
 	o, ok1 := oldObj.(client.Object)
 	n, ok2 := newObj.(client.Object)
 	if !ok1 || !ok2 {
+		return true
+	}
+	if o.GetUID() != n.GetUID() {
 		return true
 	}
 	if _, isNS := n.(*corev1.Namespace); isNS {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	toolscache "k8s.io/client-go/tools/cache"
@@ -181,8 +182,44 @@ func TestSpokeSpecChanged(t *testing.T) {
 	if !spokeSpecChanged(a, b) {
 		t.Fatal("a generation change counts as a spec change")
 	}
+	b = a.DeepCopy()
+	b.UID = "uid-recreated"
+	if !spokeSpecChanged(a, b) {
+		t.Fatal("a re-created object with the same generation and spec is a change")
+	}
 	if !spokeSpecChanged(a, "x") {
 		t.Fatal("an unknown object must count as a change")
+	}
+}
+
+// relevantChange: a status write is not relevant, but a new generation, new namespace labels and a
+// re-created object with the same generation are relevant.
+func TestRelevantChange(t *testing.T) {
+	p := &v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{Name: "p", UID: "uid-1", Generation: 1}}
+	status := p.DeepCopy()
+	status.ResourceVersion = "2"
+	if relevantChange(p, status) {
+		t.Fatal("a status write is not relevant")
+	}
+	gen := p.DeepCopy()
+	gen.Generation = 2
+	recreated := p.DeepCopy()
+	recreated.UID = "uid-2"
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "n", UID: "uid-n"}}
+	nsLabels := ns.DeepCopy()
+	nsLabels.Labels = map[string]string{"team": "a"}
+	nsRecreated := ns.DeepCopy()
+	nsRecreated.UID = "uid-n2"
+	for name, pair := range map[string][2]any{
+		"new generation":      {p, gen},
+		"re-created":          {p, recreated},
+		"namespace labels":    {ns, nsLabels},
+		"namespace recreated": {ns, nsRecreated},
+		"unknown objects":     {"a", "b"},
+	} {
+		if !relevantChange(pair[0], pair[1]) {
+			t.Errorf("%s: must be relevant", name)
+		}
 	}
 }
 
