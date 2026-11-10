@@ -131,6 +131,11 @@ expect "logs: lines in the stream selector {k8s_cluster_name=\"$S\"}" "$N" \
   "$(lines "{service_name=\"forged-label-test\", k8s_cluster_name=\"$S\"} |= \"$ID\"")"
 expect "logs: lines with the structured metadata cluster=\"$S\"" "$N" \
   "$(lines "{service_name=\"forged-label-test\"} |= \"$ID\" | cluster=\"$S\"")"
+# The stream label k8s_cluster_name and a structured metadata field of the same name look the same in a
+# label filter. With categorize-labels, Loki gives the structured metadata of each entry separately.
+LC=$(loki_direct_categorized "{service_name=\"forged-label-test\"} |= \"$ID\"" 600) || LC='{}'
+expect "logs: no structured metadata k8s_cluster_name (the gateway deletes the attribute)" "" \
+  "$(jq -r '[.data.result[].values[][2].structuredMetadata.k8s_cluster_name // empty] | unique | join(",")' <<<"$LC")"
 expect "traces: forged spans stored" "$N" "$(jq -r '.traces | length' <<<"$T")"
 T2=$(tempo_direct "{ resource.service.name = \"forged-label-test\" && span.test_id = \"$ID\" && resource.k8s.cluster.name = \"$S\" && resource.cluster = \"$S\" }" 600) || T2='{}'
 expect "traces: spans with resource.k8s.cluster.name and resource.cluster = $S" "$N" "$(jq -r '.traces | length' <<<"$T2")"

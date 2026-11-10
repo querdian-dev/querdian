@@ -160,10 +160,12 @@ Limits of this design:
 * The backends have no write authentication. A pod on the hub can write data with the cluster label of
   a spoke and bypass the gateway ([PLAN 18.8](../PLAN.md#188-label-integrity)). A real hub restricts the
   write paths, for example with NetworkPolicies.
-* The policy dashboard has no authentication (as in the single-cluster quickstart). The kind port
-  mapping binds it to `127.0.0.1` on the laptop, but its NodePort 30081 on the hub node is also open to
-  each container on the Docker network `kind`, thus also to the pods of the spokes. The dashboard shows
-  policies, not telemetry.
+* The kind port mappings bind Keycloak, Grafana and the dashboard to `127.0.0.1` on the laptop. But their
+  NodePorts on the hub node (Keycloak 30080, Grafana 30030 and the dashboard 30081) are also open to
+  each container on the Docker network `kind`, thus also to the pods of the spokes. Keycloak and Grafana
+  use the known admin passwords of the demo, and the dashboard has no authentication (as in the
+  single-cluster quickstart). Thus a hostile spoke can reach them. Do not use this setup with spokes that
+  you do not trust.
 
 ## The ordered setup
 

@@ -147,6 +147,12 @@ loki_direct_range() { # logql seconds-back: log query
     --data-urlencode "query=$1" --data-urlencode limit=1000 \
     --data-urlencode "start=$(($(date +%s) - $2))000000000" --data-urlencode "end=$(($(date +%s) + 60))000000000"
 }
+loki_direct_categorized() { # logql seconds-back: log query; each entry also has its structured metadata
+  curl -fsS -G -H "X-Scope-OrgID: $TENANT" -H "X-Loki-Response-Encoding-Flags: categorize-labels" \
+    "http://127.0.0.1:$BPF_LOKI/loki/api/v1/query_range" \
+    --data-urlencode "query=$1" --data-urlencode limit=1000 \
+    --data-urlencode "start=$(($(date +%s) - $2))000000000" --data-urlencode "end=$(($(date +%s) + 60))000000000"
+}
 tempo_direct() { # traceql seconds-back: search
   local now
   now=$(date +%s)
