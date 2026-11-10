@@ -103,6 +103,19 @@ func TestHostAllowList(t *testing.T) {
 	}
 }
 
+// TestUnspecifiedAllowedHostAddsNothing: an unspecified address in the allowed hosts is not a host name, so
+// it adds nothing.
+func TestUnspecifiedAllowedHostAddsNothing(t *testing.T) {
+	d := newDeps(t, true)
+	d.AllowedHosts = []string{"0.0.0.0", "::", "[::]", "10.0.0.256", "1.2.3"}
+	h := Handler(d)
+	for _, host := range []string{"0.0.0.0:8081", "0.0.0.0", "[::]:8081", "[::]", "10.0.0.256", "1.2.3:8081"} {
+		if c := request(h, "GET", "/api/overview", host, nil).Code; c != http.StatusForbidden {
+			t.Errorf("Host %q: got %d, want 403", host, c)
+		}
+	}
+}
+
 // TestListenHostIsAllowed: the host of a specific --ui-listen address is allowed. An unspecified address is not
 // a host name, so it adds nothing.
 func TestListenHostIsAllowed(t *testing.T) {
@@ -154,6 +167,11 @@ func TestCrossOriginPost(t *testing.T) {
 		{"other allowed host, ingress", map[string]string{"Origin": "https://querdian.example.com"}, http.StatusForbidden},
 		{"other scheme port", map[string]string{"Origin": "https://localhost"}, http.StatusForbidden},
 		{"origin with a query", map[string]string{"Origin": "http://localhost:8081?x"}, http.StatusForbidden},
+		{"origin with an empty query", map[string]string{"Origin": "http://localhost:8081?"}, http.StatusForbidden},
+		{"origin with an empty fragment", map[string]string{"Origin": "http://localhost:8081#"}, http.StatusForbidden},
+		{"origin with a slash", map[string]string{"Origin": "http://localhost:8081/"}, http.StatusForbidden},
+		{"origin with a user", map[string]string{"Origin": "http://u@localhost:8081"}, http.StatusForbidden},
+		{"origin in upper case", map[string]string{"Origin": "HTTP://localhost:8081"}, http.StatusForbidden},
 		{"origin with a bad port", map[string]string{"Origin": "http://localhost:x"}, http.StatusForbidden},
 		{"two origins", map[string]string{"Origin": "http://localhost:8081, http://localhost:8081"}, http.StatusForbidden},
 		{"unknown fetch site", map[string]string{"Sec-Fetch-Site": "other"}, http.StatusForbidden},
@@ -216,7 +234,8 @@ func TestHostCheckPrecedesAuth(t *testing.T) {
 
 // TestMissingAuthModeFailsClosed: without an authentication mode, the dashboard serves nothing.
 func TestMissingAuthModeFailsClosed(t *testing.T) {
-	for name, a := range map[string]Auth{"zero": {}, "nil middleware": AuthWith(nil)} {
+	nilHandler := AuthWith(func(http.Handler) http.Handler { return nil })
+	for name, a := range map[string]Auth{"zero": {}, "nil middleware": AuthWith(nil), "nil handler": nilHandler} {
 		d := newDeps(t, true)
 		d.Auth = a
 		h := Handler(d)

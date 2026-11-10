@@ -85,8 +85,8 @@ func (f *Flags) Validate() error {
 }
 
 // NormalizeHost returns the host name h in lower case, or the IP address h in canonical form without
-// brackets. It returns "" when h is not a host name or an IP address without a port, and for an IPv4 address
-// in IPv6 form.
+// brackets. It returns "" when h is not a host name or an IP address without a port, for an IPv4 address in
+// IPv6 form, and for an unspecified address (0.0.0.0, ::).
 func NormalizeHost(h string) string {
 	h = strings.ToLower(h)
 	bracketed := strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]")
@@ -97,7 +97,7 @@ func NormalizeHost(h string) string {
 		if strings.Contains(h, ":") == (ip.To4() != nil) {
 			return "" // an IPv4 address in IPv6 form
 		}
-		if bracketed && ip.To4() != nil {
+		if (bracketed && ip.To4() != nil) || ip.IsUnspecified() {
 			return ""
 		}
 		return ip.String()
@@ -109,9 +109,14 @@ func NormalizeHost(h string) string {
 }
 
 // validDNSName reports whether h is a DNS name: labels of 1 to 63 letters, digits and hyphens, with no hyphen
-// at the start or the end of a label, and 253 characters or fewer in total.
+// at the start or the end of a label, and 253 characters or fewer in total. The last label must not have only
+// digits, so that a value such as 10.0.0.256 is not a DNS name.
 func validDNSName(h string) bool {
 	if h == "" || len(h) > 253 {
+		return false
+	}
+	last := h[strings.LastIndexByte(h, '.')+1:]
+	if strings.Trim(last, "0123456789") == "" {
 		return false
 	}
 	for _, label := range strings.Split(h, ".") {

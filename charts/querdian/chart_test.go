@@ -196,9 +196,10 @@ func TestDashboardAllowedHosts(t *testing.T) {
 		}
 	}
 	out := render("--set", "ui.enabled=true", "--set-json",
-		`ui.allowedHosts=["querdian.example.com","10.0.0.5","[fd00::1]","fd00::2","::1","1:2:3:4:5:6:7:8"]`)
+		`ui.allowedHosts=["querdian.example.com","10.0.0.5","[fd00::1]","fd00::2","::1","1:2:3:4:5:6:7:8","1-2.example","a.1a"]`)
 	for _, want := range []string{"--ui-allowed-host=querdian.example.com", "--ui-allowed-host=10.0.0.5", "--ui-allowed-host=[fd00::1]",
-		"--ui-allowed-host=fd00::2", "--ui-allowed-host=::1", "--ui-allowed-host=1:2:3:4:5:6:7:8"} {
+		"--ui-allowed-host=fd00::2", "--ui-allowed-host=::1", "--ui-allowed-host=1:2:3:4:5:6:7:8", "--ui-allowed-host=1-2.example",
+		"--ui-allowed-host=a.1a"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render lacks %q", want)
 		}
@@ -210,7 +211,8 @@ func TestDashboardAllowedHosts(t *testing.T) {
 	// Each value that the binary refuses at startup must fail in helm with the schema error of the field.
 	for _, bad := range []string{"querdian.example.com:443", "https://querdian.example.com", "*.example.com", "", "a b",
 		"querdian.example.com/x", "-bad.example.com", "a:443", "[fd00::1", "fd00::1]", ":::", "[::ffff:1.2.3.4]",
-		"::ffff:1.2.3.4", "[10.0.0.5]", "[]"} {
+		"::ffff:1.2.3.4", "[10.0.0.5]", "[]", "10.0.0.256", "999.1.1.1", "1.2.3", "123", "a.123", "01.2.3.4",
+		"1:2:3:4:5:6:7:8:9", "1::2:3:4:5:6:7:8", "[1:2:3:4:5:6:7:8:9]"} {
 		cmd := exec.Command("helm", "template", "r", ".", "--set", "ui.enabled=true", "--set-json", //nolint:gosec // test args
 			`ui.allowedHosts=["`+bad+`"]`)
 		out, err := cmd.CombinedOutput()

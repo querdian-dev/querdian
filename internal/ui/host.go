@@ -120,9 +120,9 @@ func sameOrigin(r *http.Request) bool {
 	if len(o) > 1 {
 		return false
 	}
+	// A browser sends the serialized origin: scheme://host[:port] and nothing more.
 	u, err := url.Parse(o[0])
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" || u.User != nil ||
-		u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || o[0] != u.Scheme+"://"+u.Host {
 		return false
 	}
 	oh, op, ok := splitHost(u.Host)

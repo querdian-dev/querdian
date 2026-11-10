@@ -84,8 +84,10 @@ func Handler(d Deps) http.Handler {
 		next = d.Auth.wrap(mux)
 	case d.Auth.none:
 		next = mux
-	default:
-		// Fail closed: a missing authentication mode is a wiring error, not a dashboard without authentication.
+	}
+	if next == nil {
+		// Fail closed: a missing authentication mode, or a middleware that gives no handler, is a wiring error,
+		// not a dashboard without authentication.
 		d.Logger.Error("the dashboard has no authentication mode; it answers each request with 500")
 		next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "dashboard authentication not configured")

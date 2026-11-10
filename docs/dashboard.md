@@ -103,7 +103,8 @@ An Ingress or a proxy in front of the dashboard must keep the `Host` header of t
 bench does not work.
 
 The dashboard compares IP addresses in canonical form: `--ui-allowed-host=fd00:0::1` accepts
-`Host: [fd00::1]`. It does not accept an IPv4 address in IPv6 form, such as `::ffff:10.0.0.5`.
+`Host: [fd00::1]`. The flag does not accept an IPv4 address in IPv6 form (such as `::ffff:10.0.0.5`), an
+unspecified address (`0.0.0.0`, `::`) or a name whose last label has only digits (such as `10.0.0.256`).
 
 The dashboard logs each refusal at debug level (`dashboard request refused`) with the reason and the
 first 64 bytes of the `Host` header. See [troubleshooting](troubleshooting.md#policy-dashboard).
