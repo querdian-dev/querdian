@@ -179,8 +179,9 @@ none() { # description count
 wait_for "hub metrics with cluster=$HUB_NAME" 180 gt0 n_prom "count(demo_requests_total{cluster=\"$HUB_NAME\"})"
 wait_for "hub logs with k8s_cluster_name=$HUB_NAME" 180 gt0 n_loki "sum(count_over_time({k8s_namespace_name=~\".+\", k8s_cluster_name=\"$HUB_NAME\"}[10m]))"
 wait_for "hub traces with resource.k8s.cluster.name=$HUB_NAME" 180 gt0 n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" }"
-# Each query goes into a variable first. bash 3.2 (macOS) can parse an escaped quote inside a quoted
-# argument inside "$(...)" in a different way from later versions.
+# Each query goes into a variable first. bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)",
+# also inside quotes, so the matcher list of a query becomes two commands. An assignment gets no brace
+# expansion. TestNoBraceListInCommandSubstitution finds this form.
 q="count by (__name__) (last_over_time({__name__=~\".+\", cluster!=\"$HUB_NAME\"}[1h]))"
 none "metrics: series without cluster=$HUB_NAME" "$(n_prom "$q")"
 for sel in k8s_namespace_name service_name; do

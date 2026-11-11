@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -577,6 +578,49 @@ func TestSpokeIndex(t *testing.T) {
 func TestPfStopIgnoresAStoppedProcess(t *testing.T) {
 	if got := shell(t, `sleep 0 & PF_PIDS+=($!); wait $!; pf_stop; echo "stopped ${#PF_PIDS[@]}"`); got != "stopped 0\n" {
 		t.Errorf("pf_stop with a stopped process: %q, want %q", got, "stopped 0\n")
+	}
+}
+
+// braceList finds a brace group with a comma, such as {a="x", b="y"}, but not a parameter expansion.
+var braceList = regexp.MustCompile(`(^|[^$])\{[^}]*,`)
+
+// bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)", also inside quotes: the command
+// substitution then runs once for each alternative. For a PromQL query, the matcher list becomes two
+// broken queries. The scripts must put such text into a variable first.
+func TestNoBraceListInCommandSubstitution(t *testing.T) {
+	files, err := filepath.Glob("*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := filepath.Glob("../quickstart/*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, single...)
+	if len(files) < 2 {
+		t.Fatalf("found only the scripts %v", files)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // a quickstart script from filepath.Glob
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			for rest := line; ; {
+				i := strings.Index(rest, `"$(`)
+				if i < 0 {
+					break
+				}
+				rest = rest[i+3:]
+				if braceList.MatchString(rest) {
+					t.Errorf("%s:%d: brace group with a comma inside \"$(...)\"; bash 3.2 expands it: %s", f, n+1, strings.TrimSpace(line))
+					break
+				}
+			}
+		}
 	}
 }
 
