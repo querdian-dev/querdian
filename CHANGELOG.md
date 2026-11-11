@@ -11,45 +11,6 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
-### Security
-
-* **Large policies could exhaust the CPU and memory of the proxy**
-  ([GHSA-72w7-fm25-mxhm](https://github.com/querdian-dev/querdian/security/advisories/GHSA-72w7-fm25-mxhm)).
-  Policy lists and strings had no size limits, and the work for each request grew faster than the
-  policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
-  make the shared proxy slow or stop it. Now:
-  * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
-    `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
-    value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
-    limits, also to objects stored before this release: such a policy grants nothing and gets the new
-    status reason `PolicyTooLarge`. The receiver rejects spoke policies over a limit.
-  * The cost of a regex compile grows with the size of the compiled program, not with the length of the
-    regex, and with the rune ranges and the width of its character classes and with case folding of
-    wide ranges. Querdian now
-    measures this cost without a compile (the weight). A regex matcher of a policy can have a weight of
-    at most 16384, and the regexes of one policy together at most 32768
-    (`PolicyTooLarge`). The CRD cannot express these two limits; the compiler and the receiver apply
-    them.
-  * Each request checks the size of its matched rules before the simplification (at most 4096 terms,
-    32768 matchers and 1 MiB of matcher text), the simplification has a fixed budget of steps, and
-    the simplified policy can have a weight of at most 32768. A request over one of these limits gets
-    `403 policy_too_complex`.
-  * The regexes that the proxy compiles for one request have a weight of at most 131072: the client
-    regexes, compiled again for each term of the policy, and the policy, compiled again for each
-    selector. The regexes of a client query can have a weight of at most 32768 (PromQL and LogQL). The
-    proxy checks both before it compiles a regex. The new settings `limits.maxRequestRegexWeight` and
-    `limits.maxQueryRegexWeight` change these limits (at most 262144; Helm: `config.limits`). A client
-    regex can have at most 8 KiB and the client regexes of a query 32 KiB together, and a policy regex
-    value at most 8 KiB.
-  * The weight comes from a parse with a work budget (a copy of the Go regexp parser with a work
-    counter, `internal/regexparse`), which stops as soon as the work is over the limit. A regex that
-    does not parse gives `400 bad_data` before any compile. A request over one of these limits
-    gets `403 query_too_complex`.
-  * The simplification and the cross-tenant check of the snapshot rebuild no longer do work that grows
-    with the square of the input in the normal case.
-
-  See the upgrade notes under "Changed".
-
 ### Added
 
 * **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the
@@ -130,6 +91,42 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Security
 
+* **Large policies could exhaust the CPU and memory of the proxy**
+  ([GHSA-72w7-fm25-mxhm](https://github.com/querdian-dev/querdian/security/advisories/GHSA-72w7-fm25-mxhm)).
+  Policy lists and strings had no size limits, and the work for each request grew faster than the
+  policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
+  make the shared proxy slow or stop it. Now:
+  * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
+    `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
+    value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
+    limits, also to objects stored before this release: such a policy grants nothing and gets the new
+    status reason `PolicyTooLarge`. The receiver rejects spoke policies over a limit.
+  * The cost of a regex compile grows with the size of the compiled program, not with the length of the
+    regex, and with the rune ranges and the width of its character classes and with case folding of
+    wide ranges. Querdian now
+    measures this cost without a compile (the weight). A regex matcher of a policy can have a weight of
+    at most 16384, and the regexes of one policy together at most 32768
+    (`PolicyTooLarge`). The CRD cannot express these two limits; the compiler and the receiver apply
+    them.
+  * Each request checks the size of its matched rules before the simplification (at most 4096 terms,
+    32768 matchers and 1 MiB of matcher text), the simplification has a fixed budget of steps, and
+    the simplified policy can have a weight of at most 32768. A request over one of these limits gets
+    `403 policy_too_complex`.
+  * The regexes that the proxy compiles for one request have a weight of at most 131072: the client
+    regexes, compiled again for each term of the policy, and the policy, compiled again for each
+    selector. The regexes of a client query can have a weight of at most 32768 (PromQL and LogQL). The
+    proxy checks both before it compiles a regex. The new settings `limits.maxRequestRegexWeight` and
+    `limits.maxQueryRegexWeight` change these limits (at most 262144; Helm: `config.limits`). A client
+    regex can have at most 8 KiB and the client regexes of a query 32 KiB together, and a policy regex
+    value at most 8 KiB.
+  * The weight comes from a parse with a work budget (a copy of the Go regexp parser with a work
+    counter, `internal/regexparse`), which stops as soon as the work is over the limit. A regex that
+    does not parse gives `400 bad_data` before any compile. A request over one of these limits
+    gets `403 query_too_complex`.
+  * The simplification and the cross-tenant check of the snapshot rebuild no longer do work that grows
+    with the square of the input in the normal case.
+
+  See the upgrade notes under "Changed".
 * **Upstream spans no longer record query text by default** (GHSA-c2rh-rmcg-357j). The `upstream` client spans now record
   `url.full` with scheme, host and path only. The query string is recorded only with
   `--tracing.record-queries`.
