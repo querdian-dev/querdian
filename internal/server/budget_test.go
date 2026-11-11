@@ -83,7 +83,11 @@ func TestFanoutBudgetExhaustedEndToEnd(t *testing.T) {
 	if resp, body := get(t, srv, path, tok); resp.StatusCode != http.StatusOK {
 		t.Fatalf("after release: status %d: %s", resp.StatusCode, body)
 	}
-	if got := s.budget.InUse(); got != 0 {
-		t.Fatalf("budget in use after the request = %d", got)
+	// The proxy writes and flushes the merged response and releases its bytes only when Execute
+	// returns. The client can have the response before that.
+	for deadline := time.Now().Add(5 * time.Second); s.budget.InUse() != 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("budget in use after the request = %d", s.budget.InUse())
+		}
 	}
 }

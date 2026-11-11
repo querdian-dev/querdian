@@ -199,8 +199,15 @@ func TestFanoutClientThatDoesNotRead(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	n, _ := io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != 200 || n != 2*branch || p.Budget.InUse() != 0 {
-		t.Fatalf("other request: %d, %d bytes, budget in use %d", resp.StatusCode, n, p.Budget.InUse())
+	if resp.StatusCode != 200 || n != 2*branch {
+		t.Fatalf("other request: %d, %d bytes", resp.StatusCode, n)
+	}
+	// The proxy writes and flushes the merged response and releases its bytes only when Execute
+	// returns. The client can have the response before that.
+	for deadline := time.Now().Add(5 * time.Second); p.Budget.InUse() != 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("other request: budget in use %d", p.Budget.InUse())
+		}
 	}
 }
 
