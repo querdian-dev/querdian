@@ -68,7 +68,6 @@ claim_work_dir
 # manifests/spoke-collector.yaml): the first spoke claims the hub, each other spoke claims the first.
 claim_of() { if [ "$1" = "${SPOKES[0]}" ]; then echo "$HUB_NAME"; else echo "${SPOKES[0]}"; fi; }
 team_of() { echo "team-${1#spoke-}"; } # spoke-a -> team-a
-spoke_index() { local i=0 s; for s in "${SPOKES[@]}"; do i=$((i + 1)); [ "$s" = "$1" ] && echo "$i"; done; }
 nodeport() { k -n "$1" get svc "$2" -o jsonpath="{.spec.ports[?(@.name==\"$3\")].nodePort}"; }
 # agent_rejected: the agent of the spoke logged the rejection of a sync because the spoke is suspended.
 agent_rejected() { ks "$1" -n querdian logs deploy/querdian-agent 2>/dev/null | grep -q 'the SpokeCluster is suspended'; }

@@ -552,6 +552,34 @@ func keysOf(m map[string]object) []string {
 	return out
 }
 
+// up.sh assigns `i=$(spoke_index "$s")` under set -e, so the function must return 0 for each spoke, not
+// only for the last one. shell() runs the snippet under set -euo pipefail, so a non-zero status fails the
+// test there.
+func TestSpokeIndex(t *testing.T) {
+	ss := spokes(t)
+	if len(ss) < 2 {
+		t.Fatalf("SPOKES = %v, want at least two spokes for this test", ss)
+	}
+	out := shell(t, `for s in "${SPOKES[@]}"; do i=$(spoke_index "$s"); echo "$s=$i"; done`)
+	var want strings.Builder
+	for i, s := range ss {
+		fmt.Fprintf(&want, "%s=%d\n", s, i+1)
+	}
+	if out != want.String() {
+		t.Errorf("spoke_index output = %q, want %q", out, want.String())
+	}
+	if got := shell(t, `if spoke_index spoke-unknown; then echo found; else echo missing; fi`); got != "missing\n" {
+		t.Errorf("spoke_index of an unknown spoke: %q, want %q", got, "missing\n")
+	}
+}
+
+// up.sh calls pf_stop under set -e. A port-forward that stopped before pf_stop must not stop the script.
+func TestPfStopIgnoresAStoppedProcess(t *testing.T) {
+	if got := shell(t, `sleep 0 & PF_PIDS+=($!); wait $!; pf_stop; echo "stopped ${#PF_PIDS[@]}"`); got != "stopped 0\n" {
+		t.Errorf("pf_stop with a stopped process: %q, want %q", got, "stopped 0\n")
+	}
+}
+
 func TestHubRelease(t *testing.T) {
 	cfg, objs := hubConfig(t)
 	if cfg.Multicluster == nil || cfg.Multicluster.HubCluster != hubName(t) {
