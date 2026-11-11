@@ -166,7 +166,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   `merge_budget_exhausted`. After the merge, the budget holds only the merged response, and the proxy
   writes it with a deadline. The Helm chart gives the container memory limit to Querdian
   (`QUERDIAN_MEMORY_LIMIT`), and Querdian sets the Go memory limit to 90 percent of it, unless
-  `GOMEMLIMIT` is set. See [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
+  `GOMEMLIMIT` is set. The default memory limit of the proxy in the Helm chart is now 768Mi (was
+  512Mi). See [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
 * **Upstream spans recorded the rewritten query by default**
   ([GHSA-c2rh-rmcg-357j](https://github.com/querdian-dev/querdian/security/advisories/GHSA-c2rh-rmcg-357j)). Affects 0.1.2 and earlier.
   The `upstream` client spans now record `url.full` with scheme, host and path only; the query string

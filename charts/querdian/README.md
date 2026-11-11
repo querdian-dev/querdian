@@ -60,7 +60,7 @@ The defaults for `config` are examples. **You must set `config.auth` and `config
 | `tracing.trustInboundContext` | `false` | Use the trace context of the client as the parent of the server span. When `false`, the server span starts a new trace and links the trace context of the client. Set it only when all clients are trusted. |
 | `tracing.serviceName`, `tracing.exporter`, `tracing.otlp.endpoint`, `tracing.otlp.protocol`, `tracing.sampler`, `tracing.samplerArg` | see values.yaml | Mapped to `OTEL_SERVICE_NAME`, `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`. Empty values are not set. Tracing stays off without exporter/endpoint. |
 | `tracing.resourceAttributes` | `{}` | Extra `OTEL_RESOURCE_ATTRIBUTES`. `k8s.pod.name`, `k8s.namespace.name`, `k8s.node.name` (Downward API) and `service.version` are always set. |
-| `resources` | 100m / 128Mi req, 512Mi mem limit | Container resources. |
+| `resources` | 100m / 128Mi req, 768Mi mem limit | Container resources. Keep the memory limit at least 100 MiB + 6 x `config.limits.maxInflightMergeBytes`, with headroom for regex compiles (see docs/operations.md). |
 | `podSecurityContext`, `securityContext` | non-root (65532), read-only root fs, drop ALL, seccomp RuntimeDefault, no privilege escalation | A `/tmp` emptyDir is mounted. |
 | `podAntiAffinityPreset` / `affinity` | `soft` / `{}` | `soft`, `hard` or "" (host-level spreading); `affinity` replaces the preset. |
 | `topologySpreadConstraints`, `nodeSelector`, `tolerations`, `priorityClassName` | empty | Scheduling. |

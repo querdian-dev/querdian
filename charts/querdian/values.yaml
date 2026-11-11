@@ -165,7 +165,9 @@ resources:
     cpu: 100m
     memory: 128Mi
   limits:
-    memory: 512Mi
+    # 768Mi: one maximal fan-out (about 6 x maxInflightMergeBytes) plus the regex compiles of a request
+    # and the process baseline. See docs/operations.md, memory sizing.
+    memory: 768Mi
 
 probes:
   liveness:

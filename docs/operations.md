@@ -208,8 +208,9 @@ snapshot keeps being used (see [Upgrade and failure behaviour](#upgrade-and-fail
   (the capacity doubles below 1 MiB and grows by a quarter above it), and the merge step decodes
   the bodies. Measured with Loki log queries of 16 branches and short lines, the merge needs about
   5 x the body bytes, and about 6 x with redaction. Thus set the memory limit of the pod to at
-  least 100 MiB + 6 x `maxInflightMergeBytes`. The chart default (512 MiB, with `maxMergeBytes`
-  and `maxInflightMergeBytes` at 64 MiB) is at this limit. The chart gives the container memory
+  least 100 MiB + 6 x `maxInflightMergeBytes`. The chart default of 768 MiB (with `maxMergeBytes`
+  and `maxInflightMergeBytes` at 64 MiB) is above this limit and keeps headroom for the regex
+  compiles of a request. The chart gives the container memory
   limit to Querdian (`QUERDIAN_MEMORY_LIMIT`, in bytes), and Querdian sets the Go memory limit to
   90 percent of it, unless `GOMEMLIMIT` is set. An empty value or `0` sets no Go memory limit; a
   value that is not a number of bytes stops the start. If you raise `maxMergeBytes` or

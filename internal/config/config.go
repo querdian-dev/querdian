@@ -244,7 +244,7 @@ func (c *Config) applyDefaults() {
 		c.Limits.MaxMergeBytes = DefaultMaxMergeBytes
 	}
 	// The default is one maximal fan-out at a time: the merge of a fan-out needs about five times the bytes of
-	// its bodies, so with the defaults (64 MiB) it fits the 512 MiB memory limit of the Helm chart.
+	// its bodies, so with the defaults (64 MiB) it fits the 768 MiB memory limit of the Helm chart.
 	if c.Limits.MaxInflightMergeBytes == 0 {
 		c.Limits.MaxInflightMergeBytes = c.Limits.MaxMergeBytes
 	}
