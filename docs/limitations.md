@@ -57,6 +57,9 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
   `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
 * Fan-out bodies are limited per request (`limits.maxMergeBytes`, counted while the branches read)
   and for all requests together (`limits.maxInflightMergeBytes`, default one `maxMergeBytes`).
+  The merged response of a fan-out has the same limit: if it is larger than `maxMergeBytes`, the
+  request fails with `502 merge_too_large`, also when each body was under the limit. Earlier versions
+  did not limit the merged response.
   When the process-wide budget is full, only the oldest fan-out that still reads waits for space;
   each other fan-out fails with `503 merge_budget_exhausted` and the client must try again. With the
   default, two large fan-outs at the same time thus give one `503`. The budget counts body bytes

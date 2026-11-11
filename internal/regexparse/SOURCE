@@ -1,5 +1,5 @@
 Copied from the Go standard library, package regexp/syntax (BSD-3-Clause, see LICENSE in this directory)
-version: go1.27.3
+version: go1.27.3 (src/regexp/syntax is the same in go1.27.4, which go.mod requires)
 files:   parse.go, regexp.go, perl_groups.go, op_string.go (src/regexp/syntax)
 
 Querdian changes (marked "Querdian" in the code):
