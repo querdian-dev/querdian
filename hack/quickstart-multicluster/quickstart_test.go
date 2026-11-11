@@ -587,6 +587,11 @@ var braceList = regexp.MustCompile(`(^|[^$])\{[^}]*,`)
 // bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)", also inside quotes: the command
 // substitution then runs once for each alternative. For a PromQL query, the matcher list becomes two
 // broken queries. The scripts must put such text into a variable first.
+//
+// This is a simple line check. It finds a brace group whose first comma comes before its first "}". It
+// does not find a "$(" later in a quoted word ("q=$(...)"), a continuation line after a "\", or a comma
+// after a nested group ({a:{b:1},c:2}). It also fails for text after the closing ")", for a comment at
+// the end of a line, and for single-quoted text; a variable is the fix there too.
 func TestNoBraceListInCommandSubstitution(t *testing.T) {
 	files, err := filepath.Glob("*.sh")
 	if err != nil {

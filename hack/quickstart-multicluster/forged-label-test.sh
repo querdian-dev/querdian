@@ -73,7 +73,8 @@ for o in "${SPOKES[@]}"; do [ "$o" = "$S" ] || CLAIMS+=("$o"); done
 CLAIMS+=("$HUB_NAME")
 NOW_NS="$(date +%s)000000000"
 attrs() { # claim [extra key=value...] -> OTLP attribute list
-  # The jq programs are in variables: bash 3.2 can do brace expansion on {a,b} inside "$(...)".
+  # The jq programs are in variables, so that TestNoBraceListInCommandSubstitution passes. bash 3.2 does
+  # brace expansion on {a,b} inside "$(...)" in some forms (see up.sh, migration step 2).
   local c="$1" kv out
   local base='[{key:"cluster",value:{stringValue:$c}},{key:"k8s.cluster.name",value:{stringValue:$c}}]'
   local add='. + [{key:$k,value:{stringValue:$v}}]'
