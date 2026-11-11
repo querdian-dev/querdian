@@ -73,6 +73,7 @@ limits:
   maxQueryRegexWeight: 32768
   maxRequestRegexWeight: 131072
   maxMergeBytes: 67108864
+  maxInflightMergeBytes: 67108864
   upstreamTimeout: 5m
 ```
 
@@ -211,8 +212,11 @@ snapshot keeps being used (see [Upgrade and failure behaviour](#upgrade-and-fail
   and `maxInflightMergeBytes` at 64 MiB) is at this limit. The chart gives the container memory
   limit to Querdian (`QUERDIAN_MEMORY_LIMIT`, in bytes), and Querdian sets the Go memory limit to
   90 percent of it, unless `GOMEMLIMIT` is set. An empty value or `0` sets no Go memory limit; a
-  value that is not a number of bytes stops the start. If you raise `maxMergeBytes` or `maxInflightMergeBytes`, raise
-  the memory limit by 6 x the difference. Watch
+  value that is not a number of bytes stops the start. If you raise `maxMergeBytes` or
+  `maxInflightMergeBytes`, raise the memory limit by 6 x the difference. This rule does not include
+  the regex compiles of a request: the regex weight limits bound them at about 256 MiB for each
+  request in the worst case (measured requests use some tens of MiB). Keep headroom for them above
+  the rule. Watch
   `querdian_requests_total{reason="merge_budget_exhausted"}`. Single-request filters (trace by ID,
   Prometheus labels/series, redaction of a single request) buffer up to their own limits outside
   this budget. There is no built-in rate limit; apply one at the ingress.

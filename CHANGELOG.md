@@ -13,6 +13,11 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Added
 
+* New settings of the security fixes: `--ui-allowed-host` (`ui.allowedHosts`),
+  `--tracing.trust-inbound-context` (`tracing.trustInboundContext`), `limits.maxInflightMergeBytes`,
+  `limits.maxQueryRegexWeight`, `limits.maxRequestRegexWeight` and the environment variable
+  `QUERDIAN_MEMORY_LIMIT` (set by the Helm chart). New reasons: `PolicyTooLarge`,
+  `merge_budget_exhausted` and `write_not_bounded`. See "Security".
 * **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the
   policies of the hub and of several spoke clusters. Querdian takes the cluster of a policy from its
   origin, never from its text: each spoke policy and each hub `AccessPolicy` gets an implicit matcher
@@ -57,6 +62,20 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Changed
 
+* **Upgrade notes for the security fixes** (see "Security"):
+  * Fan-out: with the default `limits.maxInflightMergeBytes`, a second large fan-out at the same time
+    waits or gets `503 merge_budget_exhausted`. To run more large fan-outs at the same time, raise
+    `maxInflightMergeBytes` and the memory limit of the pod together (see the memory sizing in
+    [docs/operations.md](docs/operations.md#scaling)). A merged response is written with a deadline of
+    10 seconds plus 1 second for each MiB, at most 2 minutes, so a client that reads more slowly fails.
+  * Dashboard: behind an Ingress or a proxy with its own host name, the dashboard gives
+    `403 host not allowed` until you add the host with `ui.allowedHosts` (`--ui-allowed-host`). A
+    port-forward and the quickstarts need no change.
+  * LogQL: while labels are denied or redacted, `line_format` and `label_format` templates with `.`,
+    variables, chained fields, `index`, `slice`, `call`, `range`, `with`, `define` or a control
+    character get `403 denied_label`. Use a field with one name, for example `{{ .app }}`.
+  * Tracing: client traces no longer continue into the server span; they are linked. Set
+    `--tracing.trust-inbound-context` (`tracing.trustInboundContext`) only for trusted clients.
 * **Breaking: size limits for policies and requests** (see "Security"). The CRDs reject policies over a
   limit. Before the upgrade, find the policies that are too large, because the compiler disables such a
   policy as a whole. After the upgrade, check the `Ready` condition of your policies
@@ -91,11 +110,21 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Security
 
+* **LogQL templates could print denied and redacted labels**
+  ([GHSA-g593-w5rf-53qv](https://github.com/querdian-dev/querdian/security/advisories/GHSA-g593-w5rf-53qv)). Affects 0.1.2 and earlier.
+  The check of `line_format` and `label_format` templates was a text scan, and some templates could
+  pass it and print all labels, including labels in `labels.deny` and `labels.redact`. Querdian now
+  parses each template with Go's `text/template/parse` and accepts only an allow-list of template nodes
+  and functions while labels are denied. A template that does not parse, that has a `define` action, or
+  that has a control character other than tab and newline is rejected. Literal text in a template is no
+  longer compared with denied names. See
+  [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
 * **Large policies could exhaust the CPU and memory of the proxy**
   ([GHSA-72w7-fm25-mxhm](https://github.com/querdian-dev/querdian/security/advisories/GHSA-72w7-fm25-mxhm)).
   Policy lists and strings had no size limits, and the work for each request grew faster than the
   policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
-  make the shared proxy slow or stop it. Now:
+  make the shared proxy slow or stop it. A client query with a large regex could do the same. Affects
+  0.1.2 and earlier. Now:
   * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
     `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
     value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
@@ -127,40 +156,32 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
     with the square of the input in the normal case.
 
   See the upgrade notes under "Changed".
-* **Upstream spans no longer record query text by default** (GHSA-c2rh-rmcg-357j). The `upstream` client spans now record
-  `url.full` with scheme, host and path only. The query string is recorded only with
-  `--tracing.record-queries`.
-* **The trace context of a client is no longer the parent of the server span.** The server span starts
-  a new trace and has a span link to the trace context of the client, so a client cannot select the
-  trace ID or force sampling. The new flag `--tracing.trust-inbound-context` (Helm:
-  `tracing.trustInboundContext`, default `false`) restores the old behaviour for trusted clients.
-* Fan-out: the limit `limits.maxMergeBytes` now applies to all branches of a request together while
-  they read. Before, the limit did not hold for parallel branches, so one request could use much
-  more memory than documented (GHSA-hh8g-744m-9r98, affects 0.1.2 and earlier). Each branch
-  now counts each chunk before it keeps it, and the read stops at the first chunk above the limit.
-* New limit `limits.maxInflightMergeBytes` (default `maxMergeBytes`, 64 MiB) for the buffered
-  fan-out bodies of all concurrent requests of a replica. When it is full, the oldest fan-out that
-  still reads waits for space, and each other fan-out fails with `503 unavailable`, `Retry-After`
-  and the reason `merge_budget_exhausted`. After the merge, the budget holds only the merged
-  response, and the proxy writes it with a deadline.
-* The Helm chart gives the container memory limit to Querdian (`QUERDIAN_MEMORY_LIMIT`), and
-  Querdian sets the Go memory limit to 90 percent of it, unless `GOMEMLIMIT` is set. See
-  [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
-* **LogQL templates could print denied and redacted labels**
-  ([GHSA-g593-w5rf-53qv](https://github.com/querdian-dev/querdian/security/advisories/GHSA-g593-w5rf-53qv)).
-  Versions up to 0.1.2 checked `line_format` and `label_format` templates with a text scan, and some
-  templates could pass the scan and print all labels, including labels in `labels.deny` and
-  `labels.redact`. Querdian now parses each template with Go's `text/template/parse` and accepts
-  only an allow-list of template nodes and functions while labels are denied. A template that does
-  not parse, that has a `define` action, or that has a control character other than tab and newline
-  is rejected. Literal text in a template is no longer compared with denied names. See
-  [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
-* **The policy dashboard checks the `Host` header** (GHSA-gvjr-jcq3-jc25, versions 0.1.2 and earlier).
-  It answers only for `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and the names of the
-  new repeatable flag `--ui-allowed-host` (Helm: `ui.allowedHosts`), with any port. Other hosts get 403,
-  for the API and the static files, in all authentication modes. A request with a method other than `GET`
-  must also not come from a different origin. A port-forward and the quickstarts need no change. Behind
-  an Ingress, add its host name. See [docs/dashboard.md](docs/dashboard.md#allowed-hosts).
+* **One fan-out request could use much more memory than its limit**
+  ([GHSA-hh8g-744m-9r98](https://github.com/querdian-dev/querdian/security/advisories/GHSA-hh8g-744m-9r98)). Affects 0.1.2 and earlier.
+  `limits.maxMergeBytes` did not hold for parallel branches. Now each branch counts each chunk before it
+  keeps it, and the read stops at the first chunk above the limit for all branches together. The new
+  limit `limits.maxInflightMergeBytes` (default `maxMergeBytes`, 64 MiB) bounds the buffered fan-out
+  bodies of all concurrent requests of a replica; when it is full, the oldest fan-out that still reads
+  waits for space, and each other fan-out fails with `503 unavailable`, `Retry-After` and the reason
+  `merge_budget_exhausted`. After the merge, the budget holds only the merged response, and the proxy
+  writes it with a deadline. The Helm chart gives the container memory limit to Querdian
+  (`QUERDIAN_MEMORY_LIMIT`), and Querdian sets the Go memory limit to 90 percent of it, unless
+  `GOMEMLIMIT` is set. See [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
+* **Upstream spans recorded the rewritten query by default**
+  ([GHSA-c2rh-rmcg-357j](https://github.com/querdian-dev/querdian/security/advisories/GHSA-c2rh-rmcg-357j)). Affects 0.1.2 and earlier.
+  The `upstream` client spans now record `url.full` with scheme, host and path only; the query string
+  is recorded only with `--tracing.record-queries`. The trace context of a client is no longer the
+  parent of the server span: the server span starts a new trace and has a span link to the trace
+  context of the client, so a client cannot select the trace ID or force sampling. The new flag
+  `--tracing.trust-inbound-context` (Helm: `tracing.trustInboundContext`, default `false`) restores
+  the old behaviour for trusted clients.
+* **The policy dashboard did not check the `Host` header**
+  ([GHSA-gvjr-jcq3-jc25](https://github.com/querdian-dev/querdian/security/advisories/GHSA-gvjr-jcq3-jc25)). Affects 0.1.2 and earlier.
+  The dashboard now answers only for `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and
+  the names of the new repeatable flag `--ui-allowed-host` (Helm: `ui.allowedHosts`), with any port.
+  Other hosts get 403, for the API and the static files, in all authentication modes. A request with a
+  method other than `GET` must also not come from a different origin. See
+  [docs/dashboard.md](docs/dashboard.md#allowed-hosts).
 
 ### Documentation
 
