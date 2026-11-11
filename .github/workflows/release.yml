@@ -71,7 +71,7 @@ jobs:
         id: goreleaser
         with:
           distribution: goreleaser
-          version: v2.20.0
+          version: v2.20.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
