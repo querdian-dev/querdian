@@ -87,6 +87,21 @@ func checkSpokeSource(p *v1.SpokePolicy) *compileError {
 	return nil
 }
 
+// checkSpokeSpecSize applies the size limits to the spec of a SpokePolicy. checkSpokeSource has made sure
+// that the spec of the kind is set.
+func checkSpokeSpecSize(src *v1.SpokePolicySource) *compileError {
+	var err error
+	if src.Kind == v1.SpokeClusterAccessPolicy {
+		err = CheckClusterSpecSize(src.ClusterAccessPolicy)
+	} else {
+		err = CheckSpecSize(src.AccessPolicy)
+	}
+	if err != nil {
+		return fail(ReasonPolicyTooLarge, "%v", err)
+	}
+	return nil
+}
+
 // compileSpokePolicy compiles one SpokePolicy (PLAN §18.3). It returns the subjects of the policy with its
 // rules. Each rule carries the implicit cluster matcher of its spoke and has Origin set.
 func compileSpokePolicy(cfg *config.Config, spokes map[string]*spokeEntry, p *v1.SpokePolicy) ([]*CompiledRule, v1.Subjects, *compileError) {
@@ -94,6 +109,9 @@ func compileSpokePolicy(cfg *config.Config, spokes map[string]*spokeEntry, p *v1
 		return nil, v1.Subjects{}, fail(ReasonMulticlusterDisabled, "the static config has no multicluster block, so spoke policies grant nothing")
 	}
 	if err := checkSpokeSource(p); err != nil {
+		return nil, v1.Subjects{}, err
+	}
+	if err := checkSpokeSpecSize(&p.Spec.SpokePolicySource); err != nil {
 		return nil, v1.Subjects{}, err
 	}
 	o, sc, err := spokeOrigin(cfg, spokes, p.Spec.Cluster)

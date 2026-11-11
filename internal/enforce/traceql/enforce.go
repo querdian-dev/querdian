@@ -155,6 +155,15 @@ func (e enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values,
 		if err != nil {
 			return enforce.Plan{}, err
 		}
+		if !all {
+			filters := 1
+			if parsed != nil {
+				filters = len(parsed.Filters)
+			}
+			if err := enforce.CheckRequest(filters, 0, eff); err != nil { // the proxy compiles no client regex
+				return enforce.Plan{}, err
+			}
+		}
 		if !all && (ep.Template == tmplTags || ep.Template == tmplTagValues) {
 			return planTagLookup(ep.Param, out, parsed, eff)
 		}

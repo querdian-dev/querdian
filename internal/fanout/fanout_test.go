@@ -37,7 +37,7 @@ func TestRunOrderAndAcceptHeader(t *testing.T) {
 	for _, r := range rs {
 		r.Header.Set("Accept", "text/plain")
 	}
-	out, err := Run(context.Background(), srv.Client(), rs, Options{MaxParallel: 5, MaxBytes: 1 << 20})
+	out, _, err := Run(context.Background(), srv.Client(), rs, Options{MaxParallel: 5, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestRunBoundedParallelism(t *testing.T) {
 		cur.Add(-1)
 	}))
 	defer srv.Close()
-	if _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 8), Options{MaxParallel: 2, MaxBytes: 1 << 20}); err != nil {
+	if _, _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 8), Options{MaxParallel: 2, MaxBytes: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
 	if got := peak.Load(); got > 2 || got < 1 {
@@ -88,7 +88,7 @@ func TestRunOneFailureCancelsOthers(t *testing.T) {
 	}))
 	defer srv.Close()
 	rs := reqs(t, srv.URL, 2)
-	_, err := Run(context.Background(), srv.Client(), rs, Options{MaxParallel: 2, MaxBytes: 1 << 20})
+	_, _, err := Run(context.Background(), srv.Client(), rs, Options{MaxParallel: 2, MaxBytes: 1 << 20})
 	var ue *UpstreamError
 	if !errors.As(err, &ue) || ue.Status != http.StatusBadRequest || !strings.Contains(ue.Detail, "boom") {
 		t.Fatalf("want UpstreamError 400, got %v", err)
@@ -105,7 +105,7 @@ func TestRunTransportErrorDoesNotLeakURL(t *testing.T) {
 	url := srv.URL
 	srv.Close() // connection refused
 	r, _ := http.NewRequest(http.MethodGet, url+"/secret-path?token=1", nil)
-	_, err := Run(context.Background(), http.DefaultClient, []*http.Request{r}, Options{MaxParallel: 1, MaxBytes: 10})
+	_, _, err := Run(context.Background(), http.DefaultClient, []*http.Request{r}, Options{MaxParallel: 1, MaxBytes: 10})
 	var ue *UpstreamError
 	if !errors.As(err, &ue) || strings.Contains(ue.Error(), "secret-path") || strings.Contains(ue.Error(), "token") {
 		t.Fatalf("error leaks request URL or is wrong type: %v", err)
@@ -117,15 +117,15 @@ func TestRunByteCap(t *testing.T) {
 		_, _ = w.Write([]byte(strings.Repeat("x", 600))) //nolint:gosec // test data
 	}))
 	defer srv.Close()
-	_, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 2), Options{MaxParallel: 1, MaxBytes: 1000})
+	_, _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 2), Options{MaxParallel: 1, MaxBytes: 1000})
 	if !errors.Is(err, ErrMergeTooLarge) {
 		t.Fatalf("want ErrMergeTooLarge, got %v", err)
 	}
 	// A single body over the cap fails too, and exactly at the cap passes.
-	if _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 1), Options{MaxParallel: 1, MaxBytes: 599}); !errors.Is(err, ErrMergeTooLarge) {
+	if _, _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 1), Options{MaxParallel: 1, MaxBytes: 599}); !errors.Is(err, ErrMergeTooLarge) {
 		t.Fatalf("single body over cap: %v", err)
 	}
-	if _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 1), Options{MaxParallel: 1, MaxBytes: 600}); err != nil {
+	if _, _, err := Run(context.Background(), srv.Client(), reqs(t, srv.URL, 1), Options{MaxParallel: 1, MaxBytes: 600}); err != nil {
 		t.Fatalf("exactly at cap must pass: %v", err)
 	}
 }
@@ -137,7 +137,7 @@ func TestRunParentCancel(t *testing.T) {
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := Run(ctx, srv.Client(), reqs(t, srv.URL, 3), Options{MaxParallel: 1, MaxBytes: 10})
+	_, _, err := Run(ctx, srv.Client(), reqs(t, srv.URL, 3), Options{MaxParallel: 1, MaxBytes: 10})
 	if err == nil {
 		t.Fatal("want error on parent cancel")
 	}

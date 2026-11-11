@@ -41,6 +41,11 @@ type Query struct {
 	// RangeAggs lists every range aggregation in source order (outer before
 	// inner).
 	RangeAggs []*RangeAgg
+	// RegexWeight is the sum of the program sizes of the regular expressions
+	// that the parser compiled (see [ParseWithRegexLimit]).
+	RegexWeight int
+	// RegexBytes is the sum of the bytes of these regular expressions.
+	RegexBytes int
 }
 
 // String renders the canonical form of the query. Comments and redundant

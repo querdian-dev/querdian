@@ -8,3 +8,8 @@ internal/tempopb/LICENSE_APACHE2 for the licence.
 
 The policy dashboard in internal/ui/web embeds the fonts Archivo and JetBrains Mono, licensed under the
 SIL Open Font License 1.1; the licence texts are next to the fonts in internal/ui/web/fonts.
+
+internal/regexparse is a copy of the parser of the Go package regexp/syntax, Copyright 2009 The Go Authors,
+licensed under the BSD 3-Clause License, with a work budget added by Querdian. See
+internal/regexparse/SOURCE for the Go version and the changes, and internal/regexparse/LICENSE for the
+licence.

@@ -13,6 +13,11 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Added
 
+* New settings of the security fixes: `--ui-allowed-host` (`ui.allowedHosts`),
+  `--tracing.trust-inbound-context` (`tracing.trustInboundContext`), `limits.maxInflightMergeBytes`,
+  `limits.maxQueryRegexWeight`, `limits.maxRequestRegexWeight` and the environment variable
+  `QUERDIAN_MEMORY_LIMIT` (set by the Helm chart). New reasons: `PolicyTooLarge`,
+  `merge_budget_exhausted` and `write_not_bounded`. See "Security".
 * **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the
   policies of the hub and of several spoke clusters. Querdian takes the cluster of a policy from its
   origin, never from its text: each spoke policy and each hub `AccessPolicy` gets an implicit matcher
@@ -57,6 +62,43 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Changed
 
+* **Upgrade notes for the security fixes** (see "Security"):
+  * Fan-out: with the default `limits.maxInflightMergeBytes`, a second large fan-out at the same time
+    waits or gets `503 merge_budget_exhausted`. To run more large fan-outs at the same time, raise
+    `maxInflightMergeBytes` and the memory limit of the pod together (see the memory sizing in
+    [docs/operations.md](docs/operations.md#scaling)). A merged response is written with a deadline of
+    10 seconds plus 1 second for each MiB, at most 2 minutes, so a client that reads more slowly fails.
+  * Dashboard: behind an Ingress or a proxy with its own host name, the dashboard gives
+    `403 host not allowed` until you add the host with `ui.allowedHosts` (`--ui-allowed-host`). A
+    port-forward and the quickstarts need no change.
+  * LogQL: while labels are denied or redacted, `line_format` and `label_format` templates with `.`,
+    variables, chained fields, `index`, `slice`, `call`, `range`, `with`, `define` or a control
+    character get `403 denied_label`. Use a field with one name, for example `{{ .app }}`.
+  * Tracing: client traces no longer continue into the server span; they are linked. Set
+    `--tracing.trust-inbound-context` (`tracing.trustInboundContext`) only for trusted clients.
+* **Breaking: size limits for policies and requests** (see "Security"). The CRDs reject policies over a
+  limit. Before the upgrade, find the policies that are too large, because the compiler disables such a
+  policy as a whole. After the upgrade, check the `Ready` condition of your policies
+  (`kubectl get cap,ap`); split a policy that is now `PolicyTooLarge` into smaller policies. Users with
+  very large merged policies, or queries with many selectors on such policies, can get
+  `403 policy_too_complex` or `403 query_too_complex`. For `query_too_complex` from these limits, split
+  the query into queries with fewer selectors, use shorter regexes in the query, or make the policy
+  smaller; `maxFanout` has no effect on them. Character classes cost more when they are wide: a negated
+  class (`[^/]`), a large Unicode class (`\pL`), or a case-insensitive class with wide ranges. Use
+  narrow classes, for example `[a-z0-9-]` in place of `[^/]`, and keep `(?i)` for literals and small
+  classes. A regex that does not parse now gives `400 bad_data` before the query is parsed.
+* The 8 KiB byte limit of a regex also applies to literal lists. A Grafana "All" value of a variable
+  with many values (about 400 or more namespaces, joined with `|`) gives `403 query_too_complex`: set a
+  custom all value such as `.*` for the variable. A policy regex over 8 KiB gives `PolicyTooLarge`: split
+  the list into more rules, each with a part of the list. Do not split it into more matchers of one
+  rule, because the matchers of a rule are ANDed.
+* With the `multicluster` block, the receiver rejects the whole sync of a spoke (`400`, message
+  `invalid policy: ...` with the field over the limit) when one of its policies is over a limit. The
+  spoke then keeps its last accepted state, and its grants expire after `maxStaleness`. The agent logs
+  `agent: the receiver rejected the sync` with `status=400`, `querdian_agent_syncs_total{result="error"}`
+  increases, and
+  `querdian_agent_last_sync_timestamp_seconds` stops. Make the policy in the spoke smaller. See
+  [docs/multicluster.md](docs/multicluster.md#time-limit-and-outages).
 * A `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers is now `InvalidMatcher` in
   the compiler too, not only in the CRD validation. This affects only objects stored without the
   CRD's CEL rule.
@@ -65,6 +107,78 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   of its `SpokeCluster`, so a change of `SpokeCluster.spec` never applies late.
 * The snapshot rebuild debounce has a maximum wait of 8 intervals (2 seconds by default) under a
   steady stream of events, and a failed rebuild runs again after one second.
+
+### Security
+
+* **Go 1.27.4.** The binary and the images are built with Go 1.27.4, which fixes the `net/http`
+  vulnerability GO-2026-6859 of Go 1.27.3.
+* **LogQL templates could print denied and redacted labels**. Affects 0.1.2 and earlier.
+  The check of `line_format` and `label_format` templates was a text scan, and some templates could
+  pass it and print all labels, including labels in `labels.deny` and `labels.redact`. Querdian now
+  parses each template with Go's `text/template/parse` and accepts only an allow-list of template nodes
+  and functions while labels are denied. A template that does not parse, that has a `define` action, or
+  that has a control character other than tab and newline is rejected. Literal text in a template is no
+  longer compared with denied names. See
+  [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
+* **Large policies could exhaust the CPU and memory of the proxy**. Affects 0.1.2 and earlier.
+  Policy lists and strings had no size limits, and the work for each request grew faster than the
+  policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
+  make the shared proxy slow or stop it. A client query with a large regex could do the same. Now:
+  * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
+    `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
+    value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
+    limits, also to objects stored before this release: such a policy grants nothing and gets the new
+    status reason `PolicyTooLarge`. The receiver rejects spoke policies over a limit.
+  * The cost of a regex compile grows with the size of the compiled program, not with the length of the
+    regex, and with the rune ranges and the width of its character classes and with case folding of
+    wide ranges. Querdian now
+    measures this cost without a compile (the weight). A regex matcher of a policy can have a weight of
+    at most 16384, and the regexes of one policy together at most 32768
+    (`PolicyTooLarge`). The CRD cannot express these two limits; the compiler and the receiver apply
+    them.
+  * Each request checks the size of its matched rules before the simplification (at most 4096 terms,
+    32768 matchers and 1 MiB of matcher text), the simplification has a fixed budget of steps, and
+    the simplified policy can have a weight of at most 32768. A request over one of these limits gets
+    `403 policy_too_complex`.
+  * The regexes that the proxy compiles for one request have a weight of at most 131072: the client
+    regexes, compiled again for each term of the policy, and the policy, compiled again for each
+    selector. The regexes of a client query can have a weight of at most 32768 (PromQL and LogQL). The
+    proxy checks both before it compiles a regex. The new settings `limits.maxRequestRegexWeight` and
+    `limits.maxQueryRegexWeight` change these limits (at most 262144; Helm: `config.limits`). A client
+    regex can have at most 8 KiB and the client regexes of a query 32 KiB together, and a policy regex
+    value at most 8 KiB.
+  * The weight comes from a parse with a work budget (a copy of the Go regexp parser with a work
+    counter, `internal/regexparse`), which stops as soon as the work is over the limit. A regex that
+    does not parse gives `400 bad_data` before any compile. A request over one of these limits
+    gets `403 query_too_complex`.
+  * The simplification and the cross-tenant check of the snapshot rebuild no longer do work that grows
+    with the square of the input in the normal case.
+
+  See the upgrade notes under "Changed".
+* **One fan-out request could use much more memory than its limit**. Affects 0.1.2 and earlier.
+  `limits.maxMergeBytes` did not hold for parallel branches. Now each branch counts each chunk before it
+  keeps it, and the read stops at the first chunk above the limit for all branches together. The new
+  limit `limits.maxInflightMergeBytes` (default `maxMergeBytes`, 64 MiB) bounds the buffered fan-out
+  bodies of all concurrent requests of a replica; when it is full, the oldest fan-out that still reads
+  waits for space, and each other fan-out fails with `503 unavailable`, `Retry-After` and the reason
+  `merge_budget_exhausted`. After the merge, the budget holds only the merged response, and the proxy
+  writes it with a deadline. The Helm chart gives the container memory limit to Querdian
+  (`QUERDIAN_MEMORY_LIMIT`), and Querdian sets the Go memory limit to 90 percent of it, unless
+  `GOMEMLIMIT` is set. The default memory limit of the proxy in the Helm chart is now 768Mi (was
+  512Mi). See [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
+* **Upstream spans recorded the rewritten query by default**. Affects 0.1.2 and earlier.
+  The `upstream` client spans now record `url.full` with scheme, host and path only; the query string
+  is recorded only with `--tracing.record-queries`. The trace context of a client is no longer the
+  parent of the server span: the server span starts a new trace and has a span link to the trace
+  context of the client, so a client cannot select the trace ID or force sampling. The new flag
+  `--tracing.trust-inbound-context` (Helm: `tracing.trustInboundContext`, default `false`) restores
+  the old behaviour for trusted clients.
+* **The policy dashboard did not check the `Host` header**. Affects 0.1.2 and earlier.
+  The dashboard now answers only for `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and
+  the names of the new repeatable flag `--ui-allowed-host` (Helm: `ui.allowedHosts`), with any port.
+  Other hosts get 403, for the API and the static files, in all authentication modes. A request with a
+  method other than `GET` must also not come from a different origin. See
+  [docs/dashboard.md](docs/dashboard.md#allowed-hosts).
 
 ### Documentation
 

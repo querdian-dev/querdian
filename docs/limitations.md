@@ -55,6 +55,15 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
   streaming in the Grafana Tempo data source.
 * The proxy does not rate limit or queue requests (see [operations.md](operations.md#scaling)). Only
   `querdian receiver` in a multi-cluster setup limits the requests of each agent identity.
+* Fan-out bodies are limited per request (`limits.maxMergeBytes`, counted while the branches read)
+  and for all requests together (`limits.maxInflightMergeBytes`, default one `maxMergeBytes`).
+  When the process-wide budget is full, only the oldest fan-out that still reads waits for space;
+  each other fan-out fails with `503 merge_budget_exhausted` and the client must try again. With the
+  default, two large fan-outs at the same time thus give one `503`. The budget counts body bytes
+  only: buffer growth, the merge step, the response filters and the trace-by-ID buffer use more
+  memory that it does not count (see [operations.md](operations.md#scaling)). A merged response
+  is written with a deadline; a client that reads more slowly than about 1 MiB/s does not get the
+  complete response.
 * The proxy does not terminate TLS and does not authenticate to backends other than by setting the
   tenant header. Backends must be isolated at network level. The only Querdian component that
   terminates TLS is `querdian receiver` in a [multi-cluster](multicluster.md) setup: it requires an
@@ -307,17 +316,22 @@ an attribute from the policy checks.
 ### Denied-label scan false positives
 
 The PromQL check works on the syntax tree and has no false positives. The LogQL check is a token
-and string scan and over-rejects deliberately:
+scan plus a template check, and over-rejects deliberately:
 
 * A denied name is matched against every identifier **and keyword** token, wherever it appears in
   the query. A label that is named like a keyword or function (`json`, `count`, `rate`, `level` in
   an unrelated clause) will block legitimate uses of that word; avoid such label names.
-* `line_format` and `label_format` template strings are rejected when they contain the denied name
-  as a **substring**: with `app` denied, `| line_format "{{.application}}"` or a literal text such
-  as `"appointment"` is rejected.
-* Templates that can read all labels without naming them (`{{ . }}`, `range`, `with`, `template`,
-  `block`, `define`, `$` variables) are rejected as soon as any label is denied, even if the denied
-  label is irrelevant to the query. Plain field access (`{{ .app }}`) stays allowed.
+* Each `line_format` and `label_format` template is parsed with Go's `text/template/parse`, and
+  every node must be in an allow-list. A template that does not parse is rejected. A template
+  with a control character other than tab and newline (for example CR) or with invalid UTF-8 is
+  also rejected, because Loki can decode these characters in a different way. The allow-list
+  holds text, actions, pipelines without variables, `if`/`else`, constants, fields with one name
+  (`{{ .app }}`) that is not denied, and the Go and Loki template functions that cannot take or
+  build a label name. A field that names a denied label is rejected. All other nodes are rejected
+  as soon as any label is denied, even if the denied label is irrelevant to the query: `.`, `$`
+  variables, chained fields (`{{ .a.b }}`), `range`, `with`, `template`, `block`, `define`, and the
+  functions `index`, `slice`, `call` and functions that are not known. Literal text and string
+  constants are not compared with denied names.
 * The `dst` and `src` string arguments of `label_replace` are compared with denied names; the regex
   and replacement are not.
 * TraceQL: a denied scoped name denies the unscoped `.x` form and vice versa, and denied tag lists
@@ -350,6 +364,36 @@ disjoint are not detected, so such results are marked approximate although they 
 * An invalid or unknown-backend policy grants nothing; there is no partial application.
 * Policy compilation uses namespace labels only for `policy.querdian.dev/tenant`; changing the
   `namespaceLabel` of a backend needs a restart.
+* Policies have fixed size limits (for example 64 rules, 64 matchers for each rule, 16384 characters
+  for each matcher value; the full list is in [policy-guide.md](policy-guide.md#size-limits)). A policy
+  over a limit grants nothing (`PolicyTooLarge`). The limits are not configurable.
+* Regex limits use the weight: The weight of a regex comes from a parse with a work budget, before any compile: the number of instructions of its compiled program (`a{1000}` has 1000), plus the rune ranges of each character class, counted again for each repetition (`\pL` has about 700), plus the work of the parser divided by 32 (for example the case folding of a wide range in a `(?i)` class, rune by rune), plus, for regexes that the Prometheus matcher can get, the runes of each character class in the case-folding range of Unicode divided by 64 (`[^/]+` has a weight of about 1970, `\pL+` about 1820). The weight of an `Equal` or `NotEqual` value is its length plus one. A compile in Go and in the Prometheus matcher together takes at most about 256 KiB plus 2 KiB, and 2 ms plus 2 microseconds, for each unit of weight (measured: at most about 900 bytes and 0.9 microseconds for each unit, also for regexes whose branches the parser compares again at each level of nested groups; such regexes now measure at most about 0.3 microseconds for each unit). A regex matcher of a policy can have a weight of at most 16384,
+  and the regexes of one policy together at most 32768 (`PolicyTooLarge`).
+* The work for one request is limited: the matched rules can give at most 4096 terms, 32768 matchers
+  and 1 MiB of matcher text before the simplification, the simplification has a fixed budget of
+  steps, and the simplified policy can have a weight of at most 32768. A request over a limit is
+  `403 policy_too_complex`, also if the simplified policy would have had few terms. Many policies for
+  one shared group can reach these limits; for example, about 300 namespaces with names of 200
+  characters merge into a regex with a weight over 32768.
+* **Large merged policies limit the selectors of a query.** The regexes that the proxy compiles for one
+  request can have a weight of at most 131072, counted as (2 x terms + 1) x (weight of the client
+  regexes) + (2 x selectors + 1) x (weight of the policy), with the selectors (or TraceQL spanset
+  filters) of the query. A user whose policy has the largest weight can use 1 selector in one query;
+  with a policy of a tenth of that weight, about 20. A user with many terms can use fewer client regexes.
+  A query over the limit is `403 query_too_complex`; split it into queries with fewer selectors, use
+  fewer or shorter regexes, or make the policy smaller. Operators can change the limit with
+  `limits.maxRequestRegexWeight` ([operations.md](operations.md#limits)).
+* A client regex can have at most 8 KiB, and all client regexes of one query at most 32 KiB together
+  (`403 query_too_complex`); a policy regex value can have at most 8 KiB (`PolicyTooLarge`). These byte
+  limits are a second layer that does not depend on the work count of the regex parser. `Equal` values
+  can still have 16384 characters.
+* A client regex counts again for each term of the user's policy: with N terms, a client regex counts
+  (2 x N + 1) times in the regex weight of the request. For example, a client regex of weight 2000 under
+  a policy with 16 terms counts 66000 of the 131072.
+* The regexes of a PromQL or LogQL client query can have a weight of at most 32768 together
+  (`limits.maxQueryRegexWeight`; all
+  selectors, all `match[]` values), otherwise `403 query_too_complex`. TraceQL client regexes are not
+  compiled by the proxy, only by Tempo, so this limit does not apply to them.
 * A user's effective policy with more than `maxPolicyTerms` terms is `403 policy_too_complex`;
   the DNF simplification only merges terms that differ in one `Equal`/`RegexMatch` label and drops
   terms whose matcher set is a superset of another's, it does not reason about overlapping regexes.
@@ -412,3 +456,13 @@ These apply only with the `multicluster` block ([multicluster.md](multicluster.m
   spoke policy.
 * Group membership comes only from the token. A change in the identity provider takes effect when
   the user obtains a new token.
+
+## Tracing
+
+* Without `--tracing.record-queries`, no span records query text. The `upstream` client spans record
+  `url.full` with scheme, host and path only. With the flag, `url.full` also has the query string,
+  and for a `GET` request that is the rewritten query with the matchers of the policy.
+* Paths are always recorded. A path can hold a value from the client, for example a trace ID.
+* The server span starts a new trace and links the trace context of the client, unless
+  `--tracing.trust-inbound-context` is set. Thus a trace in the trace backend does not show the spans
+  of the client and of Querdian as one tree; follow the span link.

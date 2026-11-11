@@ -18,6 +18,7 @@ import (
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/enforce"
 	"github.com/querdian-dev/querdian/internal/policy"
+	"github.com/querdian-dev/querdian/internal/regexcost"
 	"github.com/querdian-dev/querdian/internal/routes"
 	lq "github.com/querdian-dev/querdian/pkg/logql"
 )
@@ -57,9 +58,9 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	if !params.Has(param) {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "missing %s parameter", param)
 	}
-	q, err := lq.Parse(params.Get(param))
+	q, err := parseClient(params.Get(param), enforce.QueryRegexLimit(eff), regexcost.MaxQueryRegexBytes)
 	if err != nil {
-		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "%v", err)
+		return enforce.Plan{}, err
 	}
 	label, found, err := lq.DeniedLabel(q, eff.DeniedLabels)
 	if err != nil {
@@ -78,6 +79,9 @@ func (enforcer) Plan(_ context.Context, ep routes.Endpoint, params url.Values, e
 	}
 	if len(eff.Terms) == 0 {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "effective policy has no terms")
+	}
+	if err := enforce.CheckRequest(len(q.Selectors), q.RegexWeight, eff); err != nil {
+		return enforce.Plan{}, err
 	}
 	terms := make([][]lq.InjectMatcher, len(eff.Terms))
 	for i, t := range eff.Terms {
@@ -167,6 +171,10 @@ func rewriteErr(err error) error {
 	if errors.Is(err, lq.ErrLiftUnsupported) || errors.Is(err, lq.ErrNoAnchor) {
 		return enforce.Errorf(enforce.ErrUnsupported, "%v", err)
 	}
+	if errors.Is(err, lq.ErrRegexTooLarge) {
+		// The check of the rewritten query is over its regex limit.
+		return enforce.Errorf(enforce.ErrTooComplex, "%v", err)
+	}
 	// Anything else is an internal failure of the rewriter; fail closed.
 	return enforce.Errorf(enforce.ErrUnsupported, "rewrite failed: %v", err)
 }
@@ -190,4 +198,19 @@ func convert(ms []policy.Matcher) ([]lq.InjectMatcher, error) {
 		out[i] = lq.InjectMatcher{Name: m.Name, Op: op, Value: m.Value}
 	}
 	return out, nil
+}
+
+// parseClient parses a client query. The parser compiles the regexes of the query; left is the program size
+// that they may still have (enforce.QueryRegexLimit for a single query), and bytesLeft their bytes.
+func parseClient(raw string, left, bytesLeft int) (*lq.Query, error) {
+	q, err := lq.ParseClient(raw, left, bytesLeft)
+	switch {
+	case errors.Is(err, lq.ErrRegexTooLong):
+		return nil, enforce.QueryRegexBytesError()
+	case errors.Is(err, lq.ErrRegexTooLarge):
+		return nil, enforce.QueryRegexError(left)
+	case err != nil:
+		return nil, enforce.Errorf(enforce.ErrParse, "%v", err)
+	}
+	return q, nil
 }

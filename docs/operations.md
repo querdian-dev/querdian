@@ -70,7 +70,10 @@ backends:
 limits:
   maxPolicyTerms: 16
   maxFanout: 16
+  maxQueryRegexWeight: 32768
+  maxRequestRegexWeight: 131072
   maxMergeBytes: 67108864
+  maxInflightMergeBytes: 67108864
   upstreamTimeout: 5m
 ```
 
@@ -123,7 +126,10 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 |---|---|---|
 | `maxPolicyTerms` | 16 | Maximum number of terms of a user's effective policy after simplification. |
 | `maxFanout` | 16 | Maximum number of upstream requests one client request may create, and the number run in parallel. |
-| `maxMergeBytes` | 67108864 (64 MiB) | Total size of buffered upstream bodies of one merged request; also the buffer cap of the trace-by-ID filter. |
+| `maxQueryRegexWeight` | 32768 | Maximum [weight](policy-guide.md#size-limits) of the regexes of one PromQL or LogQL client query (all selectors, all `match[]` values). It also sets the work budget of the regex parse (32 steps for each unit), which stops a costly regex before any compile. Between 1 and 262144. |
+| `maxRequestRegexWeight` | 131072 | Maximum regex weight that the proxy compiles for one request: (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight. A client regex counts again for each term of the user's policy: a client regex of weight 2000 under a policy with 16 terms counts 33 x 2000 = 66000. Between 1 and 262144. A compile allocates at most about 2 KiB for each unit, so the bound of the regex memory of one request is about 256 MiB at the default and 512 MiB at 262144; measured requests at the default use some tens of MiB. |
+| `maxMergeBytes` | 67108864 (64 MiB) | Total size of buffered upstream bodies of one merged request, for all branches together. The bytes are counted while the branches read, so the read stops when the total is above the limit. Also the buffer cap of the trace-by-ID filter. |
+| `maxInflightMergeBytes` | `maxMergeBytes` (64 MiB) | Total size of buffered fan-out bodies (and then merged responses) of all concurrent requests of one replica. Must be at least `maxMergeBytes`. When it is full, the oldest fan-out that still reads waits for space and the others fail with `503` (`merge_budget_exhausted`). See [Scaling](#scaling) for the memory sizing. |
 | `upstreamTimeout` | `5m` | Deadline of one proxied request (all of its upstream requests together). Go duration syntax. |
 
 ### Flags
@@ -136,11 +142,13 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 | `--ui-listen` | empty (off) | Read-only policy dashboard, see [dashboard.md](dashboard.md). Must differ from the other listeners. |
 | `--ui-auth` | `oidc` | `oidc` (bearer token required) or `none`. |
 | `--ui-admin-group` | empty | With `oidc`: group a token must carry. Empty: any valid token. |
+| `--ui-allowed-host` | none | Repeatable. Host name that the dashboard accepts in the `Host` header, with any port. `localhost`, `127.0.0.1`, `[::1]` and the host of `--ui-listen` are always accepted. See [dashboard.md](dashboard.md#allowed-hosts). |
 | `--leader-elect` | `true` | Leader election for the status writer. |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error`. |
 | `--log-format` | `json` | `json` or `text`. |
 | `--tracing.record-user` | `false` | Add `enduser.id` to spans and `user` to request log lines. |
-| `--tracing.record-queries` | `false` | Add the original and rewritten query to the server span. |
+| `--tracing.record-queries` | `false` | Add the original and rewritten query to the server span, and the query string to `url.full` on the `upstream` spans. |
+| `--tracing.trust-inbound-context` | `false` | Use the trace context of the client as the parent of the server span. When `false`, the server span starts a new trace and links the trace context of the client. |
 | `--version` | | Print the version and exit. |
 
 Kubernetes access uses the usual controller-runtime discovery (in-cluster service account, or
@@ -188,10 +196,31 @@ snapshot keeps being used (see [Upgrade and failure behaviour](#upgrade-and-fail
 * **Fan-out multiplies upstream load**: a log query for a user with N terms is N upstream requests,
   up to `maxFanout`. Watch `querdian_policy_terms` and `querdian_upstream_requests_total`. Prefer
   policy shapes that simplify to one term (the single-label merge helps).
-* **Memory**: streaming requests use constant memory. Merged requests buffer up to
-  `maxMergeBytes` each, so plan for `peak concurrent merged requests x maxMergeBytes`. Reduce the
-  value if you expect many concurrent fan-outs. There is no built-in rate limit or concurrency cap;
-  apply one at the ingress.
+* **Memory**: streaming requests use constant memory. A merged request buffers at most
+  `maxMergeBytes` of bodies for all its branches together; all branches together can read at most
+  32 KiB each past the limit before the request fails. All merged requests of a replica together
+  buffer at most `maxInflightMergeBytes` of bodies. When this budget is full, the oldest fan-out
+  that still reads waits for space (up to `upstreamTimeout`), and each other fan-out fails with
+  `503` and `Retry-After`; the client must try again. After the merge, the budget holds only the
+  merged response until it is written. The write has a deadline of 10 seconds plus 1 second for
+  each MiB (at most 2 minutes), so a client that does not read cannot hold the budget for longer.
+* **Memory sizing**: the budget counts body bytes only. The buffers can be larger than the bodies
+  (the capacity doubles below 1 MiB and grows by a quarter above it), and the merge step decodes
+  the bodies. Measured with Loki log queries of 16 branches and short lines, the merge needs about
+  5 x the body bytes, and about 6 x with redaction. Thus set the memory limit of the pod to at
+  least 100 MiB + 6 x `maxInflightMergeBytes`. The chart default of 768 MiB (with `maxMergeBytes`
+  and `maxInflightMergeBytes` at 64 MiB) is above this limit and keeps headroom for the regex
+  compiles of a request. The chart gives the container memory
+  limit to Querdian (`QUERDIAN_MEMORY_LIMIT`, in bytes), and Querdian sets the Go memory limit to
+  90 percent of it, unless `GOMEMLIMIT` is set. An empty value or `0` sets no Go memory limit; a
+  value that is not a number of bytes stops the start. If you raise `maxMergeBytes` or
+  `maxInflightMergeBytes`, raise the memory limit by 6 x the difference. This rule does not include
+  the regex compiles of a request: the regex weight limits bound them at about 256 MiB for each
+  request in the worst case (measured requests use some tens of MiB). Keep headroom for them above
+  the rule. Watch
+  `querdian_requests_total{reason="merge_budget_exhausted"}`. Single-request filters (trace by ID,
+  Prometheus labels/series, redaction of a single request) buffer up to their own limits outside
+  this budget. There is no built-in rate limit; apply one at the ingress.
 * The snapshot is held per replica in memory and rebuilt completely on every policy or namespace
   label change (about 250 ms after the last change). Snapshot size grows with the number of rules.
 * WebSocket tails keep one connection per client plus one per term open.
@@ -210,8 +239,14 @@ acquires the lease. With a single replica or for local runs you may use `--leade
 | Limit | Value | When exceeded | Client sees | `decision` / `reason` |
 |---|---|---|---|---|
 | `limits.maxPolicyTerms` | 16 | the user's simplified policy has more terms | `403 forbidden` | deny / `policy_too_complex` |
+| policy input (fixed) | 4096 terms, 32768 matchers, 1 MiB of matcher text, a fixed budget of simplification steps, a weight of 32768 after the simplification | the matched rules of the request are larger before the simplification, the simplification needs more steps, or the simplified policy is larger | `403 forbidden` | deny / `policy_too_complex` |
+| `limits.maxRequestRegexWeight` | weight 131072 | (2 x terms + 1) x (client regex weight) + (2 x selectors + 1) x (policy weight, see [policy-guide.md](policy-guide.md#size-limits)) is larger | `403 forbidden` | deny / `query_too_complex` |
+| client regex bytes (fixed) | 8 KiB for each regex, 32 KiB for all regexes of a query | a client regex is longer | `403 forbidden` | deny / `query_too_complex` |
+| `limits.maxQueryRegexWeight` | weight 32768 | the regexes of a PromQL or LogQL query (all `match[]` values together) are larger | `403 forbidden` | deny / `query_too_complex` |
+| policy size (fixed) | see [policy-guide.md](policy-guide.md#size-limits) | a policy has too many rules, matchers, subjects or too long strings | the CRD rejects it; a stored object grants nothing | status reason `PolicyTooLarge` |
 | `limits.maxFanout` | 16 | the plan needs more upstream requests (terms for a fan-out; also guards a plan without requests) | `403 forbidden` | deny / `query_too_complex` |
 | `limits.maxMergeBytes` | 64 MiB | buffered bodies of the fan-out exceed it; also the trace-by-ID filter body, and the Tempo search body | `502`, errorType `merge_too_large` (fan-out) or `upstream` | error / `upstream_error` |
+| `limits.maxInflightMergeBytes` | 64 MiB | buffered fan-out bodies of all concurrent requests of the replica exceed it (the oldest fan-out that still reads waits instead) | `503 unavailable` with `Retry-After` | error / `merge_budget_exhausted` |
 | `limits.upstreamTimeout` | 5m | the proxied request runs longer | `502 upstream` (or a truncated stream if headers were already sent) | error / `upstream_error` |
 | selector copies (fixed) | 2048 | PromQL or-lift: selectors x terms | `403 forbidden` | deny / `query_too_complex` |
 | `match[]` expansion (fixed) | 256 | Prometheus metadata: user selectors x terms | `403 forbidden` | deny / `query_too_complex` |
@@ -259,6 +294,10 @@ Configured exclusively through the standard `OTEL_*` environment variables
 
 * If neither an OTLP endpoint nor `OTEL_TRACES_EXPORTER` is set, spans are discarded.
 * If `OTEL_TRACES_SAMPLER` is unset the sampler is `parentbased_traceidratio` with ratio 1.0.
+* The server span does not use the trace context of the client as its parent. It starts a new trace
+  and has a span link to the trace context of the client. Thus a client cannot select the trace ID
+  and cannot force sampling. Set `--tracing.trust-inbound-context` only when all clients that
+  can reach the proxy are trusted; then the trace context of the client is the parent.
 * Propagation is fixed in code: inbound W3C `tracecontext` and `baggage`, outbound `tracecontext`
   only. `OTEL_PROPAGATORS` is ignored on purpose, so client baggage never reaches a backend.
 * Every response carries `X-Trace-Id` and every error body a `traceId`; use it to find the trace.
@@ -271,18 +310,22 @@ Span tree of one proxied request:
 | `authn.verify` | status error when authentication failed |
 | `policy.resolve` | `snapshot.generation`, `policies.matched`, `dnf.terms`, `dnf.unrestricted`, `dnf.disjoint`, `tenants.count` |
 | `enforce.rewrite` | `query.language`, `strategy` (`inject`, `or_lift`, `fanout`, `match_expand`, `passthrough`), `query.bytes_in`, `query.bytes_out` |
-| `upstream` (client span, one per upstream request) | standard HTTP client attributes |
+| `upstream` (client span, one per upstream request) | standard HTTP client attributes; `url.full` has scheme, host and path only, without the query string (see the privacy flags) |
 | `snapshot.rebuild` (root span, controller) | `querdian.trigger` (`startup`, `event`), `snapshot.generation`, `policies.total`, `policies.invalid`, `compile.duration_ms` |
 
 Privacy flags, both **off by default**:
 
 * `--tracing.record-user`: `enduser.id` on the server span and `user` in the request log line.
 * `--tracing.record-queries`: `querdian.query.original` and `querdian.query.rewritten` on the
-  server span. Queries can contain sensitive values; enable only where the trace backend has
+  server span, and the full upstream URL with the query string in `url.full` on each `upstream`
+  span. For a `GET` request, this query string holds the rewritten query with the matchers of the
+  policy. Queries can contain sensitive values; enable only where the trace backend has
   equivalent access controls. Queries are never written to the log.
 
-Without these flags no username and no query text is recorded; `querdian.policies` records the
-names of the matched policies.
+Without these flags no username and no query text is recorded: the server span records only the
+path (`url.path`), and each `upstream` span records `url.full` without the query string.
+`querdian.policies` records the names of the matched policies. Paths can contain values from the
+client, for example a trace ID or a tag name.
 
 ### Logging
 

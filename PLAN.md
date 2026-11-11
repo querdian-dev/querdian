@@ -415,6 +415,7 @@ limits:
   maxPolicyTerms: 16                # DNF size cap per request
   maxFanout: 16                     # parallel upstream requests per client request
   maxMergeBytes: 67108864           # 64 MiB cap for buffered merge responses
+  maxInflightMergeBytes: 67108864   # 64 MiB cap for buffered fan-out bodies of all requests (default maxMergeBytes)
   upstreamTimeout: 5m
 multicluster:                       # optional (§18.4); absent = single-cluster behaviour
   hubCluster: mla                   # cluster label value of hub telemetry
@@ -442,7 +443,8 @@ an error (§18.4).
 | `--log-level` | `info` | slog level |
 | `--log-format` | `json` | `json` or `text` |
 | `--tracing.record-user` | `false` | add `enduser.id` to spans |
-| `--tracing.record-queries` | `false` | add original + rewritten query to spans |
+| `--tracing.record-queries` | `false` | add original + rewritten query to spans, and the query string to `url.full` of upstream spans |
+| `--tracing.trust-inbound-context` | `false` | use the client trace context as parent of the server span (default: new trace with a link) |
 
 Tracing exporter/sampler config uses standard `OTEL_*` environment variables (§11.2).
 
@@ -502,6 +504,19 @@ No matched rule → `ErrNoGrant` → 403.
 5. **Disjointness.** Two terms are provably disjoint if they have different tenants, or both have
    an `Equal` matcher on the same label with different values. `Disjoint` = all pairs disjoint.
 6. **Cap.** `len(Terms) > maxPolicyTerms` → reject (403, reason `policy_too_complex`).
+
+Before step 1, the resolver counts the terms, matchers and bytes of matcher keys of the matched rules
+and rejects the request (403, reason `policy_too_complex`) when a count is over its fixed limit
+(`internal/policy/limits.go`). The simplification also has a fixed budget of steps, and the weight of
+its result has a fixed limit, with the same result. The weight of a regex bounds its compile cost
+(`internal/regexcost`, from a parse with a work budget in `internal/regexparse`, without a compile): the instructions of the compiled program, the rune
+ranges and the width of its character classes and the cost of case folding of wide ranges; of an
+`Equal`/`NotEqual` value, its
+length plus one. The enforcers reject a query (403, reason `query_too_complex`) when the regexes that
+the request compiles ((2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight) or
+the client regexes are over a fixed limit, before they compile a regex. Policy specs have fixed size
+limits in the CRD, the compiler (reason `PolicyTooLarge`) and the receiver; the regex weight limits are
+in the compiler and the receiver only.
 
 `DeniedLabels` semantics: a label denied by **any** matched rule is denied for the request
 (conservative; documented).
@@ -785,6 +800,9 @@ data source with URL `https://proxy/<pathPrefix>` calls.
   `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`,
   `OTEL_TRACES_SAMPLER_ARG`, `OTEL_TRACES_EXPORTER`, `OTEL_RESOURCE_ATTRIBUTES`).
   Default sampler `parentbased_traceidratio`.
+- The server span is a public endpoint: it starts a new trace and links the inbound trace context,
+  so a client cannot select the trace ID or force sampling. `--tracing.trust-inbound-context`
+  makes the inbound trace context the parent.
 - Propagation: inbound `tracecontext` + `baggage`; outbound **only** `tracecontext`. The propagator
   is fixed in code (`autoprop` / `OTEL_PROPAGATORS` are deliberately not used) because
   outbound-tracecontext-only is a security rule.
@@ -810,7 +828,13 @@ Attributes namespace: `querdian.*`; semconv where applicable. Always on the serv
 `querdian.policies` (names).
 
 Privacy (default off): `enduser.id` (`--tracing.record-user`), `querdian.query.original` /
-`querdian.query.rewritten` (`--tracing.record-queries`).
+`querdian.query.rewritten` (`--tracing.record-queries`). The same flag controls the query string in
+`url.full` of the upstream client spans. Without it, a transport pair around the otelhttp transport
+removes the query string from the URL that otelhttp sees and puts it back below otelhttp, so
+`url.full` has scheme, host and path only (for `GET`, the query string holds the rewritten query).
+If the inner transport does not find the query in the request context, it sends nothing (fail closed).
+A transport error goes through otelhttp with a fixed text (the span status gets no URL); the outer
+transport gives the original error to the caller.
 
 Every response has header `X-Trace-Id`; every error body has `traceId`.
 

@@ -37,7 +37,7 @@ func TestDashboardUsesSpokeExpiry(t *testing.T) {
 	sc := &v1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", UID: "uid-a", Generation: 1},
 		Status: v1.SpokeClusterStatus{LastSyncTime: &metav1.Time{Time: time.Now()}, ObservedGeneration: 1}}
 	dl.Update(sc, time.Hour)
-	h := Handler(Deps{Config: cfg, Snapshots: provider{snap}, Deadlines: dl,
+	h := Handler(Deps{Config: cfg, Snapshots: provider{snap}, Deadlines: dl, Auth: NoAuth(),
 		Enforcers: map[config.BackendType]enforce.Enforcer{config.BackendPrometheus: enforcepromql.New()}})
 
 	access := func() accessJSON {
@@ -73,7 +73,7 @@ func TestDashboardUsesSpokeExpiry(t *testing.T) {
 	}
 
 	// Without a table, each spoke rule is expired.
-	h = Handler(Deps{Config: cfg, Snapshots: provider{snap}})
+	h = Handler(Deps{Config: cfg, Snapshots: provider{snap}, Auth: NoAuth()})
 	if a := access(); a.Granted || a.Reason != "policy_source_expired" {
 		t.Fatalf("no table: %+v", a)
 	}

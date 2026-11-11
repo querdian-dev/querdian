@@ -59,6 +59,10 @@ func planQuery(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 	if len(vals) != 1 {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "exactly one %q parameter required, got %d", queryParam, len(vals))
 	}
+	clientWeight, err := checkQueryRegexes(enforce.QueryRegexLimit(eff), vals[0])
+	if err != nil {
+		return enforce.Plan{}, err
+	}
 	expr, err := promParser.ParseExpr(vals[0])
 	if err != nil {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "%v", err)
@@ -79,6 +83,9 @@ func planQuery(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 			strategy = "passthrough"
 		}
 	case len(eff.Terms) == 1:
+		if err := enforce.CheckRequest(vectorSelectors(expr), clientWeight, eff); err != nil {
+			return enforce.Plan{}, err
+		}
 		ms, err := toLabelMatchers(eff.Terms[0].Matchers)
 		if err != nil {
 			return enforce.Plan{}, err
@@ -87,6 +94,9 @@ func planQuery(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 		out = expr.String()
 	default:
 		strategy = "or_lift"
+		if err := enforce.CheckRequest(vectorSelectors(expr), clientWeight, eff); err != nil {
+			return enforce.Plan{}, err
+		}
 		lifted, err := liftTerms(expr, eff.Terms)
 		if err != nil {
 			return enforce.Plan{}, err
@@ -110,6 +120,19 @@ func planQuery(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 		Merge:    enforce.MergeNone,
 		Strategy: strategy,
 	}, nil
+}
+
+// vectorSelectors returns the number of vector selectors in expr, including those in matrix selectors and
+// subqueries.
+func vectorSelectors(expr parser.Expr) int {
+	n := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if _, ok := node.(*parser.VectorSelector); ok {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
 // unrestrictedTerm reports whether some term has no matchers. Such a term (an unrestricted rule of a

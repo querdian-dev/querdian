@@ -47,6 +47,10 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 	}
 
 	user := params[matchParam]
+	clientWeight, err := checkQueryRegexes(enforce.QueryRegexLimit(eff), user...)
+	if err != nil {
+		return enforce.Plan{}, err
+	}
 	userSel := make([][]*labels.Matcher, len(user))
 	for i, s := range user {
 		ms, err := promParser.ParseMetricSelector(s)
@@ -67,6 +71,9 @@ func planMetadata(ep routes.Endpoint, params url.Values, eff policy.Effective) (
 		strategy = "passthrough"
 		out = slices.Clone(user)
 	} else {
+		if err := enforce.CheckRequest(len(userSel), clientWeight, eff); err != nil {
+			return enforce.Plan{}, err
+		}
 		termMs := make([][]*labels.Matcher, len(eff.Terms))
 		for i, t := range eff.Terms {
 			ms, err := toLabelMatchers(t.Matchers)

@@ -41,6 +41,7 @@ func FuzzOrLift(f *testing.F) {
 			t.Fatalf("%q: %v", q, err)
 		}
 		out := p.Requests[0].Query.Get("query")
+		checkInjectedWeight(t, q, out, eff)
 		if len(eff.Terms) == 1 {
 			checkOutput(t, out, eff.Terms[0].Matchers)
 			return

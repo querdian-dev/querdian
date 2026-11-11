@@ -1,9 +1,13 @@
 package logql
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
+	"regexp/syntax"
 	"strings"
+
+	"github.com/querdian-dev/querdian/internal/regexcost"
 )
 
 // ParseError is a syntax error at a byte position of the query.
@@ -44,9 +48,52 @@ var (
 	unwrapConvs = map[string]bool{"bytes": true, "duration": true, "duration_seconds": true}
 )
 
+// MaxRegexWeight is the default limit of [ParseWithRegexLimit] for [Parse].
+// It is large enough for a client query and the policy copies that a
+// rewrite adds.
+const MaxRegexWeight = 1 << 18
+
+// ErrRegexTooLarge is returned (wrapped) when the regular expressions of a
+// query are over the limit of [ParseWithRegexLimit].
+var ErrRegexTooLarge = errors.New("logql: the regular expressions of the query are too large")
+
+// ErrRegexTooLong is returned (wrapped, together with [ErrRegexTooLarge])
+// when a regular expression is over a byte limit of [ParseClient].
+var ErrRegexTooLong = errors.New("logql: a regular expression is too long")
+
 // Parse parses a LogQL query. It returns a *[ParseError] (or the lexer's
 // *[Error]) for anything it does not recognise; there is no lenient mode.
+// The limit of the regular expressions is [MaxRegexWeight], and there is no
+// byte limit: Parse is for queries that the rewriter made from a checked
+// client query and a checked policy.
 func Parse(src string) (*Query, error) {
+	return parse(src, MaxRegexWeight, -1)
+}
+
+// ParseClient is [ParseWithRegexLimit] for a client query whose regular
+// expressions can have at most bytesLimit bytes together, and at most
+// regexcost.MaxRegexBytes bytes each. A regex over a byte limit gives an
+// error that wraps [ErrRegexTooLarge], before any parse of the regex.
+func ParseClient(src string, limit, bytesLimit int) (*Query, error) {
+	return parse(src, limit, max(bytesLimit, 0))
+}
+
+// ParseWithRegexLimit is [Parse] with a limit of the regular expressions
+// that the parser compiles to validate them. The cost of a compile grows
+// with the size of the compiled program, not with the length of the
+// expression (a{1000} has 7 bytes and 1000 instructions, \pL has 3 bytes
+// and about 700 rune ranges). The parser measures the weight of each
+// expression before it compiles it (regexcost.Weight), and returns an error
+// that wraps [ErrRegexTooLarge] when the sum is over limit. It is for client
+// queries: it also applies the byte limits of [ParseClient], with
+// regexcost.MaxQueryRegexBytes for the whole query.
+func ParseWithRegexLimit(src string, limit int) (*Query, error) {
+	return parse(src, limit, regexcost.MaxQueryRegexBytes)
+}
+
+// parse parses src. bytesLeft is the byte limit of its regexes, or -1 for
+// none.
+func parse(src string, limit, bytesLeft int) (*Query, error) {
 	toks, err := Lex(src)
 	if err != nil {
 		return nil, err
@@ -54,7 +101,7 @@ func Parse(src string) (*Query, error) {
 	if len(toks) == 0 {
 		return nil, &ParseError{Pos: 0, Msg: "empty query"}
 	}
-	p := &parser{src: src, toks: toks}
+	p := &parser{src: src, toks: toks, regexLeft: limit, bytesLeft: bytesLeft}
 	q := &Query{Source: src}
 	if toks[0].Kind == LBrace {
 		q.Kind = KindLog
@@ -83,6 +130,8 @@ func Parse(src string) (*Query, error) {
 	}
 	q.Selectors = p.sels
 	q.RangeAggs = p.aggs
+	q.RegexWeight = limit - p.regexLeft
+	q.RegexBytes = p.regexBytes
 	return q, nil
 }
 
@@ -93,6 +142,35 @@ type parser struct {
 	depth int
 	sels  []*Selector
 	aggs  []*RangeAgg
+	// regexLeft is the program size that the parser can still compile.
+	regexLeft int
+	// bytesLeft is the number of regex bytes that the parser can still
+	// parse, or -1 for no limit. regexBytes counts the regex bytes.
+	bytesLeft, regexBytes int
+}
+
+// compileRegex compiles the anchored form of the regular expression value
+// at pos, after it has taken its program size from regexLeft.
+func (p *parser) compileRegex(pos int, value string) (*regexp.Regexp, error) {
+	src := "^(?:" + value + ")$"
+	// The byte limits do not depend on the work counter of the regex parser.
+	p.regexBytes += len(value)
+	if p.bytesLeft >= 0 {
+		if p.bytesLeft -= len(value); len(value) > regexcost.MaxRegexBytes || p.bytesLeft < 0 {
+			return nil, fmt.Errorf("%w: %w (at byte %d)", ErrRegexTooLarge, ErrRegexTooLong, pos)
+		}
+	}
+	// The limit of Weight is what is left, so that all its parses together
+	// stay within the limit. An expression that does not parse is not
+	// compiled.
+	n, err := regexcost.Weight(src, syntax.Perl, regexcost.Compile, max(p.regexLeft, 0))
+	if err != nil {
+		return nil, err
+	}
+	if p.regexLeft -= n; p.regexLeft < 0 {
+		return nil, fmt.Errorf("%w (at byte %d)", ErrRegexTooLarge, pos)
+	}
+	return regexp.Compile(src)
 }
 
 func (p *parser) peekAt(n int) Token {
@@ -229,7 +307,10 @@ func (p *parser) checkSelector(sel *Selector) error {
 		case "!=":
 			ok = ok || m.Value == ""
 		case "=~", "!~":
-			re, err := regexp.Compile("^(?:" + m.Value + ")$")
+			re, err := p.compileRegex(m.Pos, m.Value)
+			if errors.Is(err, ErrRegexTooLarge) {
+				return err
+			}
 			if err != nil {
 				return p.errAt(m.Pos, "invalid regular expression for label %q: %v", m.Name, err)
 			}
@@ -925,7 +1006,10 @@ func (p *parser) parseLabelReplace() (Expr, error) {
 			return nil, err
 		}
 	}
-	if _, err := regexp.Compile("^(?:" + l.Regex.Value + ")$"); err != nil {
+	if _, err := p.compileRegex(l.Regex.Pos, l.Regex.Value); err != nil {
+		if errors.Is(err, ErrRegexTooLarge) {
+			return nil, err
+		}
 		return nil, p.errAt(l.Regex.Pos, "invalid regular expression: %v", err)
 	}
 	rp, err := p.expect(RParen, "')' (label_replace takes exactly 5 arguments)")

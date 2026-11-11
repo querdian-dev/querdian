@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/policy"
+	"github.com/querdian-dev/querdian/internal/regexcost"
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
@@ -141,6 +144,115 @@ func TestValidatePolicy(t *testing.T) {
 		mut(&c, &a)
 		if validatePolicy(&c) == nil && validatePolicy(&a) == nil {
 			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// weightPrefix makes a short regex with a large weight; atWeightLimit adds literal runes to it.
+var weightPrefix = strings.Repeat("x{1000}", 15)
+
+func atWeightLimit(n int) string { return weightPrefix + strings.Repeat("a", n) }
+
+// mostLiteral returns the largest n for which atWeightLimit(n) has a weight of at most
+// policy.MaxRegexWeight.
+func mostLiteral(t testing.TB) int {
+	t.Helper()
+	n := sort.Search(policy.MaxValueLength, func(n int) bool {
+		w, err := policy.RegexWeight(atWeightLimit(n + 1))
+		return err != nil || w > policy.MaxRegexWeight
+	})
+	if n == 0 || n >= policy.MaxValueLength {
+		t.Fatalf("mostLiteral = %d", n)
+	}
+	return n
+}
+
+// TestValidatePolicySizeLimits: the receiver accepts a spoke policy at each size limit of the policy
+// package and rejects it at the limit plus one.
+func TestValidatePolicySizeLimits(t *testing.T) {
+	many := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprint("x", i)
+		}
+		return out
+	}
+	tests := map[string]struct {
+		limit int
+		mut   func(c, a *v1.SpokePolicySource, n int)
+	}{
+		"groups": {policy.MaxSubjects, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Subjects.Groups = many(n)
+			a.AccessPolicy.Subjects.Groups = many(n)
+		}},
+		"user length": {policy.MaxSubjectLength, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Subjects.Users = []string{strings.Repeat("u", n)}
+			a.AccessPolicy.Subjects.Users = []string{strings.Repeat("u", n)}
+		}},
+		"rules": {policy.MaxRules, func(c, a *v1.SpokePolicySource, n int) {
+			for len(c.ClusterAccessPolicy.Rules) < n {
+				c.ClusterAccessPolicy.Rules = append(c.ClusterAccessPolicy.Rules, c.ClusterAccessPolicy.Rules[0])
+				a.AccessPolicy.Rules = append(a.AccessPolicy.Rules, a.AccessPolicy.Rules[0])
+			}
+		}},
+		"backends": {policy.MaxBackends, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Rules[0].Backends = many(n)
+			a.AccessPolicy.Rules[0].Backends = many(n)
+		}},
+		"tenants": {policy.MaxTenants, func(c, _ *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Rules[0].Tenants = many(n)
+		}},
+		"matchers": {policy.MaxMatchers, func(c, a *v1.SpokePolicySource, n int) {
+			ms := make([]v1.Matcher, n)
+			for i := range ms {
+				ms[i] = v1.Matcher{Name: fmt.Sprint("l", i), Op: v1.MatchEqual}
+			}
+			c.ClusterAccessPolicy.Rules[0].Matchers = ms
+			a.AccessPolicy.Rules[0].Matchers = ms
+		}},
+		"matcher name": {policy.MaxNameLength, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Rules[0].Matchers[0].Name = strings.Repeat("a", n)
+			a.AccessPolicy.Rules[0].Matchers = c.ClusterAccessPolicy.Rules[0].Matchers
+		}},
+		"matcher value": {policy.MaxValueLength, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Rules[0].Matchers[0].Value = strings.Repeat("v", n)
+			a.AccessPolicy.Rules[0].Matchers = c.ClusterAccessPolicy.Rules[0].Matchers
+		}},
+		"deny": {policy.MaxLabelNames, func(c, a *v1.SpokePolicySource, n int) {
+			c.ClusterAccessPolicy.Rules[0].Labels = &v1.LabelFilter{Deny: many(n)}
+			a.AccessPolicy.Rules[0].Labels = &v1.LabelFilter{Deny: many(n)}
+		}},
+		"regex program": {mostLiteral(t), func(c, a *v1.SpokePolicySource, n int) {
+			// atWeightLimit(mostLiteral) is at the weight limit.
+			m := v1.Matcher{Name: "a", Op: v1.MatchRegexMatch, Value: atWeightLimit(n)}
+			c.ClusterAccessPolicy.Rules[0].Matchers = []v1.Matcher{m}
+			a.AccessPolicy.Rules[0].Matchers = []v1.Matcher{m}
+		}},
+		"regex bytes": {regexcost.MaxRegexBytes, func(c, a *v1.SpokePolicySource, n int) {
+			m := v1.Matcher{Name: "a", Op: v1.MatchRegexMatch, Value: strings.Repeat("a", n)}
+			c.ClusterAccessPolicy.Rules[0].Matchers = []v1.Matcher{m}
+			a.AccessPolicy.Rules[0].Matchers = []v1.Matcher{m}
+		}},
+		"redact": {policy.MaxLabelNames, func(c, a *v1.SpokePolicySource, n int) {
+			rs := make([]v1.RedactRule, n)
+			for i := range rs {
+				rs[i] = v1.RedactRule{Name: fmt.Sprint("r", i), Strategy: v1.RedactHash}
+			}
+			c.ClusterAccessPolicy.Rules[0].Labels = redact(rs...)
+			a.AccessPolicy.Rules[0].Labels = redact(rs...)
+		}},
+	}
+	for name, tc := range tests {
+		for _, n := range []int{tc.limit, tc.limit + 1} {
+			c, a := capSrc("a"), apSrc("ns", "b")
+			tc.mut(&c, &a, n)
+			ec, ea := validatePolicy(&c), validatePolicy(&a)
+			if n == tc.limit && (ec != nil || ea != nil) {
+				t.Errorf("%s at the limit: %v, %v", name, ec, ea)
+			}
+			if n > tc.limit && (ec == nil || (name != "tenants" && ea == nil)) {
+				t.Errorf("%s over the limit: accepted", name)
+			}
 		}
 	}
 }

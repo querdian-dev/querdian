@@ -207,7 +207,8 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request, st *reqState
 
 	red := redact.New(eff.Redactions)
 	// Upstream errors can echo series label sets that no result rewriter sees, so redaction withholds them.
-	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff, HideUpstreamErrors: red != nil}
+	target := proxy.Target{Backend: b, Endpoint: ep, UpstreamPath: upath, Effective: eff, HideUpstreamErrors: red != nil,
+		Rejected: func(reason string) { st.set(decisionError, reason) }}
 	if ep.Websocket {
 		var opt proxy.TailOptions
 		if red != nil {

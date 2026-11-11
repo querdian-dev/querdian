@@ -178,6 +178,54 @@ func TestDashboardOptIn(t *testing.T) {
 	}
 }
 
+// ui.allowedHosts renders one --ui-allowed-host flag per host. The chart renders none by default, and the
+// schema rejects a value with a port, a scheme or a wildcard.
+func TestDashboardAllowedHosts(t *testing.T) {
+	render := func(args ...string) string {
+		var sb strings.Builder
+		for _, d := range helmTemplate(t, args...) {
+			raw, _ := yaml.Marshal(d)
+			sb.Write(raw)
+		}
+		return sb.String()
+	}
+	for _, args := range [][]string{{"--set", "ui.enabled=true"}, {"-f", "ci/all-features-values.yaml"},
+		{"--set", "ui.allowedHosts={querdian.example.com}"}} {
+		if out := render(args...); strings.Contains(out, "--ui-allowed-host") {
+			t.Errorf("%v: unexpected --ui-allowed-host", args)
+		}
+	}
+	out := render("--set", "ui.enabled=true", "--set-json",
+		`ui.allowedHosts=["querdian.example.com","10.0.0.5","[fd00::1]","fd00::2","::1","1:2:3:4:5:6:7:8","1-2.example","a.1a"]`)
+	for _, want := range []string{"--ui-allowed-host=querdian.example.com", "--ui-allowed-host=10.0.0.5", "--ui-allowed-host=[fd00::1]",
+		"--ui-allowed-host=fd00::2", "--ui-allowed-host=::1", "--ui-allowed-host=1:2:3:4:5:6:7:8", "--ui-allowed-host=1-2.example",
+		"--ui-allowed-host=a.1a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render lacks %q", want)
+		}
+		// The binary must accept each value that the schema accepts.
+		if v := strings.TrimPrefix(want, "--ui-allowed-host="); config.NormalizeHost(v) == "" {
+			t.Errorf("the binary refuses %q", v)
+		}
+	}
+	// Each value that the binary refuses at startup must fail in helm with the schema error of the field.
+	for _, bad := range []string{"querdian.example.com:443", "https://querdian.example.com", "*.example.com", "", "a b",
+		"querdian.example.com/x", "-bad.example.com", "a:443", "[fd00::1", "fd00::1]", ":::", "[::ffff:1.2.3.4]",
+		"::ffff:1.2.3.4", "[10.0.0.5]", "[]", "10.0.0.256", "999.1.1.1", "1.2.3", "123", "a.123", "01.2.3.4",
+		"1:2:3:4:5:6:7:8:9", "1::2:3:4:5:6:7:8", "[1:2:3:4:5:6:7:8:9]"} {
+		cmd := exec.Command("helm", "template", "r", ".", "--set", "ui.enabled=true", "--set-json", //nolint:gosec // test args
+			`ui.allowedHosts=["`+bad+`"]`)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("ui.allowedHosts %q was accepted:\n%s", bad, out)
+			continue
+		}
+		if !strings.Contains(string(out), "/ui/allowedHosts/0") || !strings.Contains(string(out), "does not match pattern") {
+			t.Errorf("ui.allowedHosts %q: the error is not the schema error of the field:\n%s", bad, out)
+		}
+	}
+}
+
 // The kind quickstart reaches the dashboard through a NodePort and, with NetworkPolicies, an ingress rule.
 func TestQuickstartDashboardValues(t *testing.T) {
 	var sb strings.Builder
@@ -189,5 +237,9 @@ func TestQuickstartDashboardValues(t *testing.T) {
 		if !strings.Contains(sb.String(), want) {
 			t.Errorf("quickstart render lacks %q", want)
 		}
+	}
+	// The quickstart opens the dashboard on localhost, which the dashboard always accepts.
+	if strings.Contains(sb.String(), "--ui-allowed-host") {
+		t.Error("the quickstart needs no --ui-allowed-host")
 	}
 }

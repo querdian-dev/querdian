@@ -129,10 +129,17 @@ var reservedHeaders = func() map[string]bool {
 
 // Limits bounds per-request resource usage.
 type Limits struct {
-	MaxPolicyTerms  int      `json:"maxPolicyTerms"`
-	MaxFanout       int      `json:"maxFanout"`
-	MaxMergeBytes   int64    `json:"maxMergeBytes"`
-	UpstreamTimeout Duration `json:"upstreamTimeout"`
+	MaxPolicyTerms int `json:"maxPolicyTerms"`
+	MaxFanout      int `json:"maxFanout"`
+	// MaxQueryRegexWeight limits the regexes of one client query (internal/regexcost weight units).
+	MaxQueryRegexWeight int `json:"maxQueryRegexWeight"`
+	// MaxRequestRegexWeight limits the regexes that the enforcers compile for one request.
+	MaxRequestRegexWeight int   `json:"maxRequestRegexWeight"`
+	MaxMergeBytes         int64 `json:"maxMergeBytes"`
+	// MaxInflightMergeBytes caps the buffered fan-out bodies of all concurrent requests of the process.
+	// It must be at least MaxMergeBytes, which is also the default.
+	MaxInflightMergeBytes int64    `json:"maxInflightMergeBytes"`
+	UpstreamTimeout       Duration `json:"upstreamTimeout"`
 }
 
 // Duration is a time.Duration that unmarshals from strings such as "5m".
@@ -154,13 +161,22 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // Defaults for optional settings.
 const (
-	DefaultUsernameClaim   = "preferred_username"
-	DefaultGroupsClaim     = "groups"
-	DefaultMaxPolicyTerms  = 16
-	DefaultMaxFanout       = 16
-	DefaultMaxMergeBytes   = 64 << 20
-	DefaultUpstreamTimeout = 5 * time.Minute
-	DefaultMaxStaleness    = 48 * time.Hour
+	DefaultUsernameClaim  = "preferred_username"
+	DefaultGroupsClaim    = "groups"
+	DefaultMaxPolicyTerms = 16
+	DefaultMaxFanout      = 16
+	// DefaultMaxQueryRegexWeight and DefaultMaxRequestRegexWeight are the regex weight limits of a
+	// request; MaxRegexWeightLimit is the largest value that the configuration can set for them. A unit
+	// of weight costs at most about 2 KiB (internal/regexcost), so the bound of the regex memory of one
+	// request is about 256 MiB at the default request limit and 512 MiB at MaxRegexWeightLimit; measured
+	// requests at the default use some tens of MiB. maxQueryRegexWeight also sets the work budget of the
+	// regex parse of a client query (32 steps for each unit).
+	DefaultMaxQueryRegexWeight   = 1 << 15
+	DefaultMaxRequestRegexWeight = 1 << 17
+	MaxRegexWeightLimit          = 1 << 18
+	DefaultMaxMergeBytes         = 64 << 20
+	DefaultUpstreamTimeout       = 5 * time.Minute
+	DefaultMaxStaleness          = 48 * time.Hour
 )
 
 // TenantIDLabel is the reserved label used to bind terms to tenants under federation (PLAN §6.4). It is
@@ -218,8 +234,19 @@ func (c *Config) applyDefaults() {
 	if c.Limits.MaxFanout == 0 {
 		c.Limits.MaxFanout = DefaultMaxFanout
 	}
+	if c.Limits.MaxQueryRegexWeight == 0 {
+		c.Limits.MaxQueryRegexWeight = DefaultMaxQueryRegexWeight
+	}
+	if c.Limits.MaxRequestRegexWeight == 0 {
+		c.Limits.MaxRequestRegexWeight = DefaultMaxRequestRegexWeight
+	}
 	if c.Limits.MaxMergeBytes == 0 {
 		c.Limits.MaxMergeBytes = DefaultMaxMergeBytes
+	}
+	// The default is one maximal fan-out at a time: the merge of a fan-out needs about five times the bytes of
+	// its bodies, so with the defaults (64 MiB) it fits the 768 MiB memory limit of the Helm chart.
+	if c.Limits.MaxInflightMergeBytes == 0 {
+		c.Limits.MaxInflightMergeBytes = c.Limits.MaxMergeBytes
 	}
 	if c.Limits.UpstreamTimeout == 0 {
 		c.Limits.UpstreamTimeout = Duration(DefaultUpstreamTimeout)
@@ -262,8 +289,20 @@ func (c *Config) Validate() error {
 			add("auth.audiences must not contain empty values")
 		}
 	}
-	if c.Limits.MaxPolicyTerms < 1 || c.Limits.MaxFanout < 1 || c.Limits.MaxMergeBytes < 1 || c.Limits.UpstreamTimeout <= 0 {
+	if c.Limits.MaxPolicyTerms < 1 || c.Limits.MaxFanout < 1 || c.Limits.MaxMergeBytes < 1 ||
+		c.Limits.MaxInflightMergeBytes < 1 || c.Limits.UpstreamTimeout <= 0 {
 		add("limits must be positive")
+	} else if c.Limits.MaxInflightMergeBytes < c.Limits.MaxMergeBytes {
+		add("limits.maxInflightMergeBytes (%d) must be at least limits.maxMergeBytes (%d)",
+			c.Limits.MaxInflightMergeBytes, c.Limits.MaxMergeBytes)
+	}
+	for _, l := range []struct {
+		name string
+		v    int
+	}{{"maxQueryRegexWeight", c.Limits.MaxQueryRegexWeight}, {"maxRequestRegexWeight", c.Limits.MaxRequestRegexWeight}} {
+		if l.v < 1 || l.v > MaxRegexWeightLimit {
+			add("limits.%s must be between 1 and %d", l.name, MaxRegexWeightLimit)
+		}
 	}
 	if len(c.Backends) == 0 {
 		add("at least one backend is required")

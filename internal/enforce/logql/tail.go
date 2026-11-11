@@ -7,6 +7,7 @@ import (
 
 	"github.com/querdian-dev/querdian/internal/enforce"
 	"github.com/querdian-dev/querdian/internal/policy"
+	"github.com/querdian-dev/querdian/internal/regexcost"
 	"github.com/querdian-dev/querdian/internal/routes"
 	lq "github.com/querdian-dev/querdian/pkg/logql"
 )
@@ -37,9 +38,9 @@ func PlanTail(ctx context.Context, params url.Values, eff policy.Effective) (enf
 	if !params.Has("query") {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "missing query parameter")
 	}
-	q, err := lq.Parse(params.Get("query"))
+	q, err := parseClient(params.Get("query"), enforce.QueryRegexLimit(eff), regexcost.MaxQueryRegexBytes)
 	if err != nil {
-		return enforce.Plan{}, enforce.Errorf(enforce.ErrParse, "%v", err)
+		return enforce.Plan{}, err
 	}
 	if q.Kind == lq.KindMetric {
 		return enforce.Plan{}, enforce.Errorf(enforce.ErrUnsupported, "tail requires a log query, not a metric query")

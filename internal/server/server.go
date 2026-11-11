@@ -69,7 +69,10 @@ type Deps struct {
 	// Gatherer backs /metrics; nil serves the default registry.
 	Gatherer prometheus.Gatherer
 	Privacy  observability.Privacy
-	Logger   *slog.Logger
+	// TrustInboundTraceContext makes the trace context of the client the parent of the server span. When it is
+	// false (the default), the server span starts a new trace and only links the trace context of the client.
+	TrustInboundTraceContext bool
+	Logger                   *slog.Logger
 
 	// Transport is the base upstream transport (nil: a clone of http.DefaultTransport).
 	Transport http.RoundTripper
@@ -84,7 +87,9 @@ type Server struct {
 	tp      trace.TracerProvider
 	proxies map[string]*proxy.Proxy // by backend name
 	mergers map[enforce.MergeKind]proxy.Merger
-	logger  *slog.Logger
+	// budget bounds the buffered fan-out bodies of all backends together (limits.maxInflightMergeBytes).
+	budget *fanout.Budget
+	logger *slog.Logger
 	// tailRevokeCheck replaces the default interval of the spoke expiry check of a tail; tests only.
 	tailRevokeCheck time.Duration
 }
@@ -109,25 +114,37 @@ func New(d Deps) *Server {
 			enforce.MergeStringSet:   fanout.NewStringSetMerger(deniedFromRequest),
 			enforce.MergeSumCounts:   fanout.NewSumCountsMerger(deniedFromRequest, approximateFromRequest),
 		}}
+	s.budget = fanout.NewBudget(d.Config.Limits.MaxInflightMergeBytes)
 	for i := range d.Config.Backends {
 		b := &d.Config.Backends[i]
 		rt := http.RoundTripper(&meteredTransport{base: base, backend: b.Name, m: d.Metrics})
+		if !d.Privacy.RecordQueries {
+			rt = restoreQueryTransport{next: rt}
+		}
 		rt = otelhttp.NewTransport(rt,
 			otelhttp.WithTracerProvider(tp),
 			otelhttp.WithPropagators(observability.NewPropagator()),
 			otelhttp.WithSpanNameFormatter(func(string, *http.Request) string { return "upstream" }),
 		)
-		s.proxies[b.Name] = &proxy.Proxy{Transport: rt, Limits: d.Config.Limits, Logger: logger}
+		if !d.Privacy.RecordQueries {
+			// The upstream span must not record the query string in url.full (PLAN §11.2).
+			rt = hideQueryTransport{next: rt}
+		}
+		s.proxies[b.Name] = &proxy.Proxy{Transport: rt, Limits: d.Config.Limits, Budget: s.budget, Logger: logger}
 	}
 	return s
 }
 
 // ProxyHandler returns the handler for the proxy listener, wrapped in the server span.
 func (s *Server) ProxyHandler() http.Handler {
+	trust := s.d.TrustInboundTraceContext
 	return otelhttp.NewHandler(http.HandlerFunc(s.serveProxy), "proxy",
 		otelhttp.WithTracerProvider(s.tp),
 		otelhttp.WithPropagators(observability.NewPropagator()),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return "HTTP " + r.Method }),
+		// Without trust, the server span starts a new trace and only links the trace context of the client.
+		// Thus a client cannot select the trace ID or the sampling decision.
+		otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return !trust }),
 	)
 }
 

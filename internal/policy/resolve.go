@@ -59,6 +59,7 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 	}
 
 	var terms []Term
+	var nMatchers, nBytes int
 	var denied, policies, origins []string
 	var versions map[string]SpokeVersion
 	expired := false
@@ -96,6 +97,17 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 			}
 			versions[r.Origin] = r.OriginVersion
 		}
+		// Normalise does more than linear work. Check its input size first, so that the work and the memory
+		// of a request stay bounded for any snapshot.
+		n := max(len(r.Tenants), 1)
+		nMatchers += n * len(r.Matchers)
+		for _, m := range r.Matchers {
+			nBytes += n * len(m.k)
+		}
+		if len(terms)+n > MaxResolveTerms || nMatchers > MaxResolveMatchers || nBytes > MaxResolveBytes {
+			return Effective{}, fmt.Errorf("%w: the matched rules have more than %d terms, %d matchers or %d bytes of matchers",
+				ErrTooComplex, MaxResolveTerms, MaxResolveMatchers, MaxResolveBytes)
+		}
 		if len(r.Tenants) == 0 {
 			terms = append(terms, Term{Matchers: r.Matchers})
 			continue
@@ -124,6 +136,10 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 		if eff, err = bindTenants(eff, b); err != nil {
 			return Effective{}, err
 		}
+		// The binding adds a matcher to each term.
+		if err := checkResultWeight(eff.Terms); err != nil {
+			return Effective{}, err
+		}
 	} else {
 		// Zero or one tenant: the tenant header carries it, terms need no binding.
 		for i := range eff.Terms {
@@ -135,6 +151,7 @@ func (s *Snapshot) ResolveAt(user string, groups []string, backend string, dl *D
 	eff.Policies = sortedUnique(policies)
 	eff.Origins = sortedUnique(origins)
 	eff.OriginVersions = versions
+	eff.RegexLimits = RegexLimits{Query: s.cfg.Limits.MaxQueryRegexWeight, Request: s.cfg.Limits.MaxRequestRegexWeight}
 	return eff, nil
 }
 

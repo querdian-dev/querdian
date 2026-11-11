@@ -47,6 +47,10 @@ ui:
   # only for a trusted network, for example kubectl port-forward.
   auth: oidc
   adminGroup: ""
+  # More host names that the dashboard accepts in the Host header, with any port. localhost, 127.0.0.1 and
+  # [::1] are always accepted, so kubectl port-forward needs nothing here. Add the host name of an Ingress
+  # or a proxy in front of the dashboard. Other hosts get 403.
+  allowedHosts: []
   service:
     # Create a Service for the dashboard port.
     enabled: false
@@ -71,8 +75,12 @@ logFormat: json # json | text
 tracing:
   # Adds enduser.id to spans (privacy-sensitive).
   recordUser: false
-  # Adds original and rewritten queries to spans (privacy-sensitive).
+  # Adds original and rewritten queries to spans, and the query string to the upstream URL
+  # (privacy-sensitive).
   recordQueries: false
+  # Uses the trace context of the client as the parent of the server span. Keep it false unless
+  # all clients are trusted: else a client can select the trace ID and force sampling.
+  trustInboundContext: false
   serviceName: querdian # OTEL_SERVICE_NAME
   exporter: "" # OTEL_TRACES_EXPORTER (e.g. otlp, none)
   otlp:
@@ -118,7 +126,15 @@ config:
   limits:
     maxPolicyTerms: 16
     maxFanout: 16
+    # Regex weight limits (docs/operations.md): the regexes of one client query, and all regexes that
+    # one request compiles. Larger values allow larger queries and cost more memory for each request.
+    # Absent means the defaults of Querdian.
+    # maxQueryRegexWeight: 32768
+    # maxRequestRegexWeight: 131072
     maxMergeBytes: 67108864
+    # Buffered fan-out bodies of all requests together. Default maxMergeBytes. Keep
+    # resources.limits.memory at least 100 MiB + 6 x this value. See docs/operations.md.
+    # maxInflightMergeBytes: 67108864
     upstreamTimeout: 5m
   # Hub of a multi-cluster deployment (PLAN section 18.4). Off when absent. If you set it, each backend
   # needs clusterLabel, and Querdian refuses to start if one backend has no clusterLabel. A backend with
@@ -149,7 +165,9 @@ resources:
     cpu: 100m
     memory: 128Mi
   limits:
-    memory: 512Mi
+    # 768Mi: one maximal fan-out (about 6 x maxInflightMergeBytes) plus the regex compiles of a request
+    # and the process baseline. See docs/operations.md, memory sizing.
+    memory: 768Mi
 
 probes:
   liveness:

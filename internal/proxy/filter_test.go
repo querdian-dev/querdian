@@ -23,7 +23,7 @@ func filterPlan(f func([]byte) ([]byte, error), limit int64) enforce.Plan {
 	}
 }
 
-func runFilter(t *testing.T, status int, hdr http.Header, body string, plan enforce.Plan) (*httptest.ResponseRecorder, http.Header) {
+func runFilter(t *testing.T, status int, hdr http.Header, body string, plan enforce.Plan) (*deadlineRecorder, http.Header) {
 	t.Helper()
 	var seen http.Header
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func runFilter(t *testing.T, status int, hdr http.Header, body string, plan enfo
 		_, _ = w.Write([]byte(body))
 	}))
 	defer up.Close()
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/labels", http.MethodGet)
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/labels", ""), Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/labels"}, plan, nil)
 	return w, seen

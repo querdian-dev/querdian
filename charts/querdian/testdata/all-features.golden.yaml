@@ -444,6 +444,11 @@ spec:
                   fieldPath: spec.nodeName
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: "k8s.pod.name=$(K8S_POD_NAME),k8s.namespace.name=$(K8S_NAMESPACE_NAME),k8s.node.name=$(K8S_NODE_NAME),service.version=0.0.0-dev,deployment.environment=test"
+            # The Go runtime uses 90 percent of the container memory limit as its soft memory limit.
+            - name: QUERDIAN_MEMORY_LIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
             - name: OTEL_SERVICE_NAME
               value: "querdian"
             - name: OTEL_TRACES_EXPORTER
@@ -484,7 +489,7 @@ spec:
             timeoutSeconds: 2
           resources:
             limits:
-              memory: 512Mi
+              memory: 768Mi
             requests:
               cpu: 100m
               memory: 128Mi

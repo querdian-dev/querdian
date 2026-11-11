@@ -53,11 +53,17 @@ spec:
             - --log-format={{ .Values.logFormat }}
             - --tracing.record-user={{ .Values.tracing.recordUser }}
             - --tracing.record-queries={{ .Values.tracing.recordQueries }}
+            {{- if .Values.tracing.trustInboundContext }}
+            - --tracing.trust-inbound-context=true
+            {{- end }}
             {{- if .Values.ui.enabled }}
             - --ui-listen=:{{ .Values.ui.port }}
             - --ui-auth={{ .Values.ui.auth }}
             {{- with .Values.ui.adminGroup }}
             - {{ printf "--ui-admin-group=%s" . | quote }}
+            {{- end }}
+            {{- range .Values.ui.allowedHosts }}
+            - {{ printf "--ui-allowed-host=%s" . | quote }}
             {{- end }}
             {{- end }}
             {{- range .Values.extraArgs }}
@@ -79,6 +85,11 @@ spec:
                   fieldPath: spec.nodeName
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: {{ include "querdian.resourceAttributes" . | quote }}
+            # The Go runtime uses 90 percent of the container memory limit as its soft memory limit.
+            - name: QUERDIAN_MEMORY_LIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
             {{- with .Values.tracing.serviceName }}
             - name: OTEL_SERVICE_NAME
               value: {{ . | quote }}

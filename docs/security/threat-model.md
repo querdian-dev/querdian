@@ -239,7 +239,9 @@ making the backend echo it in a listing.
 **Mitigations.** Queries that reference a denied label are rejected with `403 denied_label`
 (`by`/`without`/`on`/`ignoring`/`group_*`, matchers, `label_replace`, `label_join`, `count_values`
 in PromQL; any identifier or keyword token, `label_replace` string arguments, and templates in
-LogQL; any attribute token in TraceQL). Label listing endpoints omit denied names and value
+LogQL; any attribute token in TraceQL). A LogQL template is parsed with Go's `text/template/parse`
+and must contain only allow-listed nodes and functions; a template that does not parse is
+rejected. Label listing endpoints omit denied names and value
 endpoints for denied labels answer 403, also for the `U__`-escaped form of the name that Prometheus 3
 decodes (`U__customer__id`). A label denied by any matched rule is denied for the whole
 request.
@@ -319,8 +321,9 @@ and `test/e2e/tempo`.
 | Vector | Mitigation | Remaining exposure |
 |---|---|---|
 | Policy with many terms causing fan-out | `limits.maxPolicyTerms` (16): `403 policy_too_complex`; DNF simplification merges and drops redundant terms | Operators who raise it |
+| Large policies that make each request or each snapshot rebuild expensive (a namespace admin, or a spoke team through its agent) | Size limits on every list and string of a policy in the CRDs, in the compiler (`PolicyTooLarge`, also for objects stored before the limits) and in the receiver; before the DNF simplification, ResolveAt limits the input to 4096 terms, 32768 matchers and 1 MiB of matcher text, the simplification has a fixed budget of steps, and the simplified policy has a weight of at most 32768 (`403 policy_too_complex`). The weight of a regex is a bound of its compile cost and comes from a parse with a work budget (a copy of the Go regexp parser with a work counter, `internal/regexparse`, which stops as soon as its work is over the limit; each loop of the parser is charged or has a stated bound, including the height and size checks that read wide subexpressions again at each level and the comparison of alternation branches, which can run again at each level of nested groups), before any compile: the instructions of the compiled program, the rune ranges of each character class (counted again for each repetition), the counted work of the parser (for example case folding, rune by rune) and, for regexes that the Prometheus matcher can get, the runes of each class in the case-folding range of Unicode (its printer examines each of them). A compile in Go and in the Prometheus matcher together takes at most about 256 KiB plus 2 KiB, and 2 ms plus 2 microseconds, for each unit (measured at most about 900 bytes and 0.9 microseconds); a regex that does not parse is rejected before any compile. Each regex matcher of a policy has a weight of at most 16384 and the regexes of a policy at most 32768 together (`PolicyTooLarge`, also in the receiver); the snapshot keeps only the regex sources. The regexes that one request compiles have a weight of at most 131072, counted as (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight, and the regexes of a PromQL or LogQL client query at most 32768, both checked before any compile (`403 query_too_complex`); operators can change both limits (`limits.maxRequestRegexWeight`, `limits.maxQueryRegexWeight`, at most 262144). A second layer that does not depend on the work count of the parser limits each client regex and each policy regex value to 8 KiB and the client regexes of a query to 32 KiB, before any parse; at this length, the slowest known parse path takes some tens of milliseconds. The simplification and the snapshot rebuild do no work that grows with the square of the matchers of a term. At these limits, one request measured at most about 25 MiB and 25 milliseconds (`BenchmarkFullPath`) | The number of policy objects is not limited by Querdian. Set a `ResourceQuota` in each team namespace, for example `count/accesspolicies.policy.querdian.dev: "20"`. The receiver flag `--max-policies` (default 2000) limits the `SpokePolicy` objects of each spoke. Many policies for one shared group can make the requests of that group `403 policy_too_complex` |
 | Many upstream requests per client request | `limits.maxFanout` (16): bound on requests and on parallelism, `403 query_too_complex`; all-or-nothing: one failure cancels the rest | Load multiplier up to `maxFanout` per request |
-| Large merged responses | `limits.maxMergeBytes` (64 MiB) total per request, enforced while reading (`502 merge_too_large`); fixed 16 MiB for Prometheus labels/series filtering; trace-by-ID and Tempo search buffers use `maxMergeBytes` | Memory is `concurrency x maxMergeBytes`; no global limit |
+| Large merged responses | `limits.maxMergeBytes` (64 MiB) total per request: each branch counts each chunk of at most 32 KiB in a shared counter before it keeps it, and the first chunk above the limit stops the read and cancels the other branches (`502 merge_too_large`); buffers grow only to what the branch can keep. `limits.maxInflightMergeBytes` (default `maxMergeBytes`) bounds the fan-out bodies of all concurrent requests of a replica; the oldest reading fan-out waits for space, the others fail (`503 merge_budget_exhausted`). After the merge the budget holds only the merged response, and its write has a deadline (10 s + 1 s per MiB, at most 2 min), so a client that does not read cannot hold the budget. The Go memory limit is 90 percent of the container limit. Fixed 16 MiB for Prometheus labels/series filtering; trace-by-ID and Tempo search buffers use `maxMergeBytes` | All branches together can read up to 32 KiB each past `maxMergeBytes`. The budget counts body bytes only; the merge needs about 5 to 6 x the body bytes (measured), and the single-request filter buffers are outside the budget, so memory is about 6 x `maxInflightMergeBytes` plus `concurrency x maxMergeBytes` for single-request filters. A full budget rejects fan-outs (denial of service, fails closed) |
 | Selector explosion in rewrites | 2048 selector copies for PromQL or-lifting, 256 for `match[]` expansion, parser nesting limit of 100 (LogQL, TraceQL) | |
 | Large request bodies | 1 MiB limit on form bodies; `ReadHeaderTimeout` of 10 s on both listeners | No limits on header size beyond Go defaults |
 | Slow or hanging backends | `limits.upstreamTimeout` per request; dial and write timeouts on tails | Idle client connections |
@@ -406,13 +409,42 @@ and the receiver, so its revocation takes longer:
   multi-cluster hub it shows the policies of **all** spokes, so a dashboard user learns the subjects,
   matchers and tenants of every cluster. Give dashboard access only to people who may see the policies
   of all clusters, for example with `--ui-admin-group`.
+* **DNS rebinding and cross-origin requests against the dashboard.** Other web pages in the browser of a
+  dashboard user must not read the dashboard or use the test bench. This is most important with
+  `--ui-auth=none`, which has no authentication. The dashboard accepts only an allowed host in the `Host`
+  header (`localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and each `--ui-allowed-host`), for
+  the API and the static files, in all authentication modes. A request with a method other than `GET`
+  must also come from the origin of the dashboard. Use `none` only on a loopback address or through a
+  port-forward.
 * **Management port, multi-cluster.** `querdian_cluster_policy_age_seconds` and
   `querdian_cluster_policy_expired` expose the names of all spokes and their sync state.
 * **Privacy.** Usernames and query text are not written to logs or traces by default; the two
-  tracing flags are opt-in. `querdian.policies` records policy names.
+  tracing flags are opt-in. `querdian.policies` records policy names. See section 11.1.
 * **Supply chain.** Dependencies are limited to Apache-2.0 and permissive licences (checked by
   `make licenses`), commits are signed off (DCO), and CI includes CodeQL and OpenSSF Scorecard.
-  There are no signed releases, SBOM or provenance yet because there is no release.
+  Releases have cosign signatures, SBOMs and build-provenance attestations (see
+  [self-assessment.md](self-assessment.md) and [releasing.md](../releasing.md)).
+
+### 11.1 Privacy of the telemetry of Querdian
+
+The traces of Querdian go to a trace backend that can have other readers than the protected data.
+Thus the spans must not disclose the data that the policies protect, and the policies themselves.
+
+* **Query text.** The rewritten query holds the matchers of the policy of the user, and the original
+  query can hold sensitive values. Without `--tracing.record-queries`, no span records query text:
+  not the `querdian.*` attributes, and not the standard HTTP attributes. The server span records
+  only the path. Each `upstream` client span records `url.full` with scheme, host and path only,
+  also for each fan-out request and for the Loki tail handshake. The query string is removed
+  before the client span starts, so the attribute never holds it.
+* **Paths.** Paths are recorded. They can hold values from the client, for example a trace ID or a
+  tag name, but not the matchers of a policy.
+* **Inbound trace context.** By default, the server span does not continue the trace of the client.
+  It starts a new trace and links the trace context of the client. Thus a client cannot select the
+  trace ID, cannot force sampling and cannot put its spans in the same trace as the spans of
+  Querdian. `--tracing.trust-inbound-context` removes this protection. Use it only when all
+  clients that can reach the proxy are trusted. Client baggage is never sent to a backend.
+* **Residual risk.** Span names, `http.route`, decisions, policy names and counts are always
+  recorded. Give access to the trace backend only to people who may know which policies exist.
 
 ## 12. Multi-cluster
 
@@ -511,8 +543,9 @@ backends ([multicluster.md](../multicluster.md#rollback)).
 5. Bearer tokens are valid until expiry; open tails outlive tokens and policy changes, but close
    when a spoke in their terms expires, is suspended or gets a new spec (section 9).
 6. Policy revocation is eventually consistent and survives API outages (section 10).
-7. The proxy has no built-in rate limiting; memory use of merged responses scales with concurrency
-   (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
+7. The proxy has no built-in rate limiting. Fan-out bodies of all requests share one budget, so many
+   concurrent fan-outs fail with 503; the single-request filter buffers are not in that budget and
+   scale with concurrency (section 8). Only the multi-cluster receiver limits the requests of each agent identity (section 12).
 8. Multi-cluster: isolation between spokes relies on the ingest gateway overwriting the cluster label
    (section 1); a compromised receiver can grant the data of all spokes, and a stolen agent cert the
    data of its spoke until a hub admin suspends it (section 12); a revoked spoke policy stays active

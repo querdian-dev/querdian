@@ -30,14 +30,25 @@ backends:
   - {name: m, type: prometheus, url: "http://p:9090", pathPrefix: /prom, namespaceLabel: namespace}
 `
 
+func TestRegexWeightLimitsAtTheBounds(t *testing.T) {
+	c, err := Parse([]byte(base + "limits: {maxRequestRegexWeight: 262144, maxQueryRegexWeight: 1}\n"))
+	if err != nil || c.Limits.MaxRequestRegexWeight != MaxRegexWeightLimit || c.Limits.MaxQueryRegexWeight != 1 {
+		t.Fatalf("%v %+v", err, c.Limits)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	c, err := Parse([]byte(base))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Auth.Claims.Username != DefaultUsernameClaim || c.Auth.Claims.Groups != DefaultGroupsClaim ||
-		c.Limits.MaxPolicyTerms != 16 || c.Backends[0].TenantFederation != FederationNone {
+		c.Limits.MaxPolicyTerms != 16 || c.Limits.MaxQueryRegexWeight != DefaultMaxQueryRegexWeight ||
+		c.Limits.MaxRequestRegexWeight != DefaultMaxRequestRegexWeight || c.Backends[0].TenantFederation != FederationNone {
 		t.Fatalf("defaults not applied: %+v", c)
+	}
+	if c.Limits.MaxInflightMergeBytes != DefaultMaxMergeBytes {
+		t.Fatalf("maxInflightMergeBytes default = %d", c.Limits.MaxInflightMergeBytes)
 	}
 	tempo := strings.Replace(base, "type: prometheus", "type: tempo", 1)
 	c, err = Parse([]byte(tempo))
@@ -127,6 +138,10 @@ func TestValidation(t *testing.T) {
 		{"traceByID on non-tempo", strings.Replace(base, "namespaceLabel: namespace", "namespaceLabel: namespace, traceByID: filter", 1), "only valid on tempo"},
 		{"traceByID invalid", strings.Replace(strings.Replace(base, "prometheus", "tempo", 1), "namespaceLabel: namespace", "namespaceLabel: namespace, traceByID: maybe", 1), "traceByID"},
 		{"negative limit", base + "limits: {maxFanout: -1}\n", "limits must be positive"},
+		{"negative inflight merge bytes", base + "limits: {maxInflightMergeBytes: -1}\n", "limits must be positive"},
+		{"inflight below merge bytes", base + "limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 999}\n", "must be at least limits.maxMergeBytes"},
+		{"negative regex weight", base + "limits: {maxQueryRegexWeight: -1}\n", "maxQueryRegexWeight must be between"},
+		{"regex weight too large", base + "limits: {maxRequestRegexWeight: 262145}\n", "maxRequestRegexWeight must be between"},
 		{"bad duration", base + "limits: {upstreamTimeout: soon}\n", "invalid duration"},
 	}
 	for _, tc := range tests {
@@ -226,19 +241,28 @@ func TestFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.ConfigFile != "/etc/querdian/config.yaml" || f.Listen != ":8080" || f.ManagementListen != ":9090" ||
-		!f.LeaderElect || f.LogLevel != "info" || f.LogFormat != "json" || f.RecordUser || f.RecordQueries {
+		!f.LeaderElect || f.LogLevel != "info" || f.LogFormat != "json" || f.RecordUser || f.RecordQueries || f.TrustInboundContext {
 		t.Fatalf("defaults wrong: %+v", f)
 	}
 	if err := f.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, mut := range map[string]func(*Flags){
-		"same listeners":   func(f *Flags) { f.Listen = f.ManagementListen },
-		"bad level":        func(f *Flags) { f.LogLevel = "loud" },
-		"ui same as proxy": func(f *Flags) { f.UIListen = f.Listen },
-		"bad ui auth":      func(f *Flags) { f.UIListen = ":8081"; f.UIAuth = "basic" },
-		"bad format":       func(f *Flags) { f.LogFormat = "xml" },
-		"empty config":     func(f *Flags) { f.ConfigFile = "" },
+		"same listeners":         func(f *Flags) { f.Listen = f.ManagementListen },
+		"bad level":              func(f *Flags) { f.LogLevel = "loud" },
+		"ui same as proxy":       func(f *Flags) { f.UIListen = f.Listen },
+		"bad ui auth":            func(f *Flags) { f.UIListen = ":8081"; f.UIAuth = "basic" },
+		"ui host port":           func(f *Flags) { f.UIAllowedHosts = []string{"querdian.example.com:443"} },
+		"ui host empty":          func(f *Flags) { f.UIAllowedHosts = []string{""} },
+		"ui host wildcard":       func(f *Flags) { f.UIAllowedHosts = []string{"*.example.com"} },
+		"ui host url":            func(f *Flags) { f.UIAllowedHosts = []string{"https://querdian.example.com"} },
+		"ui host list":           func(f *Flags) { f.UIAllowedHosts = []string{"a.example.com,b.example.com"} },
+		"ui host mapped":         func(f *Flags) { f.UIAllowedHosts = []string{"::ffff:10.0.0.5"} },
+		"ui host unspecified":    func(f *Flags) { f.UIAllowedHosts = []string{"0.0.0.0"} },
+		"ui host unspecified v6": func(f *Flags) { f.UIAllowedHosts = []string{"[::]"} },
+		"ui host numeric":        func(f *Flags) { f.UIAllowedHosts = []string{"10.0.0.256"} },
+		"bad format":             func(f *Flags) { f.LogFormat = "xml" },
+		"empty config":           func(f *Flags) { f.ConfigFile = "" },
 	} {
 		g := *f
 		mut(&g)
@@ -248,10 +272,95 @@ func TestFlags(t *testing.T) {
 	}
 	fs = flag.NewFlagSet("t", flag.ContinueOnError)
 	f = RegisterFlags(fs)
-	if err := fs.Parse([]string{"--tracing.record-user", "--leader-elect=false", "--log-format=text"}); err != nil {
+	if err := fs.Parse([]string{"--tracing.record-user", "--leader-elect=false", "--log-format=text", "--tracing.trust-inbound-context"}); err != nil {
 		t.Fatal(err)
 	}
-	if !f.RecordUser || f.LeaderElect || f.LogFormat != "text" {
+	if !f.RecordUser || f.LeaderElect || f.LogFormat != "text" || !f.TrustInboundContext {
 		t.Fatalf("parse wrong: %+v", f)
+	}
+	if len(f.UIAllowedHosts) != 0 {
+		t.Fatalf("default allowed hosts: %v", f.UIAllowedHosts)
+	}
+}
+
+func TestUIAllowedHostFlag(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	f := RegisterFlags(fs)
+	err := fs.Parse([]string{"--ui-listen=:8081", "--ui-allowed-host=Querdian.Example.com",
+		"--ui-allowed-host", "10.0.0.5", "--ui-allowed-host=[fd00::1]", "--ui-allowed-host=fd00:0::2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.UIAllowedHosts, " "); got != "Querdian.Example.com 10.0.0.5 [fd00::1] fd00:0::2" {
+		t.Fatalf("parse: %q", got)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"Querdian.Example.COM":           "querdian.example.com",
+		"localhost":                      "localhost",
+		"10.0.0.5":                       "10.0.0.5",
+		"[FD00::1]":                      "fd00::1",
+		"fd00::1":                        "fd00::1",
+		"fd00:0::1":                      "fd00::1",
+		"[FD00:0000:0::1]":               "fd00::1",
+		"0:0:0:0:0:0:0:1":                "::1",
+		"::ffff:1.2.3.4":                 "",
+		"[::ffff:1.2.3.4]":               "",
+		"[fd00::1":                       "",
+		"fd00::1]":                       "",
+		":::":                            "",
+		"0.0.0.0":                        "",
+		"::":                             "",
+		"[::]":                           "",
+		"[0:0::0]":                       "",
+		"10.0.0.256":                     "",
+		"999.1.1.1":                      "",
+		"1.2.3":                          "",
+		"123":                            "",
+		"a.123":                          "",
+		"123.a":                          "123.a",
+		"1-2":                            "1-2",
+		"a.1a":                           "a.1a",
+		"":                               "",
+		"example.com.":                   "",
+		"-bad.example.com":               "",
+		"bad-.example.com":               "",
+		"a..b":                           "",
+		"host:8081":                      "",
+		"[10.0.0.5]":                     "",
+		"[host]":                         "",
+		"*.example.com":                  "",
+		"exa mple.com":                   "",
+		"exa_mple.com":                   "",
+		"fe80::1%eth0":                   "",
+		strings.Repeat("a", 64) + ".com": "",
+	} {
+		if got := NormalizeHost(in); got != want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestInflightMergeBytesDefault(t *testing.T) {
+	for _, tc := range []struct {
+		limits string
+		want   int64
+	}{
+		{"limits: {maxMergeBytes: 1000}\n", 1000},
+		{"limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 3000}\n", 3000},
+		{"limits: {maxMergeBytes: 9223372036854775807}\n", 9223372036854775807},
+	} {
+		c, err := Parse([]byte(base + tc.limits))
+		if err != nil {
+			t.Fatalf("%q: %v", tc.limits, err)
+		}
+		if c.Limits.MaxInflightMergeBytes != tc.want {
+			t.Errorf("%q: maxInflightMergeBytes = %d, want %d", tc.limits, c.Limits.MaxInflightMergeBytes, tc.want)
+		}
 	}
 }

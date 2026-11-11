@@ -6,6 +6,7 @@ import (
 
 	"github.com/querdian-dev/querdian/internal/enforce"
 	"github.com/querdian-dev/querdian/internal/policy"
+	"github.com/querdian-dev/querdian/internal/regexcost"
 	"github.com/querdian-dev/querdian/internal/routes"
 	lq "github.com/querdian-dev/querdian/pkg/logql"
 )
@@ -51,7 +52,7 @@ func optionalQueryBranches(params url.Values, param string, eff policy.Effective
 	var q *lq.Query
 	if raw := params.Get(param); raw != "" {
 		var err error
-		if q, err = parseSelectorQuery(raw, eff.DeniedLabels); err != nil {
+		if q, err = parseSelectorQuery(raw, eff.DeniedLabels, enforce.QueryRegexLimit(eff), regexcost.MaxQueryRegexBytes); err != nil {
 			return nil, "", err
 		}
 	}
@@ -64,7 +65,11 @@ func optionalQueryBranches(params url.Values, param string, eff policy.Effective
 		}
 		return []branch{{query: params.Get(param), term: -1}}, "passthrough", nil
 	}
-	terms, err := injectTerms(eff)
+	selectors, clientWeight := 1, 0
+	if q != nil {
+		selectors, clientWeight = len(q.Selectors), q.RegexWeight
+	}
+	terms, err := injectTerms(eff, selectors, clientWeight)
 	if err != nil {
 		return nil, "", err
 	}
@@ -91,11 +96,12 @@ func optionalQueryBranches(params url.Values, param string, eff policy.Effective
 }
 
 // parseSelectorQuery parses a client-supplied selector parameter: it must be a log query (stream selector with
-// optional pipeline), not a metric query, and must not reference denied labels.
-func parseSelectorQuery(raw string, denied []string) (*lq.Query, error) {
-	q, err := lq.Parse(raw)
+// optional pipeline), not a metric query, and must not reference denied labels. left is the program size that
+// its regexes may have.
+func parseSelectorQuery(raw string, denied []string, left, bytesLeft int) (*lq.Query, error) {
+	q, err := parseClient(raw, left, bytesLeft)
 	if err != nil {
-		return nil, enforce.Errorf(enforce.ErrParse, "%v", err)
+		return nil, err
 	}
 	if q.Kind != lq.KindLog {
 		return nil, enforce.Errorf(enforce.ErrUnsupported, "a log stream selector is required, not a metric query")
@@ -110,10 +116,14 @@ func parseSelectorQuery(raw string, denied []string) (*lq.Query, error) {
 	return q, nil
 }
 
-// injectTerms converts the policy terms of a restricted grant.
-func injectTerms(eff policy.Effective) ([][]lq.InjectMatcher, error) {
+// injectTerms converts the policy terms of a restricted grant for injection into the given number of
+// selectors, whose client regexes have the given weight.
+func injectTerms(eff policy.Effective, selectors, clientWeight int) ([][]lq.InjectMatcher, error) {
 	if len(eff.Terms) == 0 {
 		return nil, enforce.Errorf(enforce.ErrUnsupported, "effective policy has no terms")
+	}
+	if err := enforce.CheckRequest(selectors, clientWeight, eff); err != nil {
+		return nil, err
 	}
 	terms := make([][]lq.InjectMatcher, len(eff.Terms))
 	for i, t := range eff.Terms {
@@ -149,11 +159,14 @@ func branchPlan(params url.Values, param string, branches []branch, strategy str
 func planSeries(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 	const param = "match[]"
 	var users []*lq.Query
+	left, bytesLeft := enforce.QueryRegexLimit(eff), regexcost.MaxQueryRegexBytes // for all match[] values together
 	for _, raw := range params[param] {
-		q, err := parseSelectorQuery(raw, eff.DeniedLabels)
+		q, err := parseSelectorQuery(raw, eff.DeniedLabels, left, bytesLeft)
 		if err != nil {
 			return enforce.Plan{}, err
 		}
+		left -= q.RegexWeight
+		bytesLeft -= q.RegexBytes
 		users = append(users, q)
 	}
 	c := make(url.Values, len(params))
@@ -169,7 +182,12 @@ func planSeries(params url.Values, eff policy.Effective) (enforce.Plan, error) {
 			}
 		}
 	} else {
-		terms, err := injectTerms(eff)
+		selectors, clientWeight := 0, 0
+		for _, q := range users {
+			selectors += len(q.Selectors)
+			clientWeight += q.RegexWeight
+		}
+		terms, err := injectTerms(eff, selectors, clientWeight)
 		if err != nil {
 			return enforce.Plan{}, err
 		}

@@ -113,7 +113,7 @@ func TestStreamStripsClientHeadersAndSetsTenant(t *testing.T) {
 
 			r := clientRequest(http.MethodGet, "/prom/api/v1/query?query=up&time=1", "")
 			r.Header.Set("X-Tenant", "evil-tenant")
-			w := httptest.NewRecorder()
+			w := newRecorder()
 			plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {`up{namespace="a"}`}, "time": {"1"}}, Term: -1}}, Merge: enforce.MergeNone}
 			newProxy().Execute(w, r, Target{Backend: backend(t, up.URL, tc.tenantHeader), Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query", Effective: policy.Effective{Tenants: tc.tenants}}, plan, nil)
 
@@ -196,7 +196,7 @@ func TestStreamForwardsOnlyAllowListedHeaders(t *testing.T) {
 			b := backend(t, up.URL, "X-Scope-OrgID")
 			b.Type, b.ForwardHeaders = tc.typ, tc.forward
 			plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}}
-			newProxy().Execute(httptest.NewRecorder(), r, Target{Backend: b, Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query", Effective: policy.Effective{Tenants: []string{"t1"}}}, plan, nil)
+			newProxy().Execute(newRecorder(), r, Target{Backend: b, Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query", Effective: policy.Effective{Tenants: []string{"t1"}}}, plan, nil)
 
 			got := rc.last(t)
 			if !slices.Contains(tc.forward, "Accept-Encoding") && got.Header.Get("Accept-Encoding") == "gzip" {
@@ -241,7 +241,7 @@ func TestStreamRejectsProtocolSwitch(t *testing.T) {
 			r.Header.Set("Upgrade", "websocket")
 		}
 		hookRan := false
-		w := httptest.NewRecorder()
+		w := newRecorder()
 		plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}, ResponseFilter: filterFn}
 		newProxy().Execute(w, r, Target{Backend: backend(t, up.URL, ""), Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query",
 			ModifyResponse: func(*http.Response) error { hookRan = true; return nil }}, plan, nil)
@@ -266,7 +266,7 @@ func TestStreamPostForwardedWithEmptyURLQuery(t *testing.T) {
 	defer up.Close()
 
 	r := clientRequest(http.MethodPost, "/prom/api/v1/query", "query=original")
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodPost)
 	plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {`up{namespace="a"}`}}, Term: -1}}}
 	newProxy().Execute(w, r, Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, plan, nil)
@@ -289,7 +289,7 @@ func TestStreamBackendPathPrefixAndUpstreamFailure(t *testing.T) {
 	up := httptest.NewServer(rc.handler(200, "{}"))
 	defer up.Close()
 	b := backend(t, up.URL+"/base/", "")
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}}
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=up", ""), Target{Backend: b, Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query"}, plan, nil)
 	if got := rc.last(t); got.Path != "/base/api/v1/query" {
@@ -297,7 +297,7 @@ func TestStreamBackendPathPrefixAndUpstreamFailure(t *testing.T) {
 	}
 
 	up.Close() // connection refused -> JSON 502 without leaking the address
-	w = httptest.NewRecorder()
+	w = newRecorder()
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=up", ""), Target{Backend: b, Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query"}, plan, nil)
 	var body ErrorBody
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 502 || body.ErrorType != "upstream" ||
@@ -310,7 +310,7 @@ func TestStreamResponseHeaderTraceIDNotFromUpstream(t *testing.T) {
 	rc := &recorder{}
 	up := httptest.NewServer(rc.handler(200, "{}"))
 	defer up.Close()
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	plan := enforce.Plan{Requests: []enforce.Upstream{{Query: url.Values{"query": {"up"}}, Term: -1}}}
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=up", ""), Target{Backend: backend(t, up.URL, ""), Endpoint: queryEndpoint(), UpstreamPath: "/api/v1/query"}, plan, nil)
 	if got := w.Header().Values(TraceHeader); len(got) != 1 || got[0] != "4bf92f3577b34da6a3ce929d0e0e4736" {
@@ -337,7 +337,7 @@ func TestFanoutHeadersAndMerge(t *testing.T) {
 	rc := &recorder{}
 	up := httptest.NewServer(rc.handler(200, "R"))
 	defer up.Close()
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), Target{
 		Backend: backend(t, up.URL, "X-Scope-OrgID"), Endpoint: ep, UpstreamPath: "/api/v1/query", Effective: policy.Effective{Tenants: []string{"t1", "t2"}},
@@ -363,12 +363,57 @@ func TestFanoutHeadersAndMerge(t *testing.T) {
 	}
 }
 
+// A fan-out that finds the shared budget full while an older fan-out still reads fails closed with 503 and
+// reports it through Target.Rejected. During the merge the budget holds the bodies; after the request it
+// holds nothing.
+func TestFanoutBudgetExhausted(t *testing.T) {
+	up := httptest.NewServer((&recorder{}).handler(200, strings.Repeat("x", 400)))
+	defer up.Close()
+	p := newProxy()
+	p.Limits.MaxMergeBytes = 1000
+	p.Budget = fanout.NewBudget(1000)
+	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
+	var exhausted int
+	target := Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query", Rejected: func(reason string) {
+		if reason == ReasonMergeBudgetExhausted {
+			exhausted++
+		}
+	}}
+
+	// An older fan-out holds 600 bytes and still reads.
+	release := holdBudget(t, p.Budget, 600)
+	w := newRecorder()
+	p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=y", ""), target, fanPlan(2), concat)
+	var body ErrorBody
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if w.Code != http.StatusServiceUnavailable || body.ErrorType != "unavailable" || w.Header().Get("Retry-After") == "" || exhausted != 1 {
+		t.Fatalf("got %d %s, Retry-After %q, callback calls %d", w.Code, w.Body.String(), w.Header().Get("Retry-After"), exhausted)
+	}
+	if got := p.Budget.InUse(); got != 600 {
+		t.Fatalf("the failed request must release its bytes: in use = %d", got)
+	}
+	release()
+
+	// With the budget free again, the same request passes.
+	w = newRecorder()
+	p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), target, fanPlan(2),
+		func(w http.ResponseWriter, r *http.Request, resps []fanout.Response) error {
+			if got := p.Budget.InUse(); got != 800 {
+				t.Errorf("budget in use during the merge = %d, want 800", got)
+			}
+			return concat(w, r, resps)
+		})
+	if w.Code != 200 || w.Body.Len() != 800 || exhausted != 1 || p.Budget.InUse() != 0 {
+		t.Fatalf("after release: %d, %d bytes, callback calls %d, in use %d", w.Code, w.Body.Len(), exhausted, p.Budget.InUse())
+	}
+}
+
 func TestFanoutMergeTooLargeAndBranchFailure(t *testing.T) {
 	big := httptest.NewServer((&recorder{}).handler(200, strings.Repeat("x", 600)))
 	defer big.Close()
 	p := newProxy()
 	p.Limits.MaxMergeBytes = 1000
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
 	p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), Target{Backend: backend(t, big.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, fanPlan(2), concat)
 	var body ErrorBody
@@ -379,14 +424,14 @@ func TestFanoutMergeTooLargeAndBranchFailure(t *testing.T) {
 
 	bad := httptest.NewServer((&recorder{}).handler(500, "internal details"))
 	defer bad.Close()
-	w = httptest.NewRecorder()
+	w = newRecorder()
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), Target{Backend: backend(t, bad.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, fanPlan(2), concat)
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if w.Code != 502 || body.ErrorType != "upstream" {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
 
-	w = httptest.NewRecorder()
+	w = newRecorder()
 	newProxy().Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""), Target{Backend: backend(t, bad.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, fanPlan(2), nil)
 	if w.Code != 502 {
 		t.Fatalf("fan-out without merger must fail closed, got %d", w.Code)
@@ -394,7 +439,7 @@ func TestFanoutMergeTooLargeAndBranchFailure(t *testing.T) {
 }
 
 func TestUnavailableAndWriteError(t *testing.T) {
-	w := httptest.NewRecorder()
+	w := newRecorder()
 	Unavailable(w, clientRequest(http.MethodGet, "/x", ""))
 	var body ErrorBody
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
@@ -402,7 +447,7 @@ func TestUnavailableAndWriteError(t *testing.T) {
 		t.Fatalf("got %d %s", w.Code, w.Body.String())
 	}
 	// Without a span the trace ID is empty and no header is set.
-	w = httptest.NewRecorder()
+	w = newRecorder()
 	WriteError(w, httptest.NewRequest(http.MethodGet, "/x", nil), 400, "bad_data", "m")
 	if w.Header().Get(TraceHeader) != "" || !strings.Contains(w.Body.String(), `"traceId":""`) {
 		t.Fatalf("got %v %s", w.Header(), w.Body.String())
@@ -413,9 +458,9 @@ func TestFilterMerger(t *testing.T) {
 	up := httptest.NewServer((&recorder{}).handler(200, "SECRET"))
 	defer up.Close()
 	ep := routes.Lookup(config.BackendPrometheus, "/api/v1/query", http.MethodGet)
-	run := func(m Merger, limit int64) *httptest.ResponseRecorder {
+	run := func(m Merger, limit int64) *deadlineRecorder {
 		p := newProxy()
-		w := httptest.NewRecorder()
+		w := newRecorder()
 		p.Execute(w, clientRequest(http.MethodGet, "/prom/api/v1/query?query=x", ""),
 			Target{Backend: backend(t, up.URL, ""), Endpoint: ep, UpstreamPath: "/api/v1/query"}, fanPlan(2), FilterMerger(m, filterFn, limit))
 		return w
@@ -455,4 +500,19 @@ func filterFn(b []byte) ([]byte, error) {
 		return nil, errors.New("cannot filter")
 	}
 	return []byte(strings.ReplaceAll(string(b), "SECRET", "redacted")), nil
+}
+
+// deadlineRecorder is a ResponseRecorder that accepts a write deadline, like the writer of net/http.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines int
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(time.Time) error {
+	d.deadlines++
+	return nil
+}
+
+func newRecorder() *deadlineRecorder {
+	return &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
 }

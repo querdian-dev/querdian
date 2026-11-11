@@ -1,0 +1,13 @@
+Copied from the Go standard library, package regexp/syntax (BSD-3-Clause, see LICENSE in this directory)
+version: go1.27.3
+files:   parse.go, regexp.go, perl_groups.go, op_string.go (src/regexp/syntax)
+
+Querdian changes (marked "Querdian" in the code):
+- package name regexparse;
+- a work counter with a budget (parser.work, parser.budget, parser.charge, ErrBudget, ParseBudget);
+- the class helpers (appendRange, appendFoldedRange, cleanClass, ...) are methods of the parser, so that
+  they can count their work.
+- calcSize, calcHeight, repeatIsValid, collapse, factor and the \Q...\E loop count their work too. Each
+  loop of parse.go has a comment that says where it is charged or why it is bounded. factor compares
+  subexpressions with parser.equal, a counted copy of Regexp.Equal. The other functions of regexp.go
+  (String, Equal, MaxCap) do not run in ParseBudget.

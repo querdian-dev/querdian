@@ -28,18 +28,20 @@ lists every reason the server can set.
 | `internal` | error | 500 | `internal` | The authentication middleware passed a request without an identity. Should not happen. | Report a bug with the trace ID. |
 | `no_grant` | deny | 403 | `forbidden` | No active rule grants this user (by username or any group) access to this backend. | Check the user's groups in the token, the policy's `subjects`, the backend name in the rules, and that the policy is `Ready` (`kubectl get cap,ap`). A policy in `TenantNotAssigned` or any other failing status grants nothing. |
 | `policy_source_expired` | deny | 403 | `forbidden` | Multi-cluster only. Rules grant this user access to the backend, but every rule that gives a term comes from a spoke that is expired or suspended (no valid sync within `maxStaleness`, `suspended: true`, `SpokeCluster` changed or deleted). The message does not name the cluster. | `kubectl get spokeclusters` (`LastSync`, `Suspended`) and `querdian_cluster_policy_expired`; check the agent in the spoke and the receiver logs. The next valid sync restores the grants. See [multicluster.md](multicluster.md#time-limit-and-outages). |
-| `policy_too_complex` | deny | 403 | `forbidden` | The user's merged policy has more than `limits.maxPolicyTerms` terms. | Simplify the policies (fewer, broader rules or rules that differ in one label so they merge), or raise the limit knowingly. |
+| `policy_too_complex` | deny | 403 | `forbidden` | The user's merged policy has more than `limits.maxPolicyTerms` terms, or the matched rules are over a fixed limit of the work for one request (more than 4096 terms, 32768 matchers or 1 MiB of matcher text before the simplification, too many simplification steps, or a [weight](policy-guide.md#size-limits) of more than 32768 after the simplification). | Simplify the policies (fewer, broader rules or rules that differ in one label so they merge), or raise the limit knowingly. |
 | `cross_tenant_union_unsupported` | deny | 403 | `forbidden` | The user has rules in several tenants with differing terms on a backend with `tenantFederation: none`. | Give the user identical rules in each tenant, use one tenant, or use a backend that supports `__tenant_id__` filtering. See the `CrossTenantUnionUnsupported` status. |
 | `resolve_failed` | error | 500 | `internal` | Policy resolution failed unexpectedly (for example the backend is unknown to the snapshot). | Report a bug with the trace ID; check that the config of all replicas matches. |
 | `trace_by_id_denied` | deny | 403 | `forbidden` | A trace-by-ID request on a Tempo backend with `traceByID: deny` (the default). | Set `traceByID: filter` on the backend if trace lookup by ID is wanted. |
 | `bad_request` | deny | 400 | `bad_data` | The request does not satisfy the normalisation rules: method not allowed, POST without a form content type, body over 1 MiB, a parameter whose name does not end in `[]` given more than once, or a parameter that is not on the route's allow-list. The message names it. | Fix the client; remove unsupported parameters (for example `storeMatch[]`, Tempo `tags`). |
-| `query_too_complex` | deny | 403 | `forbidden` | The plan needs more upstream requests than `limits.maxFanout`, or the query would expand to too many selector copies (more than 2048 for PromQL or-lifting, more than 256 for Prometheus `match[]`). | Narrow the query, simplify the policy, or raise `maxFanout` (this multiplies backend load). |
+| `query_too_complex` | deny | 403 | `forbidden` | The plan needs more upstream requests than `limits.maxFanout`, or the query would expand to too many selector copies (more than 2048 for PromQL or-lifting, more than 256 for Prometheus `match[]`), the regexes that the request would compile have a [weight](policy-guide.md#size-limits) of more than `limits.maxRequestRegexWeight` (default 131072; (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight), or the regexes of the query have a weight of more than `limits.maxQueryRegexWeight` (default 32768). The message says which. | For `maxFanout`: narrow the query, simplify the policy, or raise `maxFanout` (this multiplies backend load). For the regex weight of the request: split the query into queries with fewer selectors, use fewer or shorter regexes, or make the policy smaller. For the regexes of the query: use shorter regexes, fewer Unicode classes, no case folding on classes, or fewer counted repetitions. |
 | `enforcer_unavailable` | error | 503 | `unavailable` | No enforcer is registered for the backend type, or tailing is not available. Restricted requests fail closed. | Report a bug; this indicates a build or wiring problem. |
-| `denied_label` | deny | 403 | `forbidden` | The query, `match[]`, path (`label/<name>/values`, tag values) or `targetLabels` references a label or attribute denied by the user's policy, or (LogQL) a template that could read it. The message names the label. | Remove the reference from the query or dashboard variable, or change `labels.deny`. Remember that one matched rule's denied labels apply to the whole request. |
+| `denied_label` | deny | 403 | `forbidden` | The query, `match[]`, path (`label/<name>/values`, tag values) or `targetLabels` references a label or attribute denied by the user's policy, or (LogQL) a template that could read it. The message names the label, `(template reading all labels)` for a LogQL template with a node or function outside the allow-list, or `(template that does not parse)` for a LogQL template that is not a valid Go template. | Remove the reference from the query or dashboard variable, or change `labels.deny`. Remember that one matched rule's denied labels apply to the whole request. |
 | `parse_error` | deny | 400 | `bad_data` | The query (or `match[]`) did not parse. Querdian's parsers are stricter than the backends', see [limitations.md](limitations.md). The message carries the position. | Fix the query; if valid for the backend, check the strictness list. |
 | `unsupported` | deny | 400 | `bad_data` | The query is valid but cannot be rewritten exactly for the user's policy (for example a PromQL range vector that cannot be or-lifted, a LogQL aggregation with `by` over several terms, a metric query where a selector is required, Tempo legacy parameters, tenant-bound terms on Tempo), or the rewritten query did not re-parse. | See the message and [limitations.md](limitations.md). Rewrite the query or simplify the user's policy to one term. |
 | `enforcement_error` | error | 500 | `internal` | An untyped, unexpected error in an enforcer. Fails closed. | Report a bug with the trace ID. |
 | `trace_filter_failed` | error | 500 | `internal` | The trace-by-ID filter could not be built from the user's policy (for example a tenant-bound term on Tempo or an unscoped attribute name). | Check the policy attribute names (`resource.x`, `span.x`) and tenant setup. |
+| `merge_budget_exhausted` | error | 503 | `unavailable` | The request was allowed and fanned out, but the buffered fan-out bodies of all concurrent requests of the replica reached `limits.maxInflightMergeBytes`, and an older fan-out had the first claim on the space. The request fails closed; the response has `Retry-After` (1 to 3 seconds). | Try again. If it occurs often, reduce concurrent large fan-outs (narrow queries, fewer policy terms), add replicas, or raise `maxInflightMergeBytes` together with the pod memory limit (see [operations.md](operations.md#scaling)). |
+| `write_not_bounded` | error | 500 | `internal` | The merged response of a fan-out was ready, but the response writer cannot set a write deadline (message `cannot bound the response write`). The request fails closed, because without a deadline a client that does not read could hold the memory budget. The listeners of Querdian support write deadlines, so this indicates a build or wiring problem. | Report a bug with the trace ID. |
 | `upstream_error` | error | 5xx (normally 502) | `upstream` or `merge_too_large` | The request was allowed but the response status was 5xx: the backend failed, a fan-out branch failed, the timeout elapsed, the buffered merge exceeded `limits.maxMergeBytes`, a filter could not process the body, or a WebSocket tail could not connect. | See "Upstream errors" below. |
 
 Authentication failure sub-reasons (`querdian_auth_failures_total{reason}`; the HTTP response is
@@ -48,7 +50,7 @@ Authentication failure sub-reasons (`querdian_auth_failures_total{reason}`; the 
 `audience`, `issuer`, `missing_username`.
 
 Policy compile status reasons (`Compiled`, `InvalidMatcher`, `UnknownBackend`, `TenantRequired`,
-`TenantNotAssigned`, `CrossTenantUnionUnsupported`, and in a multi-cluster setup
+`TenantNotAssigned`, `CrossTenantUnionUnsupported`, `PolicyTooLarge`, and in a multi-cluster setup
 `InvalidClusterScope`, `TenantNotAllowed`, `MulticlusterDisabled`, `SpokeClusterNotFound`,
 `SpokeClusterInvalid`, `InvalidSpokePolicy`) are on the policy objects, not on requests; see
 [policy-guide.md](policy-guide.md#status-conditions).
@@ -112,7 +114,7 @@ topk(10, sum by (backend, endpoint, reason) (increase(querdian_requests_total{de
 Any request that failed closed unexpectedly (should be zero):
 
 ```promql
-sum by (reason) (increase(querdian_requests_total{reason=~"internal|resolve_failed|enforcement_error|trace_filter_failed|enforcer_unavailable"}[15m])) > 0
+sum by (reason) (increase(querdian_requests_total{reason=~"internal|resolve_failed|enforcement_error|trace_filter_failed|enforcer_unavailable|write_not_bounded"}[15m])) > 0
 ```
 
 Denied-label rejections and unsupported queries (the two reasons users complain about most):
@@ -259,6 +261,18 @@ Snapshot rebuilds (controller root spans):
    `maxMergeBytes`.
 7. **Cross-tenant requests fail upstream with 4xx/5xx.** The backend must have federation enabled
    for `t1|t2` tenant headers; see [policy-guide.md](policy-guide.md#tenants).
+
+## Policy dashboard
+
+The [policy dashboard](dashboard.md) answers some requests with these statuses. Each has a JSON body
+`{"status":"error","error":"..."}`. With `--log-level=debug`, Querdian logs each `403` of this table as
+`dashboard request refused`, with the reason and the first 64 bytes of the `Host` header.
+
+| Status | Message | Cause | What to do |
+|---|---|---|---|
+| 403 | `host not allowed` | The `Host` header is empty or names a host that is not allowed. The dashboard accepts only `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and each `--ui-allowed-host`, with any port. This often occurs behind an Ingress or a proxy, or with a URL that uses the IP address or the DNS name of the node. | Open the dashboard through `kubectl port-forward` and `http://localhost:<port>`, or add the host name of the URL with `--ui-allowed-host` (Helm: `ui.allowedHosts`). Add only the names of your own Ingress or proxy. |
+| 403 | `cross-origin request not allowed` | A request with a method other than `GET` (the test bench) has an `Origin` header with a different host or port than the `Host` header, or a `Sec-Fetch-Site` header other than `same-origin` or `none`. A proxy that changes the `Host` header causes this. | Make the Ingress or proxy keep the `Host` header of the browser. Send test bench requests from the dashboard page only. |
+| 500 | `dashboard authentication not configured` | A wiring error: the dashboard handler has no authentication mode. It serves nothing. | Report a bug. |
 
 ## Receiver HTTP statuses
 
