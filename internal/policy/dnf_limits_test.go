@@ -228,6 +228,38 @@ func TestMergedWeightIsUpperBound(t *testing.T) {
 	}
 }
 
+// TestMergedWeightIsUpperBoundManyValues: the weight stays an upper bound when one merge joins hundreds of
+// values, as for a Grafana "All" variable, also with regex values among them.
+func TestMergedWeightIsUpperBoundManyValues(t *testing.T) {
+	for _, n := range []int{100, 300, 500} {
+		var in []Term
+		for i := 0; i < n; i++ {
+			spec := fmt.Sprintf("namespace=ns-%03d", i)
+			if i%10 == 0 {
+				spec = fmt.Sprintf("namespace=~team-%03d-[a-z]+", i)
+			}
+			in = append(in, tm("", spec))
+		}
+		eff, err := Normalise(in, config.Limits{MaxPolicyTerms: 1 << 20})
+		if err != nil {
+			if n > 100 && errors.Is(err, ErrTooComplex) {
+				continue // over the result limit: rejected, so no compile happens
+			}
+			t.Fatal(err)
+		}
+		if n == 100 && len(eff.Terms) != 1 {
+			t.Fatalf("100 values: want one merged term, got %d", len(eff.Terms))
+		}
+		for _, term := range eff.Terms {
+			for _, m := range term.Matchers {
+				if exact := weight(m.Op, m.Value); m.Weight() < exact {
+					t.Fatalf("%d values: %s has weight %d, its program %d", n, m.k, m.Weight(), exact)
+				}
+			}
+		}
+	}
+}
+
 // TestMergeSingleLabelLongTerms: a term with many matchers on different labels must not cost memory that
 // grows with the square of its matchers.
 func TestMergeSingleLabelLongTerms(t *testing.T) {

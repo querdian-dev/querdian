@@ -283,11 +283,13 @@ func TestRefusalsAreLogged(t *testing.T) {
 // FuzzHostOf: only the loopback names, with an optional port of digits, pass the default allow-list.
 func FuzzHostOf(f *testing.F) {
 	for _, s := range []string{"localhost", "localhost:8081", "[::1]:8081", "127.0.0.1", "::1", "[[::1]]", "evil.net:80",
-		"localhost:", "[localhost]", "LOCALHOST:1", "localhost:8081:1", "", "[0:0::1]", "[::ffff:127.0.0.1]"} {
+		"localhost:", "[localhost]", "LOCALHOST:1", "localhost:8081:1", "", "[0:0::1]", "[::ffff:127.0.0.1]", "[::0.0.0.1]"} {
 		f.Add(s)
 	}
 	allowed := allowedHosts("", nil)
-	loopback := regexp.MustCompile(`^(localhost|127\.0\.0\.1|\[([0-9a-f:]+)\])(:[0-9]*)?$`)
+	// An IPv6 literal can end with dotted digits: [::0.0.0.1] is the address ::1. The IPv4-mapped form
+	// [::ffff:127.0.0.1] is a different address and is not loopback here.
+	loopback := regexp.MustCompile(`^(localhost|127\.0\.0\.1|\[([0-9a-f:.]+)\])(:[0-9]*)?$`)
 	f.Fuzz(func(t *testing.T, s string) {
 		h := hostOf(s)
 		if h != strings.ToLower(h) {

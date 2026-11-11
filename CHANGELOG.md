@@ -110,8 +110,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Security
 
-* **Go 1.27.4.** The binary and the images are built with Go 1.27.4, which fixes the `net/http`
-  vulnerability GO-2026-6859 of Go 1.27.3.
+* **Go 1.27.4.** Affects 0.1.2 and earlier. The binary and the images are built with Go 1.27.4,
+  which fixes the `net/http` vulnerability GO-2026-6859 of Go 1.27.3.
 * **LogQL templates could print denied and redacted labels**. Affects 0.1.2 and earlier.
   The check of `line_format` and `label_format` templates was a text scan, and some templates could
   pass it and print all labels, including labels in `labels.deny` and `labels.redact`. Querdian now
