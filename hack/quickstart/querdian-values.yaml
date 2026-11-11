@@ -38,7 +38,7 @@ config:
   auth:
     # The issuer string must equal the `iss` claim of the tokens byte for byte. It resolves on the
     # laptop (localtest.me -> 127.0.0.1, kind port mapping) and inside the cluster (CoreDNS
-    # rewrite to the Keycloak Service), see docs/quickstart.md.
+    # rewrite to the Keycloak Service), see docs/quickstart-details.md.
     issuer: http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability
     audiences: [querdian]
     claims:

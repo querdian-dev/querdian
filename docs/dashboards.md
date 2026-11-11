@@ -154,7 +154,7 @@ and `isolation`. The JSON lives in `hack/quickstart/dashboards/`, `up.sh` packs 
 `grafana-dashboards` and a file provider (`grafana-dashboard-provider`) loads it. They only use the
 three provisioned data sources (`prometheus`, `loki`, `tempo`, all via Querdian with OAuth
 pass-through) and only constructs Querdian accepts; what each one shows is described in
-[quickstart.md](quickstart.md#dashboards).
+the [quickstart reference](quickstart-details.md#dashboards).
 
 Checks: `go test ./hack/quickstart/dashboards/` parses every PromQL expression with the Prometheus
 parser, every LogQL expression with `pkg/logql` and every TraceQL query with `pkg/traceql` (the same

@@ -11,6 +11,7 @@
     - dashboards | Grafana dashboard
 - title: Reference
   pages:
+    - quickstart-details | Quickstart reference
     - endpoints | Endpoint inventory
     - promql-enforcement
     - limitations
