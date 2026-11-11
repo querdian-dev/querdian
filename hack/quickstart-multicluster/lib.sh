@@ -69,6 +69,17 @@ remove_work_dir() {
 
 spoke_cluster() { printf '%s-%s' "$CLUSTER_PREFIX" "$1"; }      # kind cluster name of a spoke
 spoke_ctx() { printf 'kind-%s-%s' "$CLUSTER_PREFIX" "$1"; }     # kube context of a spoke
+# spoke_index prints the position of a spoke in SPOKES (from 1). It returns 1 for an unknown spoke. The
+# explicit return 0 is necessary: without it the status of the last test in the loop is the status of the
+# function, and `i=$(spoke_index spoke-a)` stops a script with set -e.
+spoke_index() {
+  local i=0 s
+  for s in "${SPOKES[@]}"; do
+    i=$((i + 1))
+    if [ "$s" = "$1" ]; then echo "$i"; return 0; fi
+  done
+  return 1
+}
 ks() { local s="$1"; shift; kubectl --context "$(spoke_ctx "$s")" "$@"; }
 hs() { local s="$1"; shift; helm --kube-context "$(spoke_ctx "$s")" "$@"; }
 all_clusters() {
@@ -119,9 +130,11 @@ pf() {
   done
   die "port-forward to $2/$3 on 127.0.0.1:$4 did not start"
 }
+# pf_stop stops the port-forwards. A port-forward that already stopped makes kill fail; `|| true` keeps
+# that failure from stopping up.sh, which calls pf_stop under set -e.
 pf_stop() {
   local p
-  for p in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do kill "$p" 2>/dev/null; done
+  for p in ${PF_PIDS[@]+"${PF_PIDS[@]}"}; do kill "$p" 2>/dev/null || true; done
   PF_PIDS=()
 }
 

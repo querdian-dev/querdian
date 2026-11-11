@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -550,6 +551,82 @@ func keysOf(m map[string]object) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// up.sh assigns `i=$(spoke_index "$s")` under set -e, so the function must return 0 for each spoke, not
+// only for the last one. shell() runs the snippet under set -euo pipefail, so a non-zero status fails the
+// test there.
+func TestSpokeIndex(t *testing.T) {
+	ss := spokes(t)
+	if len(ss) < 2 {
+		t.Fatalf("SPOKES = %v, want at least two spokes for this test", ss)
+	}
+	out := shell(t, `for s in "${SPOKES[@]}"; do i=$(spoke_index "$s"); echo "$s=$i"; done`)
+	var want strings.Builder
+	for i, s := range ss {
+		fmt.Fprintf(&want, "%s=%d\n", s, i+1)
+	}
+	if out != want.String() {
+		t.Errorf("spoke_index output = %q, want %q", out, want.String())
+	}
+	if got := shell(t, `if spoke_index spoke-unknown; then echo found; else echo missing; fi`); got != "missing\n" {
+		t.Errorf("spoke_index of an unknown spoke: %q, want %q", got, "missing\n")
+	}
+}
+
+// up.sh calls pf_stop under set -e. A port-forward that stopped before pf_stop must not stop the script.
+func TestPfStopIgnoresAStoppedProcess(t *testing.T) {
+	if got := shell(t, `sleep 0 & PF_PIDS+=($!); wait $!; pf_stop; echo "stopped ${#PF_PIDS[@]}"`); got != "stopped 0\n" {
+		t.Errorf("pf_stop with a stopped process: %q, want %q", got, "stopped 0\n")
+	}
+}
+
+// braceList finds a brace group with a comma, such as {a="x", b="y"}, but not a parameter expansion.
+var braceList = regexp.MustCompile(`(^|[^$])\{[^}]*,`)
+
+// bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)", also inside quotes: the command
+// substitution then runs once for each alternative. For a PromQL query, the matcher list becomes two
+// broken queries. The scripts must put such text into a variable first.
+//
+// This is a simple line check. It finds a brace group whose first comma comes before its first "}". It
+// does not find a "$(" later in a quoted word ("q=$(...)"), a continuation line after a "\", or a comma
+// after a nested group ({a:{b:1},c:2}). It also fails for text after the closing ")", for a comment at
+// the end of a line, and for single-quoted text; a variable is the fix there too.
+func TestNoBraceListInCommandSubstitution(t *testing.T) {
+	files, err := filepath.Glob("*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := filepath.Glob("../quickstart/*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, single...)
+	if len(files) < 2 {
+		t.Fatalf("found only the scripts %v", files)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // a quickstart script from filepath.Glob
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			for rest := line; ; {
+				i := strings.Index(rest, `"$(`)
+				if i < 0 {
+					break
+				}
+				rest = rest[i+3:]
+				if braceList.MatchString(rest) {
+					t.Errorf("%s:%d: brace group with a comma inside \"$(...)\"; bash 3.2 expands it: %s", f, n+1, strings.TrimSpace(line))
+					break
+				}
+			}
+		}
+	}
 }
 
 func TestHubRelease(t *testing.T) {

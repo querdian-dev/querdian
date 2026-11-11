@@ -73,10 +73,14 @@ for o in "${SPOKES[@]}"; do [ "$o" = "$S" ] || CLAIMS+=("$o"); done
 CLAIMS+=("$HUB_NAME")
 NOW_NS="$(date +%s)000000000"
 attrs() { # claim [extra key=value...] -> OTLP attribute list
+  # The jq programs are in variables, so that TestNoBraceListInCommandSubstitution passes. bash 3.2 does
+  # brace expansion on {a,b} inside "$(...)" in some forms (see up.sh, migration step 2).
   local c="$1" kv out
+  local base='[{key:"cluster",value:{stringValue:$c}},{key:"k8s.cluster.name",value:{stringValue:$c}}]'
+  local add='. + [{key:$k,value:{stringValue:$v}}]'
   shift
-  out="$(jq -cn --arg c "$c" '[{key:"cluster",value:{stringValue:$c}},{key:"k8s.cluster.name",value:{stringValue:$c}}]')"
-  for kv in "$@"; do out="$(jq -c --arg k "${kv%%=*}" --arg v "${kv#*=}" '. + [{key:$k,value:{stringValue:$v}}]' <<<"$out")"; done
+  out="$(jq -cn --arg c "$c" "$base")"
+  for kv in "$@"; do out="$(jq -c --arg k "${kv%%=*}" --arg v "${kv#*=}" "$add" <<<"$out")"; done
   printf '%s' "$out"
 }
 hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
@@ -127,10 +131,12 @@ expect "metrics: no label k8s_cluster_name on target_info" "" \
   "$(jq -r '[.data.result[].metric.k8s_cluster_name // empty] | unique | join(",")' <<<"$TI")"
 expect "logs: forged lines stored" "$N" "$(jq -r '[.data.result[].values[]] | length' <<<"$L")"
 expect "logs: label k8s_cluster_name of each stream" "$S" "$(jq -r '[.data.result[].stream.k8s_cluster_name] | unique | join(",")' <<<"$L")"
-expect "logs: lines in the stream selector {k8s_cluster_name=\"$S\"}" "$N" \
-  "$(lines "{service_name=\"forged-label-test\", k8s_cluster_name=\"$S\"} |= \"$ID\"")"
-expect "logs: lines with the structured metadata cluster=\"$S\"" "$N" \
-  "$(lines "{service_name=\"forged-label-test\"} |= \"$ID\" | cluster=\"$S\"")"
+# The queries go into variables first: bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)",
+# also inside quotes, so the matcher list of a query becomes two commands.
+q="{service_name=\"forged-label-test\", k8s_cluster_name=\"$S\"} |= \"$ID\""
+expect "logs: lines in the stream selector {k8s_cluster_name=\"$S\"}" "$N" "$(lines "$q")"
+q="{service_name=\"forged-label-test\"} |= \"$ID\" | cluster=\"$S\""
+expect "logs: lines with the structured metadata cluster=\"$S\"" "$N" "$(lines "$q")"
 # The stream label k8s_cluster_name and a structured metadata field of the same name look the same in a
 # label filter. With categorize-labels, Loki gives the structured metadata of each entry separately.
 LC=$(loki_direct_categorized "{service_name=\"forged-label-test\"} |= \"$ID\"" 600) || LC='{}'

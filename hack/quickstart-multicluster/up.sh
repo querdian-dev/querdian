@@ -68,7 +68,6 @@ claim_work_dir
 # manifests/spoke-collector.yaml): the first spoke claims the hub, each other spoke claims the first.
 claim_of() { if [ "$1" = "${SPOKES[0]}" ]; then echo "$HUB_NAME"; else echo "${SPOKES[0]}"; fi; }
 team_of() { echo "team-${1#spoke-}"; } # spoke-a -> team-a
-spoke_index() { local i=0 s; for s in "${SPOKES[@]}"; do i=$((i + 1)); [ "$s" = "$1" ] && echo "$i"; done; }
 nodeport() { k -n "$1" get svc "$2" -o jsonpath="{.spec.ports[?(@.name==\"$3\")].nodePort}"; }
 # agent_rejected: the agent of the spoke logged the rejection of a sync because the spoke is suspended.
 agent_rejected() { ks "$1" -n querdian logs deploy/querdian-agent 2>/dev/null | grep -q 'the SpokeCluster is suspended'; }
@@ -180,18 +179,21 @@ none() { # description count
 wait_for "hub metrics with cluster=$HUB_NAME" 180 gt0 n_prom "count(demo_requests_total{cluster=\"$HUB_NAME\"})"
 wait_for "hub logs with k8s_cluster_name=$HUB_NAME" 180 gt0 n_loki "sum(count_over_time({k8s_namespace_name=~\".+\", k8s_cluster_name=\"$HUB_NAME\"}[10m]))"
 wait_for "hub traces with resource.k8s.cluster.name=$HUB_NAME" 180 gt0 n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" }"
-none "metrics: series without cluster=$HUB_NAME" \
-  "$(n_prom "count by (__name__) (last_over_time({__name__=~\".+\", cluster!=\"$HUB_NAME\"}[1h]))")"
+# Each query goes into a variable first. bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)",
+# also inside quotes, so the matcher list of a query becomes two commands. An assignment gets no brace
+# expansion. TestNoBraceListInCommandSubstitution finds this form.
+q="count by (__name__) (last_over_time({__name__=~\".+\", cluster!=\"$HUB_NAME\"}[1h]))"
+none "metrics: series without cluster=$HUB_NAME" "$(n_prom "$q")"
 for sel in k8s_namespace_name service_name; do
-  none "logs: streams without k8s_cluster_name=$HUB_NAME (selector $sel)" \
-    "$(n_loki "sum by ($sel) (count_over_time({$sel=~\".+\", k8s_cluster_name!=\"$HUB_NAME\"}[1h]))")"
+  q="sum by ($sel) (count_over_time({$sel=~\".+\", k8s_cluster_name!=\"$HUB_NAME\"}[1h]))"
+  none "logs: streams without k8s_cluster_name=$HUB_NAME (selector $sel)" "$(n_loki "$q")"
 done
 # The guide compares two TraceQL metrics counts. The demo Tempo has no metrics generator, so the demo
 # searches for spans without the attribute (= nil) and with a different value. A trace matches if one
 # of its spans matches.
 none "traces: spans without resource.k8s.cluster.name" "$(n_tempo '{ resource.k8s.cluster.name = nil }')"
-none "traces: spans with resource.k8s.cluster.name other than $HUB_NAME" \
-  "$(n_tempo "{ resource.k8s.cluster.name != \"$HUB_NAME\" }")"
+q="{ resource.k8s.cluster.name != \"$HUB_NAME\" }"
+none "traces: spans with resource.k8s.cluster.name other than $HUB_NAME" "$(n_tempo "$q")"
 pf_stop
 ok "metrics, logs and traces of the hub carry the hub cluster label"
 
