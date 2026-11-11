@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {{- $v := partial "docs-version.html" . }}
   {{- $title := cond .IsHome (printf "%s: per-team access control for Prometheus, Loki and Tempo" site.Title) (printf "%s · %s" .Title site.Title) }}
+  {{- /* A docs page of another version has the same title as the page of the latest release: name the version. */ -}}
+  {{- if and .Params.version (not $v.latest) }}{{ $title = printf "%s (%s) · %s" .Title $v.name site.Title }}{{ end }}
   <title>{{ $title }}</title>
   <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}">
   <meta name="color-scheme" content="light">
@@ -13,7 +16,6 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="{{ .Permalink }}">
   {{- /* A docs page of another version points search engines to the same page of the latest release. */ -}}
-  {{- $v := partial "docs-version.html" . }}
   {{- $canonical := .Permalink }}
   {{- if and .Params.version (not $v.latest) }}
     {{- range hugo.Data.versions }}{{ if .latest }}{{ with partial "docs-twin.html" (dict "page" $ "to" .) }}{{ $canonical = .Permalink }}{{ end }}{{ end }}{{ end }}

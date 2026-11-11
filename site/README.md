@@ -52,7 +52,12 @@ The Hugo version is pinned in the `Makefile` only; the workflow runs `make site`
   `main` is a broken link there until its release. `hack/sitecheck` finds such links and stops
   `make site`. Link to `/docs/main/...` if a page of `main` is necessary.
 * Pages of other versions name the same page of the latest release as their canonical address for search
-  engines.
+  engines. The sitemap does not list these pages: `build-content.sh` sets `sitemap.disable` for them. A
+  page that the latest release does not have stays in the sitemap.
+* The title of a page of another version has the version name, for example `Quickstart on kind (main)`.
+  The overview page of the latest release shows its version below the heading, because the text of a
+  tag cannot change. The pages of the other versions have the note above the heading. With one version
+  only, the overview page shows no version.
 * Without release tags (a clone without tags, a source archive) the working tree is the only version,
   at `/docs/`. The workflow clones the full history and fails if `/docs/main/` is absent. A git error
   in a repository stops `build-content.sh`.

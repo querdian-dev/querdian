@@ -16,6 +16,11 @@
     </p>
     {{- end }}
     <h1>{{ .Title }}</h1>
+    {{- /* The overview text comes from the tag and does not name its version. The overview pages of
+           the other versions have the note above. */ -}}
+    {{- if and .Params.version .IsSection $v.latest (gt (len (hugo.Data.versions | default slice)) 1) }}
+    <p class="doc-meta">Version: <strong>{{ $v.name }}</strong> · latest release</p>
+    {{- end }}
     {{ with .Params.source }}<p class="doc-meta">Source: <code>{{ . }}</code>{{ if $v.release }} at {{ $v.name }}{{ end }}{{ if site.Params.repoPublic }} · <a href="https://github.com/{{ site.Params.repo }}/blob/{{ $v.ref }}/{{ . }}">{{ if $v.release }}View on GitHub{{ else }}Edit on GitHub{{ end }}</a>{{ end }}</p>{{ end }}
     <div class="prose">
       {{ .Content }}
