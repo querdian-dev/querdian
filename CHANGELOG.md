@@ -110,8 +110,7 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Security
 
-* **LogQL templates could print denied and redacted labels**
-  ([GHSA-g593-w5rf-53qv](https://github.com/querdian-dev/querdian/security/advisories/GHSA-g593-w5rf-53qv)). Affects 0.1.2 and earlier.
+* **LogQL templates could print denied and redacted labels**. Affects 0.1.2 and earlier.
   The check of `line_format` and `label_format` templates was a text scan, and some templates could
   pass it and print all labels, including labels in `labels.deny` and `labels.redact`. Querdian now
   parses each template with Go's `text/template/parse` and accepts only an allow-list of template nodes
@@ -119,12 +118,10 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   that has a control character other than tab and newline is rejected. Literal text in a template is no
   longer compared with denied names. See
   [docs/limitations.md](docs/limitations.md#denied-label-scan-false-positives).
-* **Large policies could exhaust the CPU and memory of the proxy**
-  ([GHSA-72w7-fm25-mxhm](https://github.com/querdian-dev/querdian/security/advisories/GHSA-72w7-fm25-mxhm)).
+* **Large policies could exhaust the CPU and memory of the proxy**. Affects 0.1.2 and earlier.
   Policy lists and strings had no size limits, and the work for each request grew faster than the
   policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
-  make the shared proxy slow or stop it. A client query with a large regex could do the same. Affects
-  0.1.2 and earlier. Now:
+  make the shared proxy slow or stop it. A client query with a large regex could do the same. Now:
   * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
     `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
     value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
@@ -156,8 +153,7 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
     with the square of the input in the normal case.
 
   See the upgrade notes under "Changed".
-* **One fan-out request could use much more memory than its limit**
-  ([GHSA-hh8g-744m-9r98](https://github.com/querdian-dev/querdian/security/advisories/GHSA-hh8g-744m-9r98)). Affects 0.1.2 and earlier.
+* **One fan-out request could use much more memory than its limit**. Affects 0.1.2 and earlier.
   `limits.maxMergeBytes` did not hold for parallel branches. Now each branch counts each chunk before it
   keeps it, and the read stops at the first chunk above the limit for all branches together. The new
   limit `limits.maxInflightMergeBytes` (default `maxMergeBytes`, 64 MiB) bounds the buffered fan-out
@@ -168,16 +164,14 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   (`QUERDIAN_MEMORY_LIMIT`), and Querdian sets the Go memory limit to 90 percent of it, unless
   `GOMEMLIMIT` is set. The default memory limit of the proxy in the Helm chart is now 768Mi (was
   512Mi). See [docs/operations.md](docs/operations.md#scaling) for the memory sizing.
-* **Upstream spans recorded the rewritten query by default**
-  ([GHSA-c2rh-rmcg-357j](https://github.com/querdian-dev/querdian/security/advisories/GHSA-c2rh-rmcg-357j)). Affects 0.1.2 and earlier.
+* **Upstream spans recorded the rewritten query by default**. Affects 0.1.2 and earlier.
   The `upstream` client spans now record `url.full` with scheme, host and path only; the query string
   is recorded only with `--tracing.record-queries`. The trace context of a client is no longer the
   parent of the server span: the server span starts a new trace and has a span link to the trace
   context of the client, so a client cannot select the trace ID or force sampling. The new flag
   `--tracing.trust-inbound-context` (Helm: `tracing.trustInboundContext`, default `false`) restores
   the old behaviour for trusted clients.
-* **The policy dashboard did not check the `Host` header**
-  ([GHSA-gvjr-jcq3-jc25](https://github.com/querdian-dev/querdian/security/advisories/GHSA-gvjr-jcq3-jc25)). Affects 0.1.2 and earlier.
+* **The policy dashboard did not check the `Host` header**. Affects 0.1.2 and earlier.
   The dashboard now answers only for `localhost`, `127.0.0.1`, `[::1]`, the host of `--ui-listen` and
   the names of the new repeatable flag `--ui-allowed-host` (Helm: `ui.allowedHosts`), with any port.
   Other hosts get 403, for the API and the static files, in all authentication modes. A request with a
