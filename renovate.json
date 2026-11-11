@@ -112,9 +112,10 @@
     },
     {
       "customType": "regex",
-      "description": "Tools run via 'go run pkg@version' in workflows",
+      "description": "Tools run via 'go run pkg@version' in workflows and in the Makefile",
       "managerFilePatterns": [
-        "/^\\.github/workflows/.*\\.ya?ml$/"
+        "/^\\.github/workflows/.*\\.ya?ml$/",
+        "/^Makefile$/"
       ],
       "matchStrings": [
         "go run (?<depName>golang\\.org/x/vuln)/cmd/govulncheck@(?<currentValue>v[0-9][^\\s]*)",

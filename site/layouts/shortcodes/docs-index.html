@@ -1,9 +1,10 @@
+{{- $v := partial "docs-version.html" .Page -}}
 <div class="docs-index">
-{{ range hugo.Data.nav }}
+{{ range $v.nav }}
   <section>
     <h2>{{ .title }}</h2>
     <ul>
-    {{ range .pages }}{{ with site.GetPage (printf "/docs/%s" (index (split . " | ") 0)) }}
+    {{ range .pages }}{{ with site.GetPage (printf "%s/%s" $v.path (index (split . " | ") 0)) }}
       <li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
     {{ end }}{{ end }}
     </ul>

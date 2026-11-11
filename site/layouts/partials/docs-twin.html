@@ -1,0 +1,6 @@
+{{- /* Returns the page that shows the docs page .page in the version .to, or nothing when that version
+       does not have the page. */ -}}
+{{- $key := strings.TrimSuffix ".md" (strings.TrimPrefix "docs/" (.page.Params.source | default "")) -}}
+{{- $twin := false -}}
+{{- with site.GetPage (cond (eq $key "") .to.path (printf "%s/%s" .to.path $key)) }}{{ $twin = . }}{{ end -}}
+{{- return $twin -}}

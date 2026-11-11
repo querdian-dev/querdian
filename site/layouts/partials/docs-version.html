@@ -1,0 +1,8 @@
+{{- /* Returns the entry of the generated data/versions.yaml that a docs page belongs to. Other pages
+       (landing page, 404) get the latest version. */ -}}
+{{- $name := .Params.version -}}
+{{- $found := dict -}}
+{{- range hugo.Data.versions -}}
+  {{- if or (eq .name $name) (and (not $name) .latest) }}{{ $found = . }}{{ end -}}
+{{- end -}}
+{{- return $found -}}
