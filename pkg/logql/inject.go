@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"text/template/parse"
+	tparse "text/template/parse"
 	"unicode"
 	"unicode/utf8"
 )
@@ -465,11 +465,11 @@ func templateCheck(tmpl string, denied map[string]struct{}) string {
 			return TemplateInvalid
 		}
 	}
-	var main *parse.Tree
+	var main *tparse.Tree
 	for i, name := range templateTreeNames {
-		tree := parse.New(name)
-		tree.Mode = parse.SkipFuncCheck
-		trees := map[string]*parse.Tree{}
+		tree := tparse.New(name)
+		tree.Mode = tparse.SkipFuncCheck
+		trees := map[string]*tparse.Tree{}
 		if _, err := tree.Parse(tmpl, "", "", trees); err != nil {
 			return TemplateInvalid
 		}
@@ -494,9 +494,9 @@ func templateCheck(tmpl string, denied map[string]struct{}) string {
 
 // templateNode checks one node of a parsed template and its children. See
 // [templateCheck].
-func templateNode(n parse.Node, denied map[string]struct{}) string {
+func templateNode(n tparse.Node, denied map[string]struct{}) string {
 	switch n := n.(type) {
-	case *parse.ListNode:
+	case *tparse.ListNode:
 		if n == nil {
 			return ""
 		}
@@ -506,11 +506,11 @@ func templateNode(n parse.Node, denied map[string]struct{}) string {
 			}
 		}
 		return ""
-	case *parse.TextNode, *parse.StringNode, *parse.NumberNode, *parse.BoolNode, *parse.NilNode:
+	case *tparse.TextNode, *tparse.StringNode, *tparse.NumberNode, *tparse.BoolNode, *tparse.NilNode:
 		return ""
-	case *parse.ActionNode:
+	case *tparse.ActionNode:
 		return templateNode(n.Pipe, denied)
-	case *parse.IfNode:
+	case *tparse.IfNode:
 		if r := templateNode(n.Pipe, denied); r != "" {
 			return r
 		}
@@ -518,7 +518,7 @@ func templateNode(n parse.Node, denied map[string]struct{}) string {
 			return r
 		}
 		return templateNode(n.ElseList, denied)
-	case *parse.PipeNode:
+	case *tparse.PipeNode:
 		if n == nil || len(n.Decl) > 0 || n.IsAssign {
 			return TemplateAllLabels
 		}
@@ -528,14 +528,14 @@ func templateNode(n parse.Node, denied map[string]struct{}) string {
 			}
 		}
 		return ""
-	case *parse.CommandNode:
+	case *tparse.CommandNode:
 		for _, a := range n.Args {
 			if r := templateNode(a, denied); r != "" {
 				return r
 			}
 		}
 		return ""
-	case *parse.FieldNode:
+	case *tparse.FieldNode:
 		if len(n.Ident) != 1 {
 			return TemplateAllLabels
 		}
@@ -543,7 +543,7 @@ func templateNode(n parse.Node, denied map[string]struct{}) string {
 			return n.Ident[0]
 		}
 		return ""
-	case *parse.IdentifierNode:
+	case *tparse.IdentifierNode:
 		if _, ok := templateFuncs[n.Ident]; ok {
 			return ""
 		}

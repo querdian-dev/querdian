@@ -63,7 +63,9 @@ spec:
                     backends:
                       description: Backends are backend names from the static config.
                       items:
+                        maxLength: 256
                         type: string
+                      maxItems: 16
                       minItems: 1
                       type: array
                     labels:
@@ -73,7 +75,9 @@ spec:
                           description: Deny lists label/attribute names hidden from
                             label endpoints; queries referencing them are rejected.
                           items:
+                            maxLength: 256
                             type: string
+                          maxItems: 64
                           type: array
                         redact:
                           description: |-
@@ -86,6 +90,7 @@ spec:
                               name:
                                 description: Name is a label (Prometheus/Loki) or
                                   attribute (Tempo, e.g. span.client.address).
+                                maxLength: 256
                                 minLength: 1
                                 type: string
                               octets:
@@ -111,6 +116,7 @@ spec:
                             - message: octets is required for IPv4Prefix and not allowed
                                 otherwise
                               rule: (self.strategy == 'IPv4Prefix') == has(self.octets)
+                          maxItems: 64
                           type: array
                           x-kubernetes-list-map-keys:
                           - name
@@ -125,6 +131,7 @@ spec:
                           name:
                             description: Name is a label (Prometheus/Loki) or attribute
                               (Tempo, e.g. resource.service.name).
+                            maxLength: 256
                             minLength: 1
                             type: string
                           op:
@@ -138,18 +145,22 @@ spec:
                           value:
                             description: Value is the match value. Regexes are fully
                               anchored (RE2 syntax).
+                            maxLength: 16384
                             type: string
                         required:
                         - name
                         - op
                         - value
                         type: object
+                      maxItems: 64
                       type: array
                     tenants:
                       description: Tenants this rule grants access to (required for
                         backends with a tenant header).
                       items:
+                        maxLength: 256
                         type: string
+                      maxItems: 64
                       type: array
                     unrestricted:
                       default: false
@@ -164,6 +175,7 @@ spec:
                     rule: self.unrestricted == (size(self.matchers) == 0)
                   - message: allClusters and unrestricted are mutually exclusive
                     rule: '!(self.allClusters && self.unrestricted)'
+                maxItems: 64
                 minItems: 1
                 type: array
               subjects:
@@ -175,14 +187,18 @@ spec:
                     description: Groups are OIDC group names. Matched only against
                       the groups claim.
                     items:
+                      maxLength: 1024
                       type: string
+                    maxItems: 256
                     type: array
                   users:
                     default: []
                     description: Users are OIDC usernames. Matched only against the
                       username claim.
                     items:
+                      maxLength: 1024
                       type: string
+                    maxItems: 256
                     type: array
                 type: object
                 x-kubernetes-validations:

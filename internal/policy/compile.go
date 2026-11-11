@@ -194,6 +194,16 @@ type accepted struct {
 // (PLAN §6.4). The policy stays active, so Ready remains true.
 func (c *Compiled) markCrossTenant(cfg *config.Config, acc []accepted) {
 	affected := map[string]map[string]bool{} // policy -> backends
+	// A rule occurs in the index of each of its subjects. The cache computes its canonical form only once.
+	canon := map[*CompiledRule]string{}
+	canonical := func(r *CompiledRule) string {
+		k, ok := canon[r]
+		if !ok {
+			k = r.canonical()
+			canon[r] = k
+		}
+		return k
+	}
 	check := func(rules []*CompiledRule) {
 		byBackend := map[string][]*CompiledRule{}
 		for _, r := range rules {
@@ -210,7 +220,7 @@ func (c *Compiled) markCrossTenant(cfg *config.Config, acc []accepted) {
 					if perTenant[t] == nil {
 						perTenant[t] = map[string]bool{}
 					}
-					perTenant[t][r.canonical()] = true
+					perTenant[t][canonical(r)] = true
 				}
 			}
 			if len(perTenant) < 2 || allEqual(perTenant) {
@@ -282,10 +292,16 @@ func allEqual(perTenant map[string]map[string]bool) bool {
 }
 
 func compileClusterPolicy(cfg *config.Config, p *v1.ClusterAccessPolicy) ([]*CompiledRule, *compileError) {
+	if err := CheckClusterSpecSize(&p.Spec); err != nil {
+		return nil, fail(ReasonPolicyTooLarge, "%v", err)
+	}
 	return compileClusterRules(cfg, "ClusterAccessPolicy/"+p.Name, p.Spec.Rules, origin{})
 }
 
 func compilePolicy(cfg *config.Config, p *v1.AccessPolicy, nsLabels map[string]string) ([]*CompiledRule, *compileError) {
+	if err := CheckSpecSize(&p.Spec); err != nil {
+		return nil, fail(ReasonPolicyTooLarge, "%v", err)
+	}
 	tenant := strings.TrimSpace(nsLabels[TenantLabel])
 	return compileNamespacedRules(cfg, "AccessPolicy/"+p.Namespace+"/"+p.Name, p.Namespace, p.Spec.Rules, tenant, origin{})
 }

@@ -36,6 +36,8 @@ const (
 	ReasonSpokeClusterInvalid = "SpokeClusterInvalid"
 	// ReasonInvalidSpokePolicy: the SpokePolicy object itself is malformed (kind, spec, object name).
 	ReasonInvalidSpokePolicy = "InvalidSpokePolicy"
+	// ReasonPolicyTooLarge: a list or a string of the spec is over a size limit (limits.go).
+	ReasonPolicyTooLarge = "PolicyTooLarge"
 )
 
 // KindSpokePolicy is the Result kind of a spoke policy. Its Result names the hub SpokePolicy object.
@@ -50,6 +52,8 @@ type Matcher struct {
 	re *lazyRegexp
 	// k is a canonical identity string, computed once at construction.
 	k string
+	// w is the weight (see Weight), computed at construction; 0 means not known.
+	w int
 }
 
 // Matches reports whether a label value (empty when the label is absent) satisfies the matcher.
@@ -198,4 +202,12 @@ type Effective struct {
 	// OriginVersions maps each of Origins to the SpokeCluster version that its rules were compiled from. An
 	// open Loki tail closes when one of them expires or gets a new version (PLAN §18.6 rule 8, §18.9).
 	OriginVersions map[string]SpokeVersion
+	// RegexLimits are the regex weight limits of the request, from the static config. Zero values mean
+	// the defaults of the enforcers.
+	RegexLimits RegexLimits
+}
+
+// RegexLimits are the limits of limits.maxQueryRegexWeight and limits.maxRequestRegexWeight.
+type RegexLimits struct {
+	Query, Request int
 }

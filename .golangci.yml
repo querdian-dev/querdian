@@ -9,6 +9,10 @@ linters:
     - misspell
     - revive
     - unconvert
+  exclusions:
+    paths:
+      # A copy of the Go regexp/syntax parser (see internal/regexparse/SOURCE); it keeps the Go code style.
+      - internal/regexparse/(parse|regexp|perl_groups|op_string)\.go
 formatters:
   enable:
     - gofmt

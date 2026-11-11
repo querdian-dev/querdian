@@ -30,13 +30,21 @@ backends:
   - {name: m, type: prometheus, url: "http://p:9090", pathPrefix: /prom, namespaceLabel: namespace}
 `
 
+func TestRegexWeightLimitsAtTheBounds(t *testing.T) {
+	c, err := Parse([]byte(base + "limits: {maxRequestRegexWeight: 262144, maxQueryRegexWeight: 1}\n"))
+	if err != nil || c.Limits.MaxRequestRegexWeight != MaxRegexWeightLimit || c.Limits.MaxQueryRegexWeight != 1 {
+		t.Fatalf("%v %+v", err, c.Limits)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	c, err := Parse([]byte(base))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Auth.Claims.Username != DefaultUsernameClaim || c.Auth.Claims.Groups != DefaultGroupsClaim ||
-		c.Limits.MaxPolicyTerms != 16 || c.Backends[0].TenantFederation != FederationNone {
+		c.Limits.MaxPolicyTerms != 16 || c.Limits.MaxQueryRegexWeight != DefaultMaxQueryRegexWeight ||
+		c.Limits.MaxRequestRegexWeight != DefaultMaxRequestRegexWeight || c.Backends[0].TenantFederation != FederationNone {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
 	if c.Limits.MaxInflightMergeBytes != DefaultMaxMergeBytes {
@@ -132,6 +140,8 @@ func TestValidation(t *testing.T) {
 		{"negative limit", base + "limits: {maxFanout: -1}\n", "limits must be positive"},
 		{"negative inflight merge bytes", base + "limits: {maxInflightMergeBytes: -1}\n", "limits must be positive"},
 		{"inflight below merge bytes", base + "limits: {maxMergeBytes: 1000, maxInflightMergeBytes: 999}\n", "must be at least limits.maxMergeBytes"},
+		{"negative regex weight", base + "limits: {maxQueryRegexWeight: -1}\n", "maxQueryRegexWeight must be between"},
+		{"regex weight too large", base + "limits: {maxRequestRegexWeight: 262145}\n", "maxRequestRegexWeight must be between"},
 		{"bad duration", base + "limits: {upstreamTimeout: soon}\n", "invalid duration"},
 	}
 	for _, tc := range tests {

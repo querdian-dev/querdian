@@ -2,16 +2,24 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+// The size limits of the policy specs (MaxItems, MaxLength) are also in internal/policy/limits.go, because
+// the compiler and the receiver do not rely on the CRD. Change both together; TestCRDLimitsAgree compares
+// them.
+
 // Subjects selects the users and groups a policy applies to.
 // +kubebuilder:validation:XValidation:rule="size(self.groups) + size(self.users) > 0",message="at least one group or user required"
 type Subjects struct {
 	// Groups are OIDC group names. Matched only against the groups claim.
 	// +optional
 	// +kubebuilder:default={}
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=1024
 	Groups []string `json:"groups"`
 	// Users are OIDC usernames. Matched only against the username claim.
 	// +optional
 	// +kubebuilder:default={}
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=1024
 	Users []string `json:"users"`
 }
 
@@ -34,10 +42,12 @@ const (
 type Matcher struct {
 	// Name is a label (Prometheus/Loki) or attribute (Tempo, e.g. resource.service.name).
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Name string `json:"name"`
 	// Op is the match operator.
 	Op MatchOp `json:"op"`
 	// Value is the match value. Regexes are fully anchored (RE2 syntax).
+	// +kubebuilder:validation:MaxLength=16384
 	Value string `json:"value"`
 }
 
@@ -45,12 +55,15 @@ type Matcher struct {
 type LabelFilter struct {
 	// Deny lists label/attribute names hidden from label endpoints; queries referencing them are rejected.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=256
 	Deny []string `json:"deny,omitempty"`
 	// Redact lists labels/attributes whose values are rewritten in query results. A redacted name is
 	// also denied: queries referencing it are rejected and label endpoints hide it.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
 	Redact []RedactRule `json:"redact,omitempty"`
 }
 
@@ -74,6 +87,7 @@ const (
 type RedactRule struct {
 	// Name is a label (Prometheus/Loki) or attribute (Tempo, e.g. span.client.address).
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Name string `json:"name"`
 	// Strategy is how values are rewritten.
 	Strategy RedactStrategy `json:"strategy"`
@@ -90,9 +104,13 @@ type RedactRule struct {
 type ClusterRule struct {
 	// Backends are backend names from the static config.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=256
 	Backends []string `json:"backends"`
 	// Tenants this rule grants access to (required for backends with a tenant header).
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=256
 	Tenants []string `json:"tenants,omitempty"`
 	// Unrestricted grants access to all data of the given tenants.
 	// +optional
@@ -107,6 +125,7 @@ type ClusterRule struct {
 	// Matchers are ANDed.
 	// +optional
 	// +kubebuilder:default={}
+	// +kubebuilder:validation:MaxItems=64
 	Matchers []Matcher `json:"matchers"`
 	// Labels optionally hides labels.
 	// +optional
@@ -117,9 +136,12 @@ type ClusterRule struct {
 type Rule struct {
 	// Backends are backend names from the static config.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=256
 	Backends []string `json:"backends"`
 	// Matchers are ANDed with the implicit namespace matcher.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
 	Matchers []Matcher `json:"matchers,omitempty"`
 	// Labels optionally hides labels.
 	// +optional
@@ -130,6 +152,7 @@ type Rule struct {
 type ClusterAccessPolicySpec struct {
 	Subjects Subjects `json:"subjects"`
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
 	Rules []ClusterRule `json:"rules"`
 }
 
@@ -137,6 +160,7 @@ type ClusterAccessPolicySpec struct {
 type AccessPolicySpec struct {
 	Subjects Subjects `json:"subjects"`
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
 	Rules []Rule `json:"rules"`
 }
 

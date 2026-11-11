@@ -559,6 +559,12 @@ tenant for all clusters, or no tenant header, avoids these limits.
 * An expired rule gives no terms, but its `labels.deny` and `labels.redact` stay active, so expiry
   only narrows access. A user whose grants all come from expired spokes gets
   `403 policy_source_expired`; the message does not name the cluster.
+* One spoke policy over a [size limit](policy-guide.md#size-limits) makes the receiver reject the whole
+  sync of its spoke with `400` and the message `invalid policy: ...`, which names the field. The spoke
+  keeps its last accepted state, and all its grants expire after the time limit. To find this, look for
+  the agent log line `agent: the receiver rejected the sync` with `status=400`, for `querdian_agent_syncs_total{result="error"}`, and for
+  `querdian_agent_last_sync_timestamp_seconds` that does not increase. Make the policy in the spoke
+  smaller or split it.
 * An open Loki tail that uses terms of a spoke closes within 10 seconds after that spoke expires or is
   suspended, or after its `SpokeCluster` gets a new spec or is created again, for example with a
   smaller tenant allow-list (WebSocket close code 1008, reason `policy source expired`). A heartbeat

@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
@@ -71,6 +72,10 @@ func validateSubjects(s *v1.Subjects) error {
 }
 
 func validateClusterSpec(s *v1.ClusterAccessPolicySpec) error {
+	// The size limits come first, so that the other checks see a bounded spec.
+	if err := policy.CheckClusterSpecSize(s); err != nil {
+		return err
+	}
 	if err := validateSubjects(&s.Subjects); err != nil {
 		return err
 	}
@@ -99,6 +104,10 @@ func validateClusterSpec(s *v1.ClusterAccessPolicySpec) error {
 }
 
 func validateSpec(s *v1.AccessPolicySpec) error {
+	// The size limits come first, so that the other checks see a bounded spec.
+	if err := policy.CheckSpecSize(s); err != nil {
+		return err
+	}
 	if err := validateSubjects(&s.Subjects); err != nil {
 		return err
 	}

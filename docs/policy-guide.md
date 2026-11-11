@@ -109,6 +109,33 @@ matchers:
 * Absent labels behave like empty values in PromQL and LogQL (`service != ""` excludes series
   without a `service` label). **Tempo differs**: see [Tempo semantics](#tempo-missing-attributes).
 
+### Size limits
+
+The CRDs limit the size of each policy, and the compiler and the receiver apply the same limits. A
+policy over a limit grants nothing and gets the status reason `PolicyTooLarge`. The compiler checks
+the limits also for objects that were stored before the CRD had them. Lengths count characters.
+
+| Field | Limit |
+|---|---|
+| `subjects.users`, `subjects.groups` | 256 items each, 1024 characters each item |
+| `rules` | 64 |
+| `rules[].backends` | 16 items, 256 characters each item |
+| `rules[].tenants` (`ClusterAccessPolicy`) | 64 items, 256 characters each item |
+| `rules[].matchers` | 64 |
+| `matchers[].name` | 256 characters |
+| `matchers[].value` | 16384 characters |
+| `labels.deny`, `labels.redact` | 64 items each, 256 characters each name |
+| a `RegexMatch` or `RegexNoMatch` value | 8 KiB and weight 16384 (see below); not checked by the CRD |
+| all regex values of one policy | weight 32768 together; not checked by the CRD |
+
+The weight of a regex comes from a parse with a work budget, before any compile: the number of instructions of its compiled program (`a{1000}` has 1000), plus the rune ranges of each character class, counted again for each repetition (`\pL` has about 700), plus the work of the parser divided by 32 (for example the case folding of a wide range in a `(?i)` class, rune by rune), plus, for regexes that the Prometheus matcher can get, the runes of each character class in the case-folding range of Unicode divided by 64 (`[^/]+` has a weight of about 1970, `\pL+` about 1820). The weight of an `Equal` or `NotEqual` value is its length plus one. A compile in Go and in the Prometheus matcher together takes at most about 256 KiB plus 2 KiB, and 2 ms plus 2 microseconds, for each unit of weight (measured: at most about 900 bytes and 0.9 microseconds for each unit, also for regexes whose branches the parser compares again at each level of nested groups; such regexes now measure at most about 0.3 microseconds for each unit). A regex with a small text and a large cost, for example many counted repetitions or many
+Unicode classes, can thus be over the limit. Normal regexes such as `[a-z]+`, `prod-.*`,
+`(?i)(warn|error)\s+\d+` or an alternation of 100 namespace names have a weight of some tens to some
+thousands. The compiler and the receiver measure the weight without a compile.
+
+The same limits apply to the policies of a spoke (`SpokePolicy`). For the limits of each request, see
+step 6 of [Union semantics](#union-semantics-in-plain-language).
+
 ### Examples that work
 
 The three examples below are valid against the sample static configuration of
@@ -201,7 +228,15 @@ several backends). Querdian combines them as follows.
       both have an `Equal` matcher on the same label with different values. It decides whether summed
       Loki statistics are exact (see [limitations](limitations.md#approximate-results)).
    6. **Cap.** More than `limits.maxPolicyTerms` terms (default 16) after simplification is rejected
-      with `403 policy_too_complex`.
+      with `403 policy_too_complex`. Fixed limits also bound the work of each request: before the
+      simplification, the matched rules of a request must give at most 4096 terms, 32768 matchers and
+      1 MiB of matcher text, the simplification itself has a fixed budget of steps, and the simplified
+      policy can have a [weight](#size-limits) of at most 32768 (a merge joins many values into one
+      regex). A request over one of these limits also gets `403 policy_too_complex`. A rewritten query
+      can make the proxy compile a regex weight of at most 131072 ((2 x terms + 1) x client regex
+      weight + (2 x selectors + 1) x policy weight), and the regexes of a PromQL or LogQL client query
+      can have a weight of at most 32768; otherwise the request gets `403 query_too_complex`. Both
+      limits are in the static configuration (`limits.maxRequestRegexWeight`, `limits.maxQueryRegexWeight`).
 4. Each backend then applies the terms in the way it can express them: injecting one term into every
    selector, or-lifting a query over several terms, expanding `match[]` selectors, injecting a
    DNF filter (Tempo), or sending one request per term and merging (Loki).
@@ -454,6 +489,7 @@ older generation is never written over a newer spec.
 | `MulticlusterDisabled` | `False` | A `SpokePolicy` exists, but the static configuration has no `multicluster` block. Spoke policies grant nothing without it. |
 | `SpokeClusterNotFound` | `False` | No `SpokeCluster` has the name in `SpokePolicy.spec.cluster`. Normally transient after the deletion of a `SpokeCluster`, until garbage collection removes its objects. |
 | `SpokeClusterInvalid` | `False` | The `SpokeCluster` cannot be trusted: its name is equal to `multicluster.hubCluster`, the last path segment of `spec.identity` is not its name, or the name occurs more than once. Fix the `SpokeCluster` on the hub. |
+| `PolicyTooLarge` | `False` | A list or a string of the spec is over a [size limit](#size-limits), for example more than 64 rules a matcher value of more than 16384 characters, or a regex whose compiled program is too large. The message names the field. The CRD rejects such objects, but an object stored before the CRD had the limits can still exist. Make the policy smaller, or split it into several policies. |
 | `InvalidSpokePolicy` | `False` | The `SpokePolicy` object itself is malformed: kind, namespace and spec do not agree, a name is invalid, or the object name is not the one the receiver gives (`sp-` and a hash). Such an object was not written by the receiver; delete it. |
 
 All reasons except `Compiled` and `CrossTenantUnionUnsupported` mean the policy grants nothing, on

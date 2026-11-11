@@ -364,6 +364,36 @@ disjoint are not detected, so such results are marked approximate although they 
 * An invalid or unknown-backend policy grants nothing; there is no partial application.
 * Policy compilation uses namespace labels only for `policy.querdian.dev/tenant`; changing the
   `namespaceLabel` of a backend needs a restart.
+* Policies have fixed size limits (for example 64 rules, 64 matchers for each rule, 16384 characters
+  for each matcher value; the full list is in [policy-guide.md](policy-guide.md#size-limits)). A policy
+  over a limit grants nothing (`PolicyTooLarge`). The limits are not configurable.
+* Regex limits use the weight: The weight of a regex comes from a parse with a work budget, before any compile: the number of instructions of its compiled program (`a{1000}` has 1000), plus the rune ranges of each character class, counted again for each repetition (`\pL` has about 700), plus the work of the parser divided by 32 (for example the case folding of a wide range in a `(?i)` class, rune by rune), plus, for regexes that the Prometheus matcher can get, the runes of each character class in the case-folding range of Unicode divided by 64 (`[^/]+` has a weight of about 1970, `\pL+` about 1820). The weight of an `Equal` or `NotEqual` value is its length plus one. A compile in Go and in the Prometheus matcher together takes at most about 256 KiB plus 2 KiB, and 2 ms plus 2 microseconds, for each unit of weight (measured: at most about 900 bytes and 0.9 microseconds for each unit, also for regexes whose branches the parser compares again at each level of nested groups; such regexes now measure at most about 0.3 microseconds for each unit). A regex matcher of a policy can have a weight of at most 16384,
+  and the regexes of one policy together at most 32768 (`PolicyTooLarge`).
+* The work for one request is limited: the matched rules can give at most 4096 terms, 32768 matchers
+  and 1 MiB of matcher text before the simplification, the simplification has a fixed budget of
+  steps, and the simplified policy can have a weight of at most 32768. A request over a limit is
+  `403 policy_too_complex`, also if the simplified policy would have had few terms. Many policies for
+  one shared group can reach these limits; for example, about 300 namespaces with names of 200
+  characters merge into a regex with a weight over 32768.
+* **Large merged policies limit the selectors of a query.** The regexes that the proxy compiles for one
+  request can have a weight of at most 131072, counted as (2 x terms + 1) x (weight of the client
+  regexes) + (2 x selectors + 1) x (weight of the policy), with the selectors (or TraceQL spanset
+  filters) of the query. A user whose policy has the largest weight can use 1 selector in one query;
+  with a policy of a tenth of that weight, about 20. A user with many terms can use fewer client regexes.
+  A query over the limit is `403 query_too_complex`; split it into queries with fewer selectors, use
+  fewer or shorter regexes, or make the policy smaller. Operators can change the limit with
+  `limits.maxRequestRegexWeight` ([operations.md](operations.md#limits)).
+* A client regex can have at most 8 KiB, and all client regexes of one query at most 32 KiB together
+  (`403 query_too_complex`); a policy regex value can have at most 8 KiB (`PolicyTooLarge`). These byte
+  limits are a second layer that does not depend on the work count of the regex parser. `Equal` values
+  can still have 16384 characters.
+* A client regex counts again for each term of the user's policy: with N terms, a client regex counts
+  (2 x N + 1) times in the regex weight of the request. For example, a client regex of weight 2000 under
+  a policy with 16 terms counts 66000 of the 131072.
+* The regexes of a PromQL or LogQL client query can have a weight of at most 32768 together
+  (`limits.maxQueryRegexWeight`; all
+  selectors, all `match[]` values), otherwise `403 query_too_complex`. TraceQL client regexes are not
+  compiled by the proxy, only by Tempo, so this limit does not apply to them.
 * A user's effective policy with more than `maxPolicyTerms` terms is `403 policy_too_complex`;
   the DNF simplification only merges terms that differ in one `Equal`/`RegexMatch` label and drops
   terms whose matcher set is a superset of another's, it does not reason about overlapping regexes.

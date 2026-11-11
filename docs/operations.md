@@ -70,6 +70,8 @@ backends:
 limits:
   maxPolicyTerms: 16
   maxFanout: 16
+  maxQueryRegexWeight: 32768
+  maxRequestRegexWeight: 131072
   maxMergeBytes: 67108864
   upstreamTimeout: 5m
 ```
@@ -123,6 +125,8 @@ All must be positive. What happens when one trips is listed under [Limits](#limi
 |---|---|---|
 | `maxPolicyTerms` | 16 | Maximum number of terms of a user's effective policy after simplification. |
 | `maxFanout` | 16 | Maximum number of upstream requests one client request may create, and the number run in parallel. |
+| `maxQueryRegexWeight` | 32768 | Maximum [weight](policy-guide.md#size-limits) of the regexes of one PromQL or LogQL client query (all selectors, all `match[]` values). It also sets the work budget of the regex parse (32 steps for each unit), which stops a costly regex before any compile. Between 1 and 262144. |
+| `maxRequestRegexWeight` | 131072 | Maximum regex weight that the proxy compiles for one request: (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight. A client regex counts again for each term of the user's policy: a client regex of weight 2000 under a policy with 16 terms counts 33 x 2000 = 66000. Between 1 and 262144. A compile allocates at most about 2 KiB for each unit, so the bound of the regex memory of one request is about 256 MiB at the default and 512 MiB at 262144; measured requests at the default use some tens of MiB. |
 | `maxMergeBytes` | 67108864 (64 MiB) | Total size of buffered upstream bodies of one merged request, for all branches together. The bytes are counted while the branches read, so the read stops when the total is above the limit. Also the buffer cap of the trace-by-ID filter. |
 | `maxInflightMergeBytes` | `maxMergeBytes` (64 MiB) | Total size of buffered fan-out bodies (and then merged responses) of all concurrent requests of one replica. Must be at least `maxMergeBytes`. When it is full, the oldest fan-out that still reads waits for space and the others fail with `503` (`merge_budget_exhausted`). See [Scaling](#scaling) for the memory sizing. |
 | `upstreamTimeout` | `5m` | Deadline of one proxied request (all of its upstream requests together). Go duration syntax. |
@@ -230,6 +234,11 @@ acquires the lease. With a single replica or for local runs you may use `--leade
 | Limit | Value | When exceeded | Client sees | `decision` / `reason` |
 |---|---|---|---|---|
 | `limits.maxPolicyTerms` | 16 | the user's simplified policy has more terms | `403 forbidden` | deny / `policy_too_complex` |
+| policy input (fixed) | 4096 terms, 32768 matchers, 1 MiB of matcher text, a fixed budget of simplification steps, a weight of 32768 after the simplification | the matched rules of the request are larger before the simplification, the simplification needs more steps, or the simplified policy is larger | `403 forbidden` | deny / `policy_too_complex` |
+| `limits.maxRequestRegexWeight` | weight 131072 | (2 x terms + 1) x (client regex weight) + (2 x selectors + 1) x (policy weight, see [policy-guide.md](policy-guide.md#size-limits)) is larger | `403 forbidden` | deny / `query_too_complex` |
+| client regex bytes (fixed) | 8 KiB for each regex, 32 KiB for all regexes of a query | a client regex is longer | `403 forbidden` | deny / `query_too_complex` |
+| `limits.maxQueryRegexWeight` | weight 32768 | the regexes of a PromQL or LogQL query (all `match[]` values together) are larger | `403 forbidden` | deny / `query_too_complex` |
+| policy size (fixed) | see [policy-guide.md](policy-guide.md#size-limits) | a policy has too many rules, matchers, subjects or too long strings | the CRD rejects it; a stored object grants nothing | status reason `PolicyTooLarge` |
 | `limits.maxFanout` | 16 | the plan needs more upstream requests (terms for a fan-out; also guards a plan without requests) | `403 forbidden` | deny / `query_too_complex` |
 | `limits.maxMergeBytes` | 64 MiB | buffered bodies of the fan-out exceed it; also the trace-by-ID filter body, and the Tempo search body | `502`, errorType `merge_too_large` (fan-out) or `upstream` | error / `upstream_error` |
 | `limits.maxInflightMergeBytes` | 64 MiB | buffered fan-out bodies of all concurrent requests of the replica exceed it (the oldest fan-out that still reads waits instead) | `503 unavailable` with `Retry-After` | error / `merge_budget_exhausted` |

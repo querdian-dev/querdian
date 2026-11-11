@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/prometheus/promql/parser"
+
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
 	"github.com/querdian-dev/querdian/internal/enforce"
 	"github.com/querdian-dev/querdian/internal/policy"
@@ -116,5 +118,43 @@ func FuzzInject(f *testing.F) {
 		if countSelectors(t, out) != countSelectors(t, q) {
 			t.Fatalf("selector count changed: %q -> %q", q, out)
 		}
+		checkInjectedWeight(t, q, out, effWith(ms...))
 	})
+}
+
+// policyWeight returns the sum of the weights of the matchers in the selectors of q that are equal to a
+// matcher of a term of eff.
+func policyWeight(t *testing.T, q string, eff policy.Effective) int {
+	t.Helper()
+	expr, err := promParser.ParseExpr(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	weights := map[string]int{}
+	for _, term := range eff.Terms {
+		for _, m := range term.Matchers {
+			weights[fmt.Sprint(m.Name, matchType(m.Op), m.Value)] = m.Weight()
+		}
+	}
+	n := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if vs, ok := node.(*parser.VectorSelector); ok {
+			for _, lm := range vs.LabelMatchers {
+				n += weights[fmt.Sprint(lm.Name, lm.Type, lm.Value)]
+			}
+		}
+		return nil
+	})
+	return n
+}
+
+// checkInjectedWeight checks the property of enforce.CheckInjection: the rewrite adds at most (selectors of
+// q) x (weight of all terms) of policy matchers. A matcher of the client query that is equal to a policy
+// matcher is copied once for each term.
+func checkInjectedWeight(t *testing.T, q, out string, eff policy.Effective) {
+	t.Helper()
+	added := policyWeight(t, out, eff) - len(eff.Terms)*policyWeight(t, q, eff)
+	if bound := countSelectors(t, q) * policy.TermsWeight(eff.Terms); added > bound {
+		t.Fatalf("the rewrite adds a policy weight of %d, more than %d: %q -> %q", added, bound, q, out)
+	}
 }

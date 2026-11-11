@@ -11,6 +11,45 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ## [Unreleased]
 
+### Security
+
+* **Large policies could exhaust the CPU and memory of the proxy**
+  ([GHSA-72w7-fm25-mxhm](https://github.com/querdian-dev/querdian/security/advisories/GHSA-72w7-fm25-mxhm)).
+  Policy lists and strings had no size limits, and the work for each request grew faster than the
+  policy size. A user who can write an `AccessPolicy`, or a spoke team through its agent, could thus
+  make the shared proxy slow or stop it. Now:
+  * The CRDs limit each list and string of `AccessPolicy`, `ClusterAccessPolicy` and the specs in
+    `SpokePolicy` (for example 64 rules, 64 matchers for each rule, 16384 characters for each matcher
+    value; see [docs/policy-guide.md](docs/policy-guide.md#size-limits)). The compiler applies the same
+    limits, also to objects stored before this release: such a policy grants nothing and gets the new
+    status reason `PolicyTooLarge`. The receiver rejects spoke policies over a limit.
+  * The cost of a regex compile grows with the size of the compiled program, not with the length of the
+    regex, and with the rune ranges and the width of its character classes and with case folding of
+    wide ranges. Querdian now
+    measures this cost without a compile (the weight). A regex matcher of a policy can have a weight of
+    at most 16384, and the regexes of one policy together at most 32768
+    (`PolicyTooLarge`). The CRD cannot express these two limits; the compiler and the receiver apply
+    them.
+  * Each request checks the size of its matched rules before the simplification (at most 4096 terms,
+    32768 matchers and 1 MiB of matcher text), the simplification has a fixed budget of steps, and
+    the simplified policy can have a weight of at most 32768. A request over one of these limits gets
+    `403 policy_too_complex`.
+  * The regexes that the proxy compiles for one request have a weight of at most 131072: the client
+    regexes, compiled again for each term of the policy, and the policy, compiled again for each
+    selector. The regexes of a client query can have a weight of at most 32768 (PromQL and LogQL). The
+    proxy checks both before it compiles a regex. The new settings `limits.maxRequestRegexWeight` and
+    `limits.maxQueryRegexWeight` change these limits (at most 262144; Helm: `config.limits`). A client
+    regex can have at most 8 KiB and the client regexes of a query 32 KiB together, and a policy regex
+    value at most 8 KiB.
+  * The weight comes from a parse with a work budget (a copy of the Go regexp parser with a work
+    counter, `internal/regexparse`), which stops as soon as the work is over the limit. A regex that
+    does not parse gives `400 bad_data` before any compile. A request over one of these limits
+    gets `403 query_too_complex`.
+  * The simplification and the cross-tenant check of the snapshot rebuild no longer do work that grows
+    with the square of the input in the normal case.
+
+  See the upgrade notes under "Changed".
+
 ### Added
 
 * **Multi-cluster enforcement** (opt-in, PLAN section 18). One Querdian on a central hub enforces the
@@ -57,6 +96,29 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 
 ### Changed
 
+* **Breaking: size limits for policies and requests** (see "Security"). The CRDs reject policies over a
+  limit. Before the upgrade, find the policies that are too large, because the compiler disables such a
+  policy as a whole. After the upgrade, check the `Ready` condition of your policies
+  (`kubectl get cap,ap`); split a policy that is now `PolicyTooLarge` into smaller policies. Users with
+  very large merged policies, or queries with many selectors on such policies, can get
+  `403 policy_too_complex` or `403 query_too_complex`. For `query_too_complex` from these limits, split
+  the query into queries with fewer selectors, use shorter regexes in the query, or make the policy
+  smaller; `maxFanout` has no effect on them. Character classes cost more when they are wide: a negated
+  class (`[^/]`), a large Unicode class (`\pL`), or a case-insensitive class with wide ranges. Use
+  narrow classes, for example `[a-z0-9-]` in place of `[^/]`, and keep `(?i)` for literals and small
+  classes. A regex that does not parse now gives `400 bad_data` before the query is parsed.
+* The 8 KiB byte limit of a regex also applies to literal lists. A Grafana "All" value of a variable
+  with many values (about 400 or more namespaces, joined with `|`) gives `403 query_too_complex`: set a
+  custom all value such as `.*` for the variable. A policy regex over 8 KiB gives `PolicyTooLarge`: split
+  the list into more rules, each with a part of the list. Do not split it into more matchers of one
+  rule, because the matchers of a rule are ANDed.
+* With the `multicluster` block, the receiver rejects the whole sync of a spoke (`400`, message
+  `invalid policy: ...` with the field over the limit) when one of its policies is over a limit. The
+  spoke then keeps its last accepted state, and its grants expire after `maxStaleness`. The agent logs
+  `agent: the receiver rejected the sync` with `status=400`, `querdian_agent_syncs_total{result="error"}`
+  increases, and
+  `querdian_agent_last_sync_timestamp_seconds` stops. Make the policy in the spoke smaller. See
+  [docs/multicluster.md](docs/multicluster.md#time-limit-and-outages).
 * A `ClusterAccessPolicy` rule with `unrestricted: false` and no matchers is now `InvalidMatcher` in
   the compiler too, not only in the CRD validation. This affects only objects stored without the
   CRD's CEL rule.

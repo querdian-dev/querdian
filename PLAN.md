@@ -505,6 +505,19 @@ No matched rule → `ErrNoGrant` → 403.
    an `Equal` matcher on the same label with different values. `Disjoint` = all pairs disjoint.
 6. **Cap.** `len(Terms) > maxPolicyTerms` → reject (403, reason `policy_too_complex`).
 
+Before step 1, the resolver counts the terms, matchers and bytes of matcher keys of the matched rules
+and rejects the request (403, reason `policy_too_complex`) when a count is over its fixed limit
+(`internal/policy/limits.go`). The simplification also has a fixed budget of steps, and the weight of
+its result has a fixed limit, with the same result. The weight of a regex bounds its compile cost
+(`internal/regexcost`, from a parse with a work budget in `internal/regexparse`, without a compile): the instructions of the compiled program, the rune
+ranges and the width of its character classes and the cost of case folding of wide ranges; of an
+`Equal`/`NotEqual` value, its
+length plus one. The enforcers reject a query (403, reason `query_too_complex`) when the regexes that
+the request compiles ((2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight) or
+the client regexes are over a fixed limit, before they compile a regex. Policy specs have fixed size
+limits in the CRD, the compiler (reason `PolicyTooLarge`) and the receiver; the regex weight limits are
+in the compiler and the receiver only.
+
 `DeniedLabels` semantics: a label denied by **any** matched rule is denied for the request
 (conservative; documented).
 

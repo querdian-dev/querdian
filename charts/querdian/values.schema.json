@@ -304,6 +304,16 @@
               "type": "integer",
               "minimum": 1
             },
+            "maxQueryRegexWeight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 262144
+            },
+            "maxRequestRegexWeight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 262144
+            },
             "maxMergeBytes": {
               "type": "integer",
               "minimum": 1

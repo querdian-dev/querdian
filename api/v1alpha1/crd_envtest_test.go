@@ -4,6 +4,7 @@ package v1alpha1_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	v1 "github.com/querdian-dev/querdian/api/v1alpha1"
+	"github.com/querdian-dev/querdian/internal/policy"
 	"github.com/querdian-dev/querdian/internal/spokesync"
 )
 
@@ -258,6 +260,145 @@ func TestSpokePolicyDigestRoundTrip(t *testing.T) {
 	}
 	if got, err := spokesync.Digest(back); err != nil || got != want {
 		t.Fatalf("digest after round trip = %s, %v; want %s", got, err, want)
+	}
+}
+
+func items(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprint(prefix, i)
+	}
+	return out
+}
+
+// TestSizeLimits: the API server accepts each list and string at its limit and rejects it at the limit plus
+// one. The limits are the constants of the policy package.
+func TestSizeLimits(t *testing.T) {
+	ctx := context.Background()
+	grp := v1.Subjects{Groups: []string{"g"}, Users: []string{}}
+	base := func() v1.ClusterRule {
+		return v1.ClusterRule{Backends: []string{"logs"}, Tenants: []string{"t1"}, Matchers: []v1.Matcher{eq("a", "b")}}
+	}
+	matchers := func(n int) []v1.Matcher {
+		out := make([]v1.Matcher, n)
+		for i := range out {
+			out[i] = eq(fmt.Sprint("l", i), "v")
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		limit int
+		path  string // in the error message
+		mk    func(n int) *v1.ClusterAccessPolicy
+	}{
+		{"groups", policy.MaxSubjects, "spec.subjects.groups", func(n int) *v1.ClusterAccessPolicy {
+			return caps("lim", v1.Subjects{Groups: items("g", n), Users: []string{}}, base())
+		}},
+		{"users", policy.MaxSubjects, "spec.subjects.users", func(n int) *v1.ClusterAccessPolicy {
+			return caps("lim", v1.Subjects{Groups: []string{}, Users: items("u", n)}, base())
+		}},
+		{"user length", policy.MaxSubjectLength, "spec.subjects.users[0]", func(n int) *v1.ClusterAccessPolicy {
+			return caps("lim", v1.Subjects{Groups: []string{}, Users: []string{strings.Repeat("ü", n)}}, base())
+		}},
+		{"rules", policy.MaxRules, "spec.rules", func(n int) *v1.ClusterAccessPolicy {
+			rules := make([]v1.ClusterRule, n)
+			for i := range rules {
+				rules[i] = base()
+			}
+			return caps("lim", grp, rules...)
+		}},
+		{"backends", policy.MaxBackends, "spec.rules[0].backends", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Backends = items("b", n)
+			return caps("lim", grp, r)
+		}},
+		{"backend length", policy.MaxNameLength, "spec.rules[0].backends[0]", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Backends = []string{strings.Repeat("b", n)}
+			return caps("lim", grp, r)
+		}},
+		{"tenants", policy.MaxTenants, "spec.rules[0].tenants", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Tenants = items("t", n)
+			return caps("lim", grp, r)
+		}},
+		{"tenant length", policy.MaxNameLength, "spec.rules[0].tenants[0]", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Tenants = []string{strings.Repeat("t", n)}
+			return caps("lim", grp, r)
+		}},
+		{"matchers", policy.MaxMatchers, "spec.rules[0].matchers", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Matchers = matchers(n)
+			return caps("lim", grp, r)
+		}},
+		{"matcher name", policy.MaxNameLength, "spec.rules[0].matchers[0].name", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Matchers = []v1.Matcher{eq(strings.Repeat("a", n), "v")}
+			return caps("lim", grp, r)
+		}},
+		{"matcher value", policy.MaxValueLength, "spec.rules[0].matchers[0].value", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Matchers = []v1.Matcher{eq("a", strings.Repeat("é", n))}
+			return caps("lim", grp, r)
+		}},
+		{"deny", policy.MaxLabelNames, "spec.rules[0].labels.deny", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Labels = &v1.LabelFilter{Deny: items("d", n)}
+			return caps("lim", grp, r)
+		}},
+		{"denied name", policy.MaxNameLength, "spec.rules[0].labels.deny[0]", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Labels = &v1.LabelFilter{Deny: []string{strings.Repeat("d", n)}}
+			return caps("lim", grp, r)
+		}},
+		{"redact", policy.MaxLabelNames, "spec.rules[0].labels.redact", func(n int) *v1.ClusterAccessPolicy {
+			rs := make([]v1.RedactRule, n)
+			for i := range rs {
+				rs[i] = v1.RedactRule{Name: fmt.Sprint("r", i), Strategy: v1.RedactHash}
+			}
+			r := base()
+			r.Labels = &v1.LabelFilter{Redact: rs}
+			return caps("lim", grp, r)
+		}},
+		{"redacted name", policy.MaxNameLength, "spec.rules[0].labels.redact[0].name", func(n int) *v1.ClusterAccessPolicy {
+			r := base()
+			r.Labels = &v1.LabelFilter{Redact: []v1.RedactRule{{Name: strings.Repeat("r", n), Strategy: v1.RedactRemove}}}
+			return caps("lim", grp, r)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			check(t, k8s.Create(ctx, tc.mk(tc.limit)), "")
+			check(t, k8s.Create(ctx, tc.mk(tc.limit+1)), tc.path)
+
+			// The same limit applies in an AccessPolicy and in the nested specs of a SpokePolicy.
+			for _, n := range []int{tc.limit, tc.limit + 1} {
+				cp := tc.mk(n)
+				want := ""
+				if n > tc.limit {
+					want = strings.Replace(tc.path, "spec.", "spec.clusterAccessPolicy.", 1)
+				}
+				sp := &v1.SpokePolicy{ObjectMeta: metav1.ObjectMeta{GenerateName: "sp-"}, Spec: v1.SpokePolicySpec{Cluster: "cluster-a",
+					SpokePolicySource: v1.SpokePolicySource{Kind: v1.SpokeClusterAccessPolicy, Name: "x", Generation: 1, ClusterAccessPolicy: &cp.Spec}}}
+				check(t, k8s.Create(ctx, sp), want)
+				if strings.Contains(tc.path, "tenants") {
+					continue // not in an AccessPolicy
+				}
+				rules := make([]v1.Rule, len(cp.Spec.Rules))
+				for i, r := range cp.Spec.Rules {
+					rules[i] = v1.Rule{Backends: r.Backends, Matchers: r.Matchers, Labels: r.Labels}
+				}
+				ap := &v1.AccessPolicy{ObjectMeta: metav1.ObjectMeta{GenerateName: "ap-", Namespace: "default"},
+					Spec: v1.AccessPolicySpec{Subjects: cp.Spec.Subjects, Rules: rules}}
+				want = ""
+				if n > tc.limit {
+					want = tc.path
+				}
+				check(t, k8s.Create(ctx, ap), want)
+			}
+		})
 	}
 }
 

@@ -126,6 +126,11 @@ config:
   limits:
     maxPolicyTerms: 16
     maxFanout: 16
+    # Regex weight limits (docs/operations.md): the regexes of one client query, and all regexes that
+    # one request compiles. Larger values allow larger queries and cost more memory for each request.
+    # Absent means the defaults of Querdian.
+    # maxQueryRegexWeight: 32768
+    # maxRequestRegexWeight: 131072
     maxMergeBytes: 67108864
     # Buffered fan-out bodies of all requests together. Default maxMergeBytes. Keep
     # resources.limits.memory at least 100 MiB + 6 x this value. See docs/operations.md.
