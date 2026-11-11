@@ -4,6 +4,6 @@
     <input id="search-q" type="search" autocomplete="off" spellcheck="false" placeholder="Search the docs" role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list">
     <button type="submit" class="search-close">Close <kbd aria-hidden="true">Esc</kbd></button>
   </form>
-  <p class="search-status" id="search-status" role="status" aria-live="polite">Type to search all documentation pages.</p>
+  <p class="search-status" id="search-status" role="status" aria-live="polite">{{ with (partial "docs-version.html" .).name }}Type to search the documentation for {{ . }}.{{ else }}Type to search all documentation pages.{{ end }}</p>
   <ul class="search-results" id="search-results" role="listbox" aria-label="Results"></ul>
 </dialog>

@@ -1,8 +1,10 @@
-{{- /* Full-text index of the documentation, fetched by assets/js/search.js on first use. */ -}}
+{{- /* Full-text index of one documentation version, fetched by assets/js/search.js on first use. Hugo
+       writes one for each version: /docs/search-index.json, /docs/main/search-index.json and so on. */ -}}
+{{- $v := partial "docs-version.html" . -}}
 {{- $nav := dict -}}
-{{- range hugo.Data.nav }}{{ $group := .title }}{{ range .pages }}{{ $nav = merge $nav (dict (index (split . " | ") 0) $group) }}{{ end }}{{ end -}}
+{{- range $v.nav }}{{ $group := .title }}{{ range .pages }}{{ $nav = merge $nav (dict (index (split . " | ") 0) $group) }}{{ end }}{{ end -}}
 {{- $out := slice -}}
-{{- range where site.RegularPages "Section" "docs" -}}
+{{- range where site.RegularPages "Params.version" $v.name -}}
   {{- $key := strings.TrimSuffix ".md" (strings.TrimPrefix "docs/" (.Params.source | default "")) -}}
   {{- $heads := slice -}}
   {{- range .Fragments.Headings }}{{ range .Headings }}{{ $heads = $heads | append (slice .ID .Title) }}{{ end }}{{ end -}}

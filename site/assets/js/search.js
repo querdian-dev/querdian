@@ -1,5 +1,6 @@
-// Client-side documentation search. Fetches /search-index.json (built by Hugo from the docs pages) on first
-// use and scores title, headings and body text in the browser; nothing is sent anywhere.
+// Client-side documentation search. Fetches the search index of the documentation version of the page
+// (search-index.json below /docs/, built by Hugo from the docs pages) on first use and scores title,
+// headings and body text in the browser; nothing is sent anywhere.
 (function () {
   "use strict";
 
@@ -11,7 +12,8 @@
   var input = document.getElementById("search-q");
   var list = document.getElementById("search-results");
   var status = document.getElementById("search-status");
-  var indexUrl = document.currentScript ? document.currentScript.getAttribute("data-index") : "/search-index.json";
+  var indexUrl = document.currentScript ? document.currentScript.getAttribute("data-index") : "/docs/search-index.json";
+  var idle = status.textContent;
   var docs = null;
   var loading = null;
   var active = -1;
@@ -201,7 +203,7 @@
     var q = input.value.trim();
     if (!q) {
       results = []; render();
-      status.textContent = "Type to search all documentation pages.";
+      status.textContent = idle;
       input.setAttribute("aria-expanded", "false");
       return;
     }
@@ -242,5 +244,5 @@
   });
   list.addEventListener("click", function () { dialog.close(); });
   dialog.addEventListener("click", function (e) { if (e.target === dialog) { dialog.close(); } });
-  dialog.addEventListener("close", function () { input.value = ""; results = []; render(); status.textContent = "Type to search all documentation pages."; });
+  dialog.addEventListener("close", function () { input.value = ""; results = []; render(); status.textContent = idle; });
 })();

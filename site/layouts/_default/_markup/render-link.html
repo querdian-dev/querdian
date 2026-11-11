@@ -1,5 +1,7 @@
-{{- /* Rewrites links in the repository's markdown for the site: links to published docs become site paths,
-       other repository files link to GitHub once the repository is public and are plain text until then. */ -}}
+{{- /* Rewrites links in the repository's markdown for the site: links to published docs become site paths
+       in the documentation version of the page, other repository files link to GitHub at the git ref of
+       that version once the repository is public and are plain text until then. */ -}}
+{{- $v := partial "docs-version.html" .Page -}}
 {{- $dest := .Destination -}}
 {{- $repo := printf "https://github.com/%s" site.Params.repo -}}
 {{- $out := $dest -}}
@@ -13,13 +15,13 @@
   {{- $target := path.Join $dir $file -}}
   {{- $page := "" -}}
   {{- if and (hasPrefix $target "docs/") (strings.HasSuffix $target ".md") -}}
-    {{- $page = site.GetPage (printf "/%s" (strings.TrimSuffix ".md" $target)) -}}
+    {{- $page = site.GetPage (printf "%s/%s" $v.path (strings.TrimSuffix ".md" (strings.TrimPrefix "docs/" $target))) -}}
   {{- end -}}
   {{- if $page -}}
     {{- $out = printf "%s%s" $page.RelPermalink $frag -}}
   {{- else if site.Params.repoPublic -}}
     {{- $kind := cond (or (strings.HasSuffix $file "/") (not (strings.Contains (path.Base $file) "."))) "tree" "blob" -}}
-    {{- $out = printf "%s/%s/main/%s%s" $repo $kind $target $frag -}}
+    {{- $out = printf "%s/%s/%s/%s%s" $repo $kind ($v.ref | default "main") $target $frag -}}
   {{- else -}}
     {{- $plain = true -}}
   {{- end -}}

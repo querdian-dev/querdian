@@ -87,11 +87,13 @@ docker-build:
 release-check:
 	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check
 
-# Landing page and documentation (Hugo, pinned in .github/workflows/pages.yml).
-HUGO ?= go run github.com/gohugoio/hugo@v0.168.0
+# Landing page and documentation. The Hugo version is pinned here only (module-proxy run, stays out
+# of go.mod); .github/workflows/pages.yml runs this target. A broken internal link fails the build.
+HUGO ?= go run github.com/gohugoio/hugo@v0.169.0
 site:
 	site/build-content.sh
-	$(HUGO) --source site --minify --gc
+	$(HUGO) --source site --minify --gc --cleanDestinationDir
+	go run ./hack/sitecheck -dir site/public -base https://querdian.dev/
 
 site-serve:
 	site/build-content.sh

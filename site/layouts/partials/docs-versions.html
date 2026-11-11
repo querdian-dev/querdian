@@ -1,0 +1,24 @@
+{{- /* Version selector of the docs: a disclosure with one link per version, to the same page where
+       that version has it and to its overview otherwise. */ -}}
+{{- $page := . -}}
+{{- $v := partial "docs-version.html" . -}}
+{{- if gt (len (hugo.Data.versions | default slice)) 1 }}
+<details class="docs-version">
+  <summary>
+    <span class="sr">Documentation version:</span>
+    <span class="dv-name">{{ $v.name }}</span>
+    <span class="dv-state">{{ if $v.latest }}Latest{{ else if $v.release }}Older{{ else }}Unreleased{{ end }}</span>
+    <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" focusable="false"><path d="M4.5 7.5l5.5 5.5 5.5-5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </summary>
+  <ul>
+    {{- range hugo.Data.versions }}
+    {{- $twin := partial "docs-twin.html" (dict "page" $page "to" .) }}
+    <li><a href="{{ with $twin }}{{ .RelPermalink }}{{ else }}{{ .path }}/{{ end }}"{{ if eq .name $v.name }} aria-current="true"{{ end }}>
+      <span class="dv-name">{{ .name }}</span>
+      <span class="dv-state">{{ if .latest }}Latest{{ else if .release }}Older{{ else }}Unreleased{{ end }}</span>
+      {{- if not $twin }}<span class="dv-miss">This page is not in {{ .name }}. The link opens the overview.</span>{{ end }}
+    </a></li>
+    {{- end }}
+  </ul>
+</details>
+{{- end }}

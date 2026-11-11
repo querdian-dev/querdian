@@ -29,7 +29,8 @@ enableGitInfo = false
   version = "0.1.2"
 
 [outputs]
-  home = ["HTML", "SearchIndex"]
+  # One search index for each documentation version: every version is a section (/docs/, /docs/main/).
+  section = ["HTML", "SearchIndex"]
 
 [outputFormats]
   [outputFormats.SearchIndex]

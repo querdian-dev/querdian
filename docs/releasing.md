@@ -215,7 +215,8 @@ Documents to update in the release commit (a pull request, like any change):
   * [docs/quickstart.md](quickstart.md): the "published image" instructions;
   * [docs/operations.md](operations.md): the "latest" release in the introduction;
   * `site/hugo.toml`: `params.version` (landing page and footer), and `site/data/nav.yaml`: the
-    release notes page;
+    release notes page. The documentation version of the release needs no change: the website
+    reads the versions from the release tags (see [site/README.md](../site/README.md));
   * [SECURITY.md](../SECURITY.md): the supported release line, when the minor version changes.
 
   `git grep -n -F '<previous version>'` finds them.
@@ -355,6 +356,20 @@ was loaded into kind). This checks the published image and chart together; the q
 themselves are the ones of the tag. Not verified: that the stack works with the image pulled by the
 cluster from ghcr.io (the quickstart loads it), so also run once with a values override of
 `image.pullPolicy=IfNotPresent` or on a real cluster.
+
+**Website**
+
+When the release workflow is done, the Pages workflow (`pages.yml`) builds the website again. For a
+release without a pre-release part, check on [querdian.dev](https://querdian.dev/docs/):
+
+* `/docs/` shows the new version in the version selector, marked "Latest";
+* the previous release is at `/docs/<previous tag>/` when the minor version changed, and its
+  addresses redirect to the new patch otherwise;
+* `/docs/main/` is still there.
+
+If the Pages workflow did not run, start it by hand (`gh workflow run pages.yml --ref main`). The
+website reads the tags, not the GitHub releases: a tag whose release workflow failed also becomes a
+documentation version with the next build of the website, until the tag is deleted (see rollback).
 
 ## 6. Rollback
 

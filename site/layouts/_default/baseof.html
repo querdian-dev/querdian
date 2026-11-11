@@ -12,6 +12,15 @@
   <meta property="og:description" content="{{ site.Params.description }}">
   <meta property="og:type" content="website">
   <meta property="og:url" content="{{ .Permalink }}">
+  {{- /* A docs page of another version points search engines to the same page of the latest release. */ -}}
+  {{- $v := partial "docs-version.html" . }}
+  {{- $canonical := .Permalink }}
+  {{- if and .Params.version (not $v.latest) }}
+    {{- range hugo.Data.versions }}{{ if .latest }}{{ with partial "docs-twin.html" (dict "page" $ "to" .) }}{{ $canonical = .Permalink }}{{ end }}{{ end }}{{ end }}
+  {{- end }}
+  {{- if ne .Kind "404" }}
+  <link rel="canonical" href="{{ $canonical }}">
+  {{- end }}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
   {{- $css := resources.Get "css/main.css" | resources.Minify | resources.Fingerprint }}
@@ -26,7 +35,7 @@
   {{ partial "footer.html" . }}
   {{ partial "search.html" . }}
   {{- $search := resources.Get "js/search.js" | resources.Minify | resources.Fingerprint }}
-  <script src="{{ $search.RelPermalink }}" integrity="{{ $search.Data.Integrity }}" data-index="/search-index.json" defer></script>
+  <script src="{{ $search.RelPermalink }}" integrity="{{ $search.Data.Integrity }}" data-index="{{ $v.path | default "/docs" }}/search-index.json" defer></script>
   {{- block "scripts" . }}{{ end }}
 </body>
 </html>

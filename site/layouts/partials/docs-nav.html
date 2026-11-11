@@ -1,11 +1,14 @@
 {{- $current := . -}}
+{{- $v := partial "docs-version.html" . -}}
+{{- $home := printf "%s/" $v.path -}}
 <nav class="docs-nav" aria-label="Documentation">
-  <a class="docs-home{{ if eq $current.RelPermalink "/docs/" }} on{{ end }}" href="/docs/">Overview</a>
-  {{ range hugo.Data.nav }}
+  {{ partial "docs-versions.html" . }}
+  <a class="docs-home{{ if eq $current.RelPermalink $home }} on{{ end }}" href="{{ $home }}">Overview</a>
+  {{ range $v.nav }}
   <h2>{{ .title }}</h2>
   <ul>
     {{ range .pages }}
-      {{ with site.GetPage (printf "/docs/%s" (index (split . " | ") 0)) }}
+      {{ with site.GetPage (printf "%s/%s" $v.path (index (split . " | ") 0)) }}
       <li><a href="{{ .RelPermalink }}"{{ if eq .RelPermalink $current.RelPermalink }} aria-current="page"{{ end }}>{{ .Title }}</a></li>
       {{ end }}
     {{ end }}

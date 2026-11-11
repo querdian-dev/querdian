@@ -1,0 +1,31 @@
+{{- /* The docs shell of one page: navigation, article and table of contents. Used by the page and the
+       overview layout. */ -}}
+{{- $v := partial "docs-version.html" . -}}
+{{- $latest := dict -}}
+{{- range hugo.Data.versions }}{{ if .latest }}{{ $latest = . }}{{ end }}{{ end -}}
+<div class="docs-shell">
+  {{ partial "docs-nav.html" . }}
+  <article class="doc">
+    {{- if and $v (not $v.latest) }}
+    {{- $twin := partial "docs-twin.html" (dict "page" . "to" $latest) }}
+    <p class="doc-version-note">
+      {{- if $v.release }}This page is for <strong>{{ $v.name }}</strong>, an older release.
+      {{- else }}This page is for the <strong>{{ $v.name }}</strong> branch. It can describe changes that are not in a release.
+      {{- end }}
+      {{ with $twin }}<a href="{{ .RelPermalink }}">Read this page for {{ $latest.name }}</a>{{ else }}<a href="{{ $latest.path }}/">Open the {{ $latest.name }} documentation</a>{{ end }}
+    </p>
+    {{- end }}
+    <h1>{{ .Title }}</h1>
+    {{ with .Params.source }}<p class="doc-meta">Source: <code>{{ . }}</code>{{ if $v.release }} at {{ $v.name }}{{ end }}{{ if site.Params.repoPublic }} · <a href="https://github.com/{{ site.Params.repo }}/blob/{{ $v.ref }}/{{ . }}">{{ if $v.release }}View on GitHub{{ else }}Edit on GitHub{{ end }}</a>{{ end }}</p>{{ end }}
+    <div class="prose">
+      {{ .Content }}
+    </div>
+    {{ partial "docs-pager.html" . }}
+  </article>
+  {{ if gt (len .TableOfContents) 80 }}
+  <aside class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    {{ .TableOfContents }}
+  </aside>
+  {{ end }}
+</div>
