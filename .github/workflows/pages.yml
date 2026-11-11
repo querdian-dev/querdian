@@ -2,18 +2,35 @@ name: Pages
 
 # Builds the landing page and documentation (site/ plus docs/*.md) and deploys it to GitHub Pages
 # at querdian.dev. The custom domain is set by site/static/CNAME and the repository's Pages settings.
+#
+# The documentation has one tree per version: the release tags and main (site/build-content.sh).
+# Each run builds all versions, because a deployment replaces the complete site.
 on:
   push:
     branches: [main]
     paths:
       - "site/**"
       - "docs/**"
+      - "hack/sitecheck/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/pages.yml"
   pull_request:
     paths:
       - "site/**"
       - "docs/**"
+      - "hack/sitecheck/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/pages.yml"
+  # A release adds a documentation version. This event runs the workflow of main, after the tag
+  # exists; a run on the tag itself is not possible, because the github-pages environment only
+  # accepts deployments from main. The job checks out main, never the commit of the release run.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -26,24 +43,33 @@ concurrency:
 jobs:
   build:
     name: build
+    # After a release: only for a successful run that a tag push to this repository started.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the release tags are the documentation versions
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Generate docs pages
-        run: site/build-content.sh
-      # Pinned and run from the module proxy so it stays out of go.mod; Renovate bumps the version.
+      # Generates the docs pages of all versions, runs Hugo (pinned in the Makefile; Renovate bumps
+      # the version) and checks the internal links.
       - name: Build site
-        run: go run github.com/gohugoio/hugo@v0.169.0 --source site --minify --gc
-      - name: Check internal links and files
+        run: make site
+      # docs/main/ only exists when the release tags are there: without them the site would deploy
+      # main as the only version.
+      - name: Check files
         run: |
           set -euo pipefail
-          for f in index.html docs/index.html docs/quickstart/index.html 404.html CNAME; do
+          for f in index.html docs/index.html docs/quickstart/index.html docs/search-index.json \
+            docs/main/index.html docs/main/search-index.json 404.html CNAME; do
             test -s "site/public/$f" || { echo "missing $f" >&2; exit 1; }
           done
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
