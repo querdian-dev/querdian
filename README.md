@@ -36,6 +36,14 @@ helm install querdian oci://ghcr.io/querdian-dev/charts/querdian --version 0.1.2
 
 To see it working first, run the [quickstart](docs/quickstart.md).
 
+## How it works
+
+![The path of a query through Querdian](docs/img/architecture.svg)
+
+Querdian verifies the OIDC token of the user, finds the rules of the user in the policies, rewrites the
+query with a real parser and sends it to the backend. It rejects each request that it cannot check.
+[How Querdian works](docs/architecture.md) explains the parts, also for a hub with spoke clusters.
+
 Inspired by [evoila/janus](https://github.com/evoila/janus).
 
 See [PLAN.md](PLAN.md) for the design and [TASKS.md](TASKS.md) for the work breakdown.
@@ -44,6 +52,8 @@ The website (landing page and rendered documentation) is built from [site/](site
 
 ## Documentation
 
+* [How Querdian works](docs/architecture.md): the path of a query, the policies, and hub and spoke, with
+  drawings.
 * [Quickstart on kind](docs/quickstart.md): a complete isolation demo (Keycloak, Grafana, Prometheus,
   Loki, Tempo, two teams, 24 h of demo history and four Grafana dashboards) on a laptop with one script.
   The [quickstart reference](docs/quickstart-details.md) has the options and the internals of the demo.

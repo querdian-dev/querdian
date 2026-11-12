@@ -154,6 +154,7 @@ func TestBuildContentVersions(t *testing.T) {
 	r.write("docs/quickstart.md", "# Quickstart\n\nBody of 0.2.0.\n")
 	r.write("docs/security/threat-model.md", "# Threat \"model\"\n\nThreats.\n")
 	r.write("docs/guide.md", "# Guide\n\n# Not a title\n")
+	r.write("docs/img/flow.svg", "<svg>v0.2.0</svg>")
 	r.write("site/data/nav.yaml", navStart+"    - guide | The guide\n- title: Security\n  pages:\n    - security/threat-model\n")
 	r.git("mv", "site/content/docs/_index.md", "site/docs-overview.md")
 	r.release("v0.2.0-rc.1")
@@ -163,6 +164,9 @@ func TestBuildContentVersions(t *testing.T) {
 	// The working tree has a page that is not in a release, without a commit.
 	r.write("docs/quickstart.md", "# Quickstart\n\nBody of main.\n")
 	r.write("docs/next.md", "# Next\n\nUnreleased.\n")
+	r.write("docs/img/flow.svg", "<svg>main</svg>")
+	r.write("docs/img/new.svg", "<svg>new</svg>")
+	r.write("site/assets/docs/v0.0.9/img/stale.svg", "stale")
 	r.write("site/data/nav.yaml", navStart+"    - next\n- title: Security\n  pages:\n    - security/threat-model\n")
 	// A file of an earlier build must not stay.
 	r.write("site/content/docs/v0.0.9/stale.md", "stale")
@@ -215,6 +219,26 @@ func TestBuildContentVersions(t *testing.T) {
 		"site/content/docs/v0.0.9",
 		"site/content/docs/main/guide.md", // not in the navigation of main
 		"site/content/docs/legacy.md",     // removed in v0.2.0
+	} {
+		if r.exists(file) {
+			t.Errorf("%s must not exist", file)
+		}
+	}
+
+	// Images: each version has the files of docs/img of its tag, for the image render hook.
+	for file, want := range map[string]string{
+		"site/assets/docs/v0.2.0/img/flow.svg": "<svg>v0.2.0</svg>",
+		"site/assets/docs/main/img/flow.svg":   "<svg>main</svg>",
+		"site/assets/docs/main/img/new.svg":    "<svg>new</svg>",
+	} {
+		if got := r.read(file); got != want {
+			t.Errorf("%s = %q, want %q", file, got, want)
+		}
+	}
+	for _, file := range []string{
+		"site/assets/docs/v0.1.1",             // this release has no images
+		"site/assets/docs/v0.2.0/img/new.svg", // only on main
+		"site/assets/docs/v0.0.9",             // a file of an earlier build
 	} {
 		if r.exists(file) {
 			t.Errorf("%s must not exist", file)

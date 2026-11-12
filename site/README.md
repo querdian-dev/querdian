@@ -8,6 +8,12 @@ The landing page and documentation, built with [Hugo](https://gohugo.io) and dep
   `data/nav.yaml` into `content/docs/` (generated, git-ignored) with front matter, and the link render hook
   maps links between pages to site paths. Add a page to the site by adding it to `data/nav.yaml`.
   `docs-overview.md` is the overview page of the documentation.
+* Images are in `docs/img`. A page refers to an image with a relative path (`![text](img/name.svg)`),
+  which also works on GitHub. `build-content.sh` copies `docs/img` of each version, and the image render
+  hook (`layouts/_default/_markup/render-image.html`) puts an SVG file into the page, so that its text
+  uses the fonts of the site. Thus each drawing must use a prefix of its own for its ids and for the
+  classes in its `<style>` element (for example `qd-arch-`), and it must fit with fallback fonts too,
+  because GitHub shows it as an image. An image that does not exist stops the build.
 * The documentation has versions, see [Documentation versions](#documentation-versions).
 * The rewrites on the landing page are the output of the real enforcers for the quickstart policies. If the
   enforcers change how they rewrite, update `assets/js/pass.js`.

@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 470" class="qd-diagram qd-mc" role="img" aria-labelledby="qd-mc-title qd-mc-desc">
+  <title id="qd-mc-title">Hub and spoke: policies, telemetry and queries</title>
+  <desc id="qd-mc-desc">In the spoke cluster, the querdian agent reads the policies and namespaces from the spoke API server and sends them over mTLS to the querdian receiver on the hub. The receiver writes SpokePolicy and SpokeCluster objects to the hub API server. The querdian proxy on the hub watches these objects and the hub policies. The collector of the spoke sends telemetry to the ingest gateway on the hub, which overwrites the cluster label and writes to Prometheus, Loki and Tempo. Grafana sends queries to the proxy, and the proxy sends them to the backends with the cluster matcher.</desc>
+  <style>
+    .qd-mc text { font-family: Archivo, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #101418; }
+    .qd-mc .qd-h { font-size: 15px; font-weight: 700; }
+    .qd-mc .qd-s { font-size: 12.5px; fill: #3b434c; }
+    .qd-mc .qd-m { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .qd-mc .qd-l { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; fill: #5b6570; }
+    .qd-mc .qd-lab { font-size: 12.5px; fill: #3b434c; stroke: #f4f4f0; stroke-width: 4px; paint-order: stroke; stroke-linejoin: round; }
+    .qd-mc .qd-p { fill: #f4f4f0; }
+    .qd-mc .qd-k { font-size: 12px; fill: #f4f4f0; fill-opacity: 0.8; }
+    .qd-mc .qd-w { fill: #ffffff; }
+    .qd-mc .qd-box { fill: #ffffff; stroke: #101418; stroke-width: 2.5; }
+    .qd-mc .qd-ink { fill: #101418; stroke: #101418; stroke-width: 2.5; }
+    .qd-mc .qd-line { fill: none; stroke: #101418; stroke-width: 2.5; }
+    .qd-mc .qd-zone { fill: none; stroke: #101418; stroke-opacity: 0.35; stroke-width: 1.5; }
+  </style>
+  <defs>
+    <marker id="qd-mc-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#101418"/>
+    </marker>
+  </defs>
+  <rect width="720" height="470" fill="#f4f4f0"/>
+
+  <!-- Clusters -->
+  <rect class="qd-zone" x="10" y="14" width="208" height="442" rx="14"/>
+  <text class="qd-l" x="26" y="40">SPOKE CLUSTER</text>
+  <rect class="qd-zone" x="318" y="14" width="392" height="442" rx="14"/>
+  <text class="qd-l" x="334" y="40">HUB CLUSTER</text>
+
+  <!-- Row 1: policy sync -->
+  <rect class="qd-ink" x="24" y="60" width="180" height="78" rx="12"/>
+  <text class="qd-k" x="114" y="82" text-anchor="middle">querdian</text>
+  <text class="qd-h qd-p" x="114" y="102" text-anchor="middle" font-size="16">agent</text>
+  <text class="qd-p" x="114" y="122" text-anchor="middle" font-size="12.5">sends the spoke policies</text>
+
+  <rect class="qd-ink" x="332" y="60" width="150" height="78" rx="12"/>
+  <text class="qd-k" x="407" y="82" text-anchor="middle">querdian</text>
+  <text class="qd-h qd-p" x="407" y="102" text-anchor="middle" font-size="16">receiver</text>
+  <text class="qd-p" x="407" y="122" text-anchor="middle" font-size="12.5">the only write path</text>
+
+  <rect class="qd-box" x="550" y="56" width="150" height="86" rx="12"/>
+  <text class="qd-h" x="625" y="78" text-anchor="middle">Hub API server</text>
+  <text class="qd-m" x="625" y="96" text-anchor="middle">SpokePolicy</text>
+  <text class="qd-m" x="625" y="111" text-anchor="middle">SpokeCluster</text>
+  <text class="qd-s" x="625" y="129" text-anchor="middle">and the hub policies</text>
+
+  <!-- Row 2: sources and query path -->
+  <rect class="qd-box" x="24" y="212" width="180" height="78" rx="12"/>
+  <text class="qd-h" x="114" y="236" text-anchor="middle">Spoke API server</text>
+  <text class="qd-m" x="114" y="255" text-anchor="middle">ClusterAccessPolicy</text>
+  <text class="qd-m" x="114" y="271" text-anchor="middle">AccessPolicy, Namespace</text>
+
+  <rect class="qd-box" x="332" y="212" width="150" height="78" rx="12"/>
+  <text class="qd-h" x="407" y="246" text-anchor="middle">Grafana</text>
+  <text class="qd-s" x="407" y="265" text-anchor="middle">user with a token</text>
+
+  <rect class="qd-ink" x="550" y="212" width="150" height="78" rx="12"/>
+  <text class="qd-k" x="625" y="234" text-anchor="middle">querdian</text>
+  <text class="qd-h qd-p" x="625" y="254" text-anchor="middle" font-size="16">proxy</text>
+  <text class="qd-p" x="625" y="274" text-anchor="middle" font-size="12.5">enforces all policies</text>
+
+  <!-- Row 3: telemetry -->
+  <rect class="qd-box" x="24" y="360" width="180" height="78" rx="12"/>
+  <text class="qd-h" x="114" y="394" text-anchor="middle">Collector</text>
+  <text class="qd-s" x="114" y="413" text-anchor="middle">telemetry of the spoke</text>
+
+  <rect class="qd-box" x="332" y="360" width="150" height="78" rx="12"/>
+  <text class="qd-h" x="407" y="386" text-anchor="middle">Ingest gateway</text>
+  <text class="qd-s" x="407" y="405" text-anchor="middle">overwrites the</text>
+  <text class="qd-s" x="407" y="420" text-anchor="middle">cluster label</text>
+
+  <!-- Backends: the zone colours of the site (metrics, logs, traces) -->
+  <rect x="550" y="357" width="150" height="26" rx="7" fill="#ff5a1f" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h" x="625" y="375" text-anchor="middle" font-size="13">Prometheus</text>
+  <rect x="550" y="386" width="150" height="26" rx="7" fill="#2a63f0" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h qd-w" x="625" y="404" text-anchor="middle" font-size="13">Loki</text>
+  <rect x="550" y="415" width="150" height="26" rx="7" fill="#c8f169" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h" x="625" y="433" text-anchor="middle" font-size="13">Tempo</text>
+
+  <!-- Agent reads the spoke API -->
+  <path class="qd-line" d="M114 212V142" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="124" y="181">reads</text>
+  <!-- Agent to receiver -->
+  <path class="qd-line" d="M204 99H328" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="266" y="88" text-anchor="middle">mTLS</text>
+  <text class="qd-lab" x="266" y="119" text-anchor="middle">agent cert</text>
+  <!-- Receiver to hub API -->
+  <path class="qd-line" d="M482 99H546" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="514" y="88" text-anchor="middle">writes</text>
+  <!-- Hub API to proxy -->
+  <path class="qd-line" d="M625 142V208" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="635" y="179">watches</text>
+  <!-- Grafana to proxy -->
+  <path class="qd-line" d="M482 251H546" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="514" y="240" text-anchor="middle">query</text>
+  <!-- Proxy to backends -->
+  <path class="qd-line" d="M625 290V353" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="615" y="317" text-anchor="end">queries with the</text>
+  <text class="qd-lab" x="615" y="332" text-anchor="end">cluster matcher</text>
+  <!-- Collector to ingest gateway -->
+  <path class="qd-line" d="M204 399H328" marker-end="url(#qd-mc-arrow)"/>
+  <text class="qd-lab" x="266" y="388" text-anchor="middle">telemetry</text>
+  <text class="qd-lab" x="266" y="419" text-anchor="middle">ingest cert</text>
+  <!-- Ingest gateway to backends -->
+  <path class="qd-line" d="M482 399H546" marker-end="url(#qd-mc-arrow)"/>
+</svg>

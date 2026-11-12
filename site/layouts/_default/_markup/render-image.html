@@ -1,0 +1,24 @@
+{{- /* Images of the repository's markdown. A relative image is a file of docs/ in the documentation
+       version of the page; build-content.sh copies docs/img of each version to assets/docs/<version>/img.
+       An SVG file goes into the page itself, so that its text uses the fonts of the site. Other files
+       get an img element. An image that does not exist stops the build. */ -}}
+{{- $dest := .Destination -}}
+{{- $title := .Title -}}
+{{- $alt := .PlainText -}}
+{{- if or (hasPrefix $dest "http://") (hasPrefix $dest "https://") -}}
+<img src="{{ $dest | safeURL }}" alt="{{ $alt }}"{{ with $title }} title="{{ . }}"{{ end }} loading="lazy">
+{{- else -}}
+  {{- $v := partial "docs-version.html" .Page -}}
+  {{- $dir := path.Dir (.Page.Params.source | default "docs/x.md") -}}
+  {{- $file := strings.TrimPrefix "docs/" (path.Join $dir $dest) -}}
+  {{- $res := resources.Get (printf "docs/%s/%s" $v.name $file) -}}
+  {{- if not $res }}{{ errorf "%s: the image %q does not exist in docs/ of %s" .Page.File.Path $dest $v.name }}{{ end -}}
+<figure class="doc-figure">
+  {{- if strings.HasSuffix $file ".svg" }}
+  {{ $res.Content | safeHTML }}
+  {{- else }}
+  <img src="{{ $res.RelPermalink }}" alt="{{ $alt }}" loading="lazy">
+  {{- end }}
+  {{- with $title }}<figcaption>{{ . }}</figcaption>{{ end }}
+</figure>
+{{- end -}}

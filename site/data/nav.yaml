@@ -1,5 +1,6 @@
 - title: Start
   pages:
+    - architecture
     - quickstart
     - quickstart-multicluster | Multi-cluster quickstart
     - policy-guide
