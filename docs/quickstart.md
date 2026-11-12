@@ -9,7 +9,8 @@ In short:
 * Three demo users log in to Grafana with Keycloak. Each user sees different metrics, logs and traces.
 * The backends contain 24 hours of synthetic data with three incidents. Grafana has four dashboards.
 * `verify.sh` proves the isolation with 153 automatic checks.
-* `up.sh` needs about 3 minutes. The first run needs 5 to 10 minutes, because it downloads the images.
+* `up.sh` needs about 3 minutes. The first run needs 5 to 10 minutes, because it also compiles Querdian
+  and downloads the kind node image.
 
 > **Demo only.** Keycloak runs in dev mode over plain HTTP with known passwords. The demo OAuth client
 > permits the password grant, and no data is persistent. Do not use this configuration in production.
@@ -55,7 +56,7 @@ Three example policies give this access. See [Policies](quickstart-details.md#po
 2. Select **Sign in with Keycloak** and log in as `alice`.
 3. Open the dashboard **What can I see?** in the folder *Querdian demo*. It shows the namespaces and
    the labels that each backend gives to alice.
-4. Open a private window. Log in as `bob`, then as `carol`, and compare.
+4. Log in as `bob` in a private window and compare. Then log out and log in as `carol`.
 
 The local Grafana admin (`admin` / `admin`) has no OAuth token, thus Querdian refuses its queries.
 This is the intended result: use the Keycloak login.
@@ -98,14 +99,14 @@ listens on `127.0.0.1` without authentication, for the laptop demo only.
 
 ## Verify
 
-`hack/quickstart/verify.sh` does the checks of this page automatically. It stops with a non-zero exit
-code if a check fails. The script:
+`hack/quickstart/verify.sh` checks the isolation automatically. It stops with a non-zero exit code if a
+check fails. The script:
 
 * gets tokens for the three users and sends queries directly to Querdian;
 * logs in to Grafana as a browser does, and sends queries through Grafana;
 * runs each query of each dashboard panel as each user.
 
-It does not examine how Grafana shows the results. See
+It does not examine the policy dashboard, or how Grafana shows the results. See
 [Verification](quickstart-details.md#verification) for the full list.
 
 ## If a step fails
@@ -113,7 +114,7 @@ It does not examine how Grafana shows the results. See
 | Symptom | Cause and correction |
 |---|---|
 | `up.sh` fails | The script keeps the cluster and prints the pods that do not run. Read the logs: `kubectl --context kind-querdian-demo -n <ns> logs deploy/<name>`. `CLEANUP_ON_FAILURE=1` deletes the cluster after a failure. |
-| `up.sh` stops at the image pulls | Run `down.sh`, then start again. |
+| `up.sh` does not continue after the image pulls | Run `down.sh`, then start again. |
 | The login fails with "invalid redirect", or the issuer does not match | Open `http://localhost:3000`, not `127.0.0.1`. Make sure that `keycloak.localtest.me` resolves (see [Hostnames](quickstart-details.md#hostnames)). |
 | Grafana shows `401` or "Authentication to data source failed" for the local admin | This is the intended result. Log in with Keycloak. |
 | The queries fail after 30 minutes | The tokens are valid for 30 minutes (realm setting). Log out, then log in again. |
