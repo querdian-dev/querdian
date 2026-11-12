@@ -202,6 +202,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   (`dashboards.enabled`). The alert example `QuerdianSnapshotDiverged` is removed, because
   `querdian_snapshot_generation` is not comparable between replicas. A denied label is rejected for
   unrestricted users in PromQL, LogQL and TraceQL.
+* `docs/limitations.md` gives the limits in tables with the effect for the user and the correction.
+  `docs/endpoints.md` gives the decision of the code for each open question of the endpoint inventory.
 
 ## [0.1.2] - 2026-10-28
 

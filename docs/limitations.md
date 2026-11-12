@@ -38,7 +38,7 @@ Contents: [general](#general-request-handling) / [PromQL](#promql) / [LogQL](#lo
 | **No rate limit and no queue in the proxy** | Only `querdian receiver` in a multi-cluster setup limits the requests of each agent identity. | See [operations.md](operations.md#scaling). |
 | **Fan-out body limits**: `limits.maxMergeBytes` for each request (counted while the branches read), `limits.maxInflightMergeBytes` for all requests (default: one `maxMergeBytes`) | A merged response larger than `maxMergeBytes` is `502 merge_too_large`, also when each body was under the limit. | See [Merge budget](#merge-budget). |
 | **Slow clients**: Querdian writes a merged response with a deadline | A client that reads more slowly than about 1 MiB/s does not get the complete response. | - |
-| **No TLS to backends**: the proxy does not terminate TLS, and authenticates to backends only with the tenant header | - | Isolate the backends at network level. |
+| **No TLS termination and no backend authentication**: the proxy does not terminate TLS, and authenticates to backends only with the tenant header | - | Isolate the backends at network level. |
 | **TLS of `querdian receiver`**, the only component that terminates TLS ([multi-cluster](multicluster.md)) | It requires an mTLS client certificate. It reads its server certificate, key and client CA one time at startup. It has no certificate revocation list. | Restart the receiver after a certificate rotation. |
 
 **Endpoints denied on purpose:** write and ingest paths (`push`, `write`, `otlp`, `read`), rules and
@@ -53,7 +53,8 @@ is in [endpoints.md](endpoints.md).
 * Plans that fan out or buffer (all Loki fan-out endpoints, Tempo search) send
   `Accept: application/json` upstream. Querdian never merges Loki Parquet or Tempo
   `application/vnd.grafana.llm`.
-* Plans with a single streamed request send the `Accept` header of the client through.
+* Plans with a single streamed request send the `Accept` header of the client through, except plans that
+  filter the response: these send `Accept: application/json`.
 * Prometheus `labels` and `series` with denied labels, and trace by ID, buffer and rewrite the body. A
   body that they cannot decode (unexpected media type, compression other than gzip for traces,
   malformed JSON) is a `502`, never an unfiltered pass-through.
@@ -134,7 +135,7 @@ not interpret them. Anything that it does not recognise is `400 parse_error`. Th
 | **Log queries with several terms**: one request for each term, up to `maxFanout` | Above `maxFanout`: `403 query_too_complex`. Entries in identical streams are deduplicated by `(timestamp, line)`, sorted by direction and cut to `limit`. All branches use the same parameters. An invalid or inconsistent upstream response is `502`. | - |
 | **Metadata selectors**: the optional `query` of `labels`, `label/<name>/values`, `detected_*`, `index/*`, `patterns`, and `match[]` of `series`, must be a **log selector** (optional pipeline) | A metric query is `400 unsupported`. Without the parameter, restricted users get the policy selector, and unrestricted users get no selector (`detected_fields` then fails upstream, as in Loki). | - |
 | **`tenantIdLabel`**: each selector must keep a matcher other than `__tenant_id__` (Loki rejects a selector with only that matcher) | A policy-only selector for a term that has only the tenant binding is `400 unsupported`. | - |
-| **`tail`** | Only log queries. Only the parameters `query`, `limit`, `start`, `delay_for` (`limit >= 1`, `delay_for` 0 to 5 seconds). Querdian refuses cross-origin WebSocket handshakes, so browser clients must come from the same host. Each upstream frame has a limit of 4 MiB. Duplicates are removed with a memory of the last 10 000 entries. An invalid frame closes the tail. The tail keeps the policy and token of its start ([exceptions](#authentication-and-sessions)). | - |
+| **`tail`** | Only log queries. Only the parameters `query`, `limit`, `start`, `delay_for` (`limit >= 1`, `delay_for` 0 to 5 seconds). Querdian refuses cross-origin WebSocket handshakes, so browser clients must come from the same host. Each upstream frame has a limit of 4 MiB. Duplicates are removed with a memory of the last 10 000 entries. An invalid frame closes the tail. The tail keeps the policy and token of its start (one exception: see [Authentication and sessions](#authentication-and-sessions)). | - |
 | **`patterns`** | Loki returns 404 unless the pattern ingester is enabled. The non-empty response shape is not verified against a live Loki. | - |
 | **`X-Loki-Response-Encoding-Flags: categorize-labels`** | The stream merge keeps this encoding. Branches that do not agree on it fail the request. | - |
 
@@ -164,7 +165,7 @@ The end-to-end suite found these results:
 
 ## TraceQL and Tempo
 
-`pkg/traceql` is a clean-room front end. It must only find spanset filters and attributes, so it
+`pkg/traceql` is a clean-room front end. It only has to find spanset filters and attributes, so it
 validates more than it interprets. Where Tempo accepts something that is not documented or different,
 Querdian rejects it (`400 parse_error`): a token stream that Tempo reads differently could hide an
 attribute from the policy checks.
@@ -206,7 +207,7 @@ error counts of each service, trace start and duration. For each user who is not
 no term without matchers:
 
 * Querdian **removes** `rootServiceName`, `rootTraceName` and `serviceStats`.
-* Querdian **recomputes** `startTimeUnixNano` and `durationMs` from the returned spans that match only:
+* Querdian **recomputes** `startTimeUnixNano` and `durationMs` only from the returned spans that match:
   earliest start, and duration from the earliest start to the latest end, rounded up to whole
   milliseconds. They are thus not the real trace start or duration.
 * The Grafana result table shows no root name for such users.
@@ -293,7 +294,7 @@ are disjoint, so it marks such results as approximate, although they can be exac
 
 | Result | Merge | Exact? |
 |---|---|---|
-| Loki `index/stats`, `index/volume`, `index/volume_range`, `patterns` | Counters are summed for each term. Denied labels are removed from the reported label sets, which can merge series. | If the terms are not provably disjoint, the response gets the header `X-Querdian-Approximate: true` and the server span `merge.approximate=true`. The body keeps the Loki format. The cut to `limit` after the sum is exact only if no branch cut off series. |
+| Loki `index/stats`, `index/volume`, `index/volume_range`, `patterns` | Counters are summed for each term. Denied labels are removed from the reported label sets, which can merge series. | Exact only if the terms are provably disjoint. If not, the response gets the header `X-Querdian-Approximate: true` and the server span `merge.approximate=true`. The body keeps the Loki format. The cut to `limit` after the sum is exact only if no branch cut off series. |
 | Loki `index/volume_range` shape | A `matrix`, unless each branch answered a `vector` of one and the same step (the single-step shape of Loki), which is kept. | - |
 | Loki `stats` blocks in query responses | Summed over the fan-out branches. | Shared work counts one time for each branch. |
 | Loki `detected_labels`, `detected_fields` | Cardinalities are summed for each label. Field types that do not agree become `string`. | Exact for disjoint terms, otherwise an upper bound. |
@@ -361,7 +362,7 @@ These limits apply only with the `multicluster` block ([multicluster.md](multicl
 
 ### Cluster scope
 
-A rule of a hub `ClusterAccessPolicy` can name the clusters of a backend with an `Equal` matcher, or a
+A rule of a hub `ClusterAccessPolicy` must name the clusters of a backend with an `Equal` matcher, or a
 `RegexMatch` that expands to a finite set of at most 1024 non-empty names (`mla|cluster-a`,
 `cluster-(a|b)`, `cluster-[ab]`).
 

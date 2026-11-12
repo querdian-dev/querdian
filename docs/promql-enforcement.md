@@ -8,7 +8,8 @@ In short:
   It parses the result again before it sends it upstream. If the result does not parse, the request is
   rejected (`ErrUnsupported`).
 * One policy term: Querdian adds the matchers of the term to each vector selector.
-* Several terms: Querdian makes one copy of each selector for each term and joins the copies with `or`
+* Several terms: Querdian makes one copy of each selector (or of each function over a range vector) for
+  each term and joins the copies with `or`
   ("or-lifting"). A query that it cannot lift exactly is `400 unsupported`.
 * Metadata endpoints: Querdian sends one `match[]` selector for each pair of user selector and term.
 
@@ -98,5 +99,5 @@ sends one selector for each pair (user `match[]` x term). This is exactly
   request fails closed (502).
 * Query results are not filtered on purpose: a series in a query result keeps all its labels, also
   the denied ones. Only `labels.redact` rewrites query results
-  ([policy-guide.md](policy-guide.md#redacting-values)). Without it, all other plans have no filter and
+  ([policy-guide.md](policy-guide.md#redacted-values)). Without it, all other plans have no filter and
   stream.
