@@ -185,6 +185,10 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * `ROADMAP.md`, the OpenSSF Best Practices checklist and the security self-assessment no longer say
   that `make e2e` and `make chart-lint` do not run in CI: the `e2e` and `chart` jobs run on every pull
   request.
+* The quickstart is shorter. The options and the internals of the demo are on the new page
+  [docs/quickstart-details.md](docs/quickstart-details.md).
+* The website does not publish `docs/releasing.md` and `docs/openssf-best-practices.md` after this
+  release. The files stay in the repository.
 
 ## [0.1.2] - 2026-10-28
 

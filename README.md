@@ -46,6 +46,7 @@ The website (landing page and rendered documentation) is built from [site/](site
 
 * [Quickstart on kind](docs/quickstart.md): a complete isolation demo (Keycloak, Grafana, Prometheus,
   Loki, Tempo, two teams, 24 h of demo history and four Grafana dashboards) on a laptop with one script.
+  The [quickstart reference](docs/quickstart-details.md) has the options and the internals of the demo.
 * [Policy guide](docs/policy-guide.md): the CRDs, union semantics, tenants, denied labels and status
   conditions. Includes the requirement that the namespace label is set by your telemetry pipeline.
 * [Policy dashboard](docs/dashboard.md): optional read-only view of active policies and a query test bench.

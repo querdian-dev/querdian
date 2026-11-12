@@ -87,7 +87,7 @@ type service struct {
 	Customers                      [3]float64 // share of requests per customer_id
 }
 
-// Incident offsets before the end of the history (documented in docs/quickstart.md).
+// Incident offsets before the end of the history (documented in docs/quickstart-details.md).
 const (
 	hour   = time.Hour
 	minute = time.Minute

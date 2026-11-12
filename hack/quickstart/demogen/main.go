@@ -1,7 +1,7 @@
 // Command demogen produces the deterministic demo history of the Querdian quickstart: hours of
 // metrics (OpenMetrics, to be turned into TSDB blocks with promtool), logs (pushed to Loki over
 // OTLP) and traces (pushed to Tempo over OTLP) of the two sample services. See
-// docs/quickstart.md. DEMO ONLY.
+// docs/quickstart-details.md. DEMO ONLY.
 //
 //	demogen metrics -hours 24 > history.om
 //	demogen loki  -url http://loki:3100  -tenant demo -hours 24
