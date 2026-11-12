@@ -1,34 +1,34 @@
-# Endpoint inventory (T0.3)
+# Endpoint inventory
 
-Verification of PLAN §8 against the current public API documentation. Clean room: only
-prometheus.io, thanos.io and grafana.com/docs were used. No Loki/Tempo/Janus source was read.
+This page lists the HTTP endpoints of each backend type, and tells which endpoints Querdian enforces,
+forwards unchanged or denies.
 
-Legend: **enforce** = query parameter rewritten per policy; **safe** = proxied unchanged (tenant
-header still set); **deny** = 403. "Multi" = parameter may legally be repeated by the client
-(PLAN §9 rejects duplicates of single-valued enforcement params with 400). All paths are relative
-to the backend's `pathPrefix`.
+In short:
 
-## Sources (accessed 2026-10-14)
+* Querdian denies each path that is not in these tables, and each listed path with a method that is
+  not listed (`403`).
+* **enforce**: Querdian rewrites the enforcement parameter for the policy. **safe**: Querdian forwards the
+  request unchanged, but still sets the tenant header. **deny**: `403`.
+* All paths are relative to the `pathPrefix` of the backend.
+* The rows come from the public API documentation and from black-box tests with Loki 3.5.0. Items in
+  the column "Grafana calls" that have the mark "(unconfirmed)" are not verified.
 
-| Backend | URL |
+The limits of each endpoint are in [limitations.md](limitations.md).
+
+## Columns
+
+| Column | Meaning |
 |---|---|
-| Prometheus | https://prometheus.io/docs/prometheus/latest/querying/api/ |
-| Thanos Query | https://thanos.io/tip/components/query.md/ |
-| Loki | https://grafana.com/docs/loki/latest/reference/loki-http-api/ |
-| Tempo | https://grafana.com/docs/tempo/latest/api_docs/ |
-| Grafana Prometheus DS | https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/ |
-| Grafana Loki DS | https://grafana.com/docs/grafana/latest/datasources/loki/ |
-| Grafana Tempo DS | https://grafana.com/docs/grafana/latest/datasources/tempo/configure-tempo-data-source/ |
-
-Limitation: the Grafana data source pages do not enumerate the HTTP calls the data sources make.
-The "Grafana calls" column is therefore limited to what the docs state, plus items marked
-"(unconfirmed)" which come from general knowledge and MUST be confirmed black-box in the E2E suite
-(Grafana against a logging stub). Do not treat unconfirmed items as verified.
+| Enforcement param | The parameter that holds the query or the selector. Querdian rewrites it only on `enforce` rows. |
+| Multi | The client can legally repeat the parameter. Querdian rejects a repeated single-valued parameter with `400`. |
+| PLAN | The mode of the endpoint: `enforce`, `safe`, `deny` or `traceByID`. "not listed -> deny" means that the first design did not list the endpoint. Querdian denies it. "new" marks a deny row from the [deltas](#deltas-to-the-design). |
+| Grafana calls | Whether the Grafana data source calls the endpoint. The Grafana data source pages do not list the HTTP calls of the data sources. Thus this column has only what the pages state, plus items with the mark "(unconfirmed)". These items come from general knowledge and the end-to-end suite must confirm them black-box (Grafana against a logging stub). Do not treat them as verified. |
 
 ## 1. Prometheus / Thanos Query (`type: prometheus`), prefix `/api/v1/`
 
-Thanos Query implements the Prometheus v1 API; the Thanos page documents only extra parameters
-(see Deltas). Response envelope for all JSON endpoints: `{"status","data","errorType","error","warnings","infos"}`.
+Thanos Query implements the Prometheus v1 API. The Thanos page documents only extra parameters (see
+[question 3](#questions-and-decisions)). The response envelope of all JSON endpoints is
+`{"status","data","errorType","error","warnings","infos"}`.
 
 | Path | Methods | Enforcement param | Multi | Response `data` | PLAN | Grafana calls |
 |---|---|---|---|---|---|---|
@@ -54,13 +54,13 @@ Thanos Query implements the Prometheus v1 API; the Thanos page documents only ex
 | `notifications`, `notifications/live` (SSE), `features` | GET | - | - | - | deny (new) | no |
 | `/openapi.yaml` (outside `/api/v1/`) | GET | - | - | OpenAPI | deny (new) | no |
 
-Notes: errors are 400/422/503. `limit` is accepted on query endpoints (result truncation only).
-`stats` param on query adds per-step stats; harmless.
+Notes: errors are 400, 422 or 503. Query endpoints accept `limit` (it only cuts the result). The
+`stats` parameter of a query adds statistics for each step; it is harmless.
 
 ## 2. Loki (`type: loki`), prefix `/loki/api/v1/`
 
-Multi-tenancy via `X-Scope-OrgID`. Log query responses: `{status, data:{resultType: streams, result, stats}}`;
-metric: `vector`/`matrix`.
+Multi-tenancy uses `X-Scope-OrgID`. Log query responses are
+`{status, data:{resultType: streams, result, stats}}`. Metric query responses are `vector` or `matrix`.
 
 | Path | Methods | Enforcement param | Multi | Response | PLAN | Grafana calls |
 |---|---|---|---|---|---|---|
@@ -85,10 +85,13 @@ metric: `vector`/`matrix`.
 | `/api/prom/{push,tail,query,label,series,rules}` (deprecated) | various | - | - | - | deny | no |
 | `/ready`, `/metrics`, `/config`, `/services`, `/log_level`, ring pages, `/flush`, `/ingester/*` | various | - | - | - | deny | no |
 
-Notes: `query`/`query_range` on a **log** query via instant `query` returns 400 upstream. Parquet
-output via `Accept: application/vnd.apache.parquet` is documented; the proxy cannot merge it
-(see Open questions). `volume*` `targetLabels`/`aggregateBy` name labels and must pass the
-denied-label check.
+Notes:
+
+* A **log** query on the instant `query` endpoint returns 400 upstream.
+* Loki documents Parquet output with `Accept: application/vnd.apache.parquet`. The proxy cannot merge
+  it (see [question 7](#questions-and-decisions)).
+* The `targetLabels` and `aggregateBy` parameters of `volume*` name labels, so they must pass the
+  denied-label check.
 
 ## 3. Tempo (`type: tempo`), prefix `/api/`
 
@@ -109,129 +112,134 @@ denied-label check.
 | `overrides`, `mcp` | various | - | - | - | not listed -> deny | no |
 | `/status*`, `/ready`, `/metrics`, `/memberlist`, `/usage_metrics`, `/querier/api/*`, rings, `/live-store/*`, `/debug/pprof/*` | various | - | - | - | deny | no |
 
-`search` response `traces[]` carries root-span metadata (PLAN §7.4 redaction); exact field list
-is T0.5 scope. Tempo also offers gRPC streaming search (`stream_over_http_enabled`); see Open questions.
+The `traces[]` of a `search` response contain metadata of the root span. Querdian redacts it (see
+[limitations.md](limitations.md#search-response-redaction)). Tempo also has gRPC streaming search
+(`stream_over_http_enabled`); see [question 9](#questions-and-decisions).
 
-## Deltas to PLAN §8
+## Questions and decisions
 
-Applied to PLAN.md §8 (pure facts, all still deny by default):
-1. Prometheus: `label/<name>/values` is GET only; explicit deny rows added for `targets/*`,
-   `scrape_pools*`, `alertmanagers`, `search/*`, `notifications*`, `features`, `read`, `/openapi.yaml`.
-2. Loki: explicit deny for `/otlp/*`, ruler paths incl. `/prometheus/api/v1/*`, deprecated `/api/prom/*`.
-3. Tempo: explicit deny for v1 `search/tags`, `search/tag/<name>/values`, `v2/traces/diff`, `overrides`, `mcp`.
+The inventory raised these questions. The code references them by number (for example "Q8").
 
-Confirmed as correct: all enforce paths and parameters in §8.1-8.3 (including `status/buildinfo`
-under Tempo being `/api/status/buildinfo`, `echo`, `metrics/query[_range]` with `q`, Loki
-`labels`/`label/*/values` taking `query`, Loki `series` taking `match[]`).
+| # | Question | Decision |
+|---|---|---|
+| 1 | Loki `detected_labels` is not in the Loki HTTP API page, which documents only `detected_fields` and `detected_field/<name>/values`. Grafana Logs Drilldown calls it (unconfirmed). | Answered by a [black-box test](#q1-detected_labels-loki-350): the route is `enforce` on `query`, with `GET` and `POST`. |
+| 2 | Grafana's metrics browser uses Prometheus `metadata` for help text (unconfirmed). `metadata` lists metric names and help across all series, so it cannot be restricted by label (`match_target` exists only on `targets/metadata`). | Denied. The help text is not available in Grafana ([limitations.md](limitations.md#general-request-handling)). |
+| 3 | Thanos-specific query parameters (`dedup`, `partial_response`, `replicaLabels`, `max_source_resolution`, `storeMatch[]`). `storeMatch[]` selects which stores serve a query and could bypass store-level separation. `partial_response` changes the failure semantics. | Each route has an allow-list of parameters. On `query`, `query_range`, `series`, `labels` and `label/<name>/values`, Querdian forwards `dedup`, `partial_response`, `replicaLabels`, `replicaLabels[]` and `max_source_resolution`. It never forwards `storeMatch[]`. Thanos-only paths that the documentation does not list, for example `/api/v1/stores`, are denied. |
+| 4 | Tempo `v2/traces/<id>` accepts a client `q` (a TraceQL filter, plus `keep_hierarchy`, `match_depth`, `ancestor_depth`, `span_pruning*`). | Trace by ID accepts only `start` and `end`. Each other parameter, also `q`, is rejected (400). |
+| 5 | Tempo `search` documents the legacy parameters `tags`, `minDuration` and `maxDuration` next to `q`. The documentation does not state if they combine with `q`. | `tags`, `minDuration` and `maxDuration` are always rejected (400), with or without `q`. They are evaluated outside TraceQL and cannot carry the policy. |
+| 6 | `q` is optional on Tempo v2 tags and tag values. The same is true for `query` on Loki `labels` and label values. | Without the parameter, a restricted user gets a policy-only filter on Tempo and the policy selector on Loki, never a pass-through ([limitations.md](limitations.md#traceql-and-tempo)). |
+| 7 | Fan-out cannot merge Loki Parquet (`Accept: application/vnd.apache.parquet`), Tempo `application/protobuf` or `application/vnd.grafana.llm`. | Merge plans send `Accept: application/json` upstream. With `traceByID: filter`, trace by ID filters JSON and protobuf, and anything else is `502` ([limitations.md](limitations.md#merged-and-buffered-responses)). |
+| 8 | Loki `query` and `query_range`: the documentation shows only `GET`. | Answered by a [black-box test](#q8-post-on-query--query_range-loki-350): `POST` with a form body is accepted. Both routes allow `GET` and `POST`. |
+| 9 | Grafana can use Tempo streaming over gRPC (`Search*`, `MetricsQueryRange` StreamingQuerier) when it is enabled. This is not HTTP. | Out of scope for the proxy. Disable streaming in the Grafana Tempo data source. |
+| 10 | The public documentation does not confirm most of the endpoints that Grafana calls. | Open. A black-box capture of the Grafana requests in the end-to-end suite must settle the "(unconfirmed)" items. |
 
-Not changed in PLAN, raised below: everything marked as a question.
+## Deltas to the design
 
-## Open questions (to raise; no issues opened, repo not reachable)
+The inventory added explicit deny rows to the first endpoint design. All of them are also denied by
+default:
 
-1. **`question(t0.3)`: Loki `detected_labels`. ANSWERED (T1.8 black-box, Loki 3.5.0, see "Black-box results").** PLAN §8.2 lists it, but the Loki HTTP API page
-   documents only `detected_fields` and `detected_field/<name>/values`. Grafana Logs Drilldown
-   is known to call it (unconfirmed). Options: keep as enforce with `query`, determine method and
-   response shape black-box in T3.x/e2e, or deny until verified. Recommendation: black-box test,
-   deny until then.
-2. **Prometheus `metadata` is denied** but Grafana's metrics browser uses it (unconfirmed) for
-   help text. It lists metric names/help across all series, so it cannot be restricted by label
-   (`match_target` only exists on `targets/metadata`). Deny is safe; Grafana degrades gracefully
-   if "Disable metrics lookup" is not needed. Confirm in e2e; decide whether to document.
-3. **Thanos-specific query parameters** (`dedup`, `partial_response`, `replicaLabels`,
-   `max_source_resolution`, `storeMatch[]`). They are not in PLAN §8/§9. `storeMatch[]` selects
-   which stores serve a query and could bypass store-level separation; `partial_response` changes
-   failure semantics (fail-closed rule §2.4). Proposal: allow-list forwarded params per endpoint and
-   drop/deny the rest. Also unverified in docs: Thanos `/api/v1/stores` and other Thanos-only
-   paths (page does not list them) - default deny.
-4. **Allow-list of query parameters in general**: Tempo `v2/traces/<id>` accepts a client `q`
-   (a TraceQL filter, plus `keep_hierarchy`, `match_depth`, `ancestor_depth`, `span_pruning*`).
-   With `traceByID: filter` the proxy must strip or reject client `q` and must verify the filtered
-   output is post-processed after upstream filtering. Proposal: reject `q` on trace-by-id
-   (400), forward only `start`/`end`.
-5. **Tempo `search` legacy params**: PLAN rejects `tags` only when `q` is absent. Docs list `tags`,
-   `minDuration`, `maxDuration` next to `q`; whether they combine with `q` is not stated.
-   Proposal: reject `tags` always (400); `minDuration`/`maxDuration` are safe (filters only)
-   but verify in T0.5.
-6. **Tempo v2 tags/values without `q`**: `q` is optional; when absent the enforcer must inject a
-   policy-only filter (not pass through). Confirm in T4.x tests; applies equally to Loki
-   `labels`/`label values` without `query`.
-7. **Content negotiation**: Loki Parquet (`Accept: application/vnd.apache.parquet`), Tempo
-   `application/protobuf` and `application/vnd.grafana.llm` cannot be merged by fan-out. Proposal:
-   for merge plans, require JSON (strip/reject other `Accept`); for traceByID filter, support JSON
-   and protobuf as in PLAN §7.4, reject `vnd.grafana.llm`.
-8. **ANSWERED (T1.8 black-box, Loki 3.5.0, see "Black-box results"): POST form is accepted.** Original text: **Loki `query`/`query_range` methods**: docs show GET only; PLAN §9 accepts POST for query
-   endpoints. Verify black-box that POST form is accepted upstream, else restrict to GET.
-9. **Tempo streaming over gRPC** (`Search*`, `MetricsQueryRange` StreamingQuerier): Grafana can use
-   it when enabled; not HTTP and out of scope for the proxy (PLAN). Document that streaming must
-   be disabled on the Grafana Tempo data source.
-10. **Grafana-called endpoints are largely unconfirmed from public docs** (see Limitation). A
-    black-box capture of Grafana requests in the E2E harness should settle the "(unconfirmed)"
-    entries before routes are frozen (T1.8).
+1. Prometheus: `label/<name>/values` is `GET` only. Deny rows for `targets/*`, `scrape_pools*`,
+   `alertmanagers`, `search/*`, `notifications*`, `features`, `read`, `/openapi.yaml`.
+2. Loki: deny rows for `/otlp/*`, the ruler paths (also `/prometheus/api/v1/*`) and the deprecated
+   `/api/prom/*`.
+3. Tempo: deny rows for v1 `search/tags`, `search/tag/<name>/values`, `v2/traces/diff`, `overrides`,
+   `mcp`.
 
-## Black-box results (T1.8)
+The inventory confirmed all enforce paths and parameters of the design. This includes Tempo
+`status/buildinfo` at `/api/status/buildinfo`, `echo`, `metrics/query[_range]` with `q`, Loki `labels`
+and `label/*/values` with `query`, and Loki `series` with `match[]`.
 
-Script: `hack/research/loki-endpoints/run.sh` (exact curl commands; captured output in
-`results.txt`). Loki `grafana/loki:3.5.0` (`/loki/api/v1/status/buildinfo`: version 3.5.0,
-revision 4b16bc4f), single binary, `auth_enabled: true`, two streams pushed
-(`{app="a",env="prod"}`, `{app="b",team="x"}`). Observed over HTTP only.
+## Sources (accessed 2026-10-14)
 
-**Q1 `detected_labels` (Loki 3.5.0):**
-- Exists. `GET` and `POST` both return 200 (POST via form body or URL query).
-- Shape: `{"detectedLabels":[{"label":"app","cardinality":1}, ...]}`; array order is not stable
-  between calls (merge/compare as a set). Includes the derived `service_name` label; structured
-  metadata / stream labels only. No matches: `{}` (not an empty array).
-- Honours `query` (a stream selector): `{app="a"}` -> app, env, service_name (cardinality 1);
-  `{app="b"}` -> app, service_name, team; without `query` the union (app/service_name cardinality 2).
-  Invalid selector: 400 with a plain-text parse error. `start`/`end` (ns) and `since` work.
-- Unknown parameters (`foo=bar`) are silently ignored; a duplicated `query` uses the first value.
-- Decision: route is `enforce` on `query`, methods GET+POST, allowed params `start,end,since`.
-  The response carries only label names and cardinalities, merged across tenants by label name
-  (cardinality across tenants is not exactly summable; the merge must treat it as an upper bound
-  or recompute, decide in the merge task).
+Clean room: the inventory used only prometheus.io, thanos.io and grafana.com/docs. Nobody read Loki,
+Tempo or Janus source code for it.
 
-**Q8 POST on `query` / `query_range` (Loki 3.5.0):**
-- `POST` with `application/x-www-form-urlencoded` is accepted on both and returns the same
-  results as `GET` (`streams` for `query_range`, `vector` for a metric `query`). Log queries on
-  `/query` are 400 for both GET and POST ("log queries are not supported as an instant query").
-- POST with all parameters in the URL query and an empty body also works.
-- **Precedence when both URL and form carry `query`: the form value wins** (URL `app=a` +
-  form `app=b` returned app b; same on `detected_labels`). Repeated `query` values (URL or form):
-  the first one is used. Consequently the proxy must not let a request carry `query` in both
-  places (T1.9 already answers 400) nor repeated `query`, otherwise the enforced and the executed
-  query could differ.
-- JSON body (`application/json`) is not parsed: 400 (parse error, query seen as empty).
-  The proxy should rewrite to a form body and set the content type itself.
-- Decision: `query` and `query_range` allow GET and POST.
+| Backend | URL |
+|---|---|
+| Prometheus | https://prometheus.io/docs/prometheus/latest/querying/api/ |
+| Thanos Query | https://thanos.io/tip/components/query.md/ |
+| Loki | https://grafana.com/docs/loki/latest/reference/loki-http-api/ |
+| Tempo | https://grafana.com/docs/tempo/latest/api_docs/ |
+| Grafana Prometheus DS | https://grafana.com/docs/grafana/latest/datasources/prometheus/configure/ |
+| Grafana Loki DS | https://grafana.com/docs/grafana/latest/datasources/loki/ |
+| Grafana Tempo DS | https://grafana.com/docs/grafana/latest/datasources/tempo/configure-tempo-data-source/ |
 
-## Response shapes for the merges (T3.4-T3.6)
+## Black-box results
 
-Captured from `grafana/loki:3.5.0` with the config of `hack/research/loki-endpoints/loki.yaml`
-(`auth_enabled: true`, one tenant, streams `{app="a",env="prod"}` and `{app="b",team="x"}`),
-HTTP only. These are what `internal/fanout` merges.
+The script `hack/research/loki-endpoints/run.sh` has the exact curl commands. The captured output is in
+`results.txt`. Set-up: Loki `grafana/loki:3.5.0` (`/loki/api/v1/status/buildinfo`: version 3.5.0,
+revision 4b16bc4f), single binary, `auth_enabled: true`, two streams pushed (`{app="a",env="prod"}`,
+`{app="b",team="x"}`). The test used HTTP only.
 
-- `query_range`, log query: `{"status":"success","data":{"resultType":"streams","result":[{"stream":{...},"values":[["<ns>","<line>"]]}],"stats":{summary,querier,ingester,cache,index}}}`.
-  `direction=backward` (default) lists streams and entries newest first, `forward` oldest first.
-  Streams are separate per label set (Loki adds `detected_level` and `service_name`). No match:
-  `"result":[]` (stats still present). With header `X-Loki-Response-Encoding-Flags: categorize-labels`
-  the data object gains `"encodingFlags":["categorize-labels"]` and each entry gets a third element
-  `{"structuredMetadata":{...}}` (and `detected_level` leaves the stream labels).
-  `stats.summary` holds counters plus rates (`bytesProcessedPerSecond`, ...) and `execTime`.
-- `labels`: `{"status":"success","data":["app","env"]}`; **no match: `{"status":"success"}` without `data`**.
-  `label/<n>/values` has the same shape.
-- `series`: `{"status":"success","data":[{"app":"a",...}]}`; no match: `"data":[]`. Without `match[]` all series are returned.
-- `detected_labels`: `{"detectedLabels":[{"label","cardinality"}]}`; no match: `{}` (see Q1).
-- `detected_fields`: `{"fields":[{"label","type","cardinality","parsers":["logfmt"]|null}],"limit":1000}`;
-  no match: `{}`. **`query` is required: without it Loki answers 400** (`parse error : syntax error: unexpected $end`).
-- `detected_field/<n>/values`: `{"limit":1000,"values":["hello"]}`; no match: `{}`.
-- `index/stats`: flat `{"streams":N,"chunks":N,"bytes":N,"entries":N}` (zeros when nothing matches).
-- `index/volume`: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a"},"value":[<sec>,"<bytes>"]}],"stats":{...}}}`.
-  Without `targetLabels` the metric is the full series label set (so denied labels would be visible);
-  with `aggregateBy=labels&targetLabels=app` it is `{"app":"a"}` per value.
-  `index/volume_range` answers the documented `matrix` (`values:[[ts,"n"],...]`) only when the data of
-  the selector spans several steps. When it all falls into one step (always for a step larger than the
-  data span) the answer is a `vector` with one sample per series at that step, and when nothing matches
-  an empty `vector` (Loki 3.5.0, observed in the e2e suite). The fan-out branches of one request can
-  therefore differ in shape; the merge treats a vector branch as single-point matrix series.
-- `patterns`: answers 404 unless the pattern ingester is enabled (`pattern_ingester.enabled: true`). With it
-  enabled and little data, `{"status":"success","data":[]}` was observed; the non-empty shape
-  `data:[{"pattern":"...","samples":[[<sec>,<count>],...]}]` is from the public docs and **unverified**.
+### Q1 `detected_labels` (Loki 3.5.0)
+
+* The endpoint exists. `GET` and `POST` both return 200 (`POST` with a form body or a URL query).
+* Shape: `{"detectedLabels":[{"label":"app","cardinality":1}, ...]}`. The order of the array changes
+  between calls, so merge and compare it as a set. It includes the derived `service_name` label. It has
+  only structured metadata and stream labels. No match: `{}` (not an empty array).
+* Loki uses `query` (a stream selector): `{app="a"}` gives app, env, service_name (cardinality 1).
+  `{app="b"}` gives app, service_name, team. Without `query`, the result is the union (app and
+  service_name with cardinality 2). An invalid selector gives 400 with a plain-text parse error.
+  `start`/`end` (ns) and `since` work.
+* Loki ignores unknown parameters (`foo=bar`) silently. With a duplicate `query`, Loki uses the first
+  value.
+* Decision: the route is `enforce` on `query`, with the methods `GET` and `POST`, and the allowed
+  parameters `start,end,since`. The response has only label names and cardinalities. The merge across
+  tenants is by label name. A cardinality across tenants cannot be summed exactly, so it is an upper
+  bound ([limitations.md](limitations.md#approximate-results)).
+
+### Q8 POST on `query` / `query_range` (Loki 3.5.0)
+
+* Both endpoints accept `POST` with `application/x-www-form-urlencoded`, and return the same results as
+  `GET` (`streams` for `query_range`, `vector` for a metric `query`). Log queries on `/query` are 400
+  for `GET` and `POST` ("log queries are not supported as an instant query").
+* `POST` with all parameters in the URL query and an empty body also works.
+* **If the URL and the form both have `query`, the form value wins** (URL `app=a` and form `app=b`
+  returned app b; the same on `detected_labels`). With repeated `query` values (URL or form), Loki uses
+  the first one. Thus the proxy must not let a request have `query` in both places, or a repeated
+  `query`. Otherwise the enforced query and the executed query could be different. The proxy answers
+  400 for both.
+* Loki does not parse a JSON body (`application/json`): 400 (parse error, the query is seen as empty).
+  The proxy writes a form body and sets the content type itself.
+* Decision: `query` and `query_range` allow `GET` and `POST`.
+
+## Response shapes for the merges
+
+These shapes come from `grafana/loki:3.5.0` with the configuration of
+`hack/research/loki-endpoints/loki.yaml` (`auth_enabled: true`, one tenant, the streams
+`{app="a",env="prod"}` and `{app="b",team="x"}`), over HTTP only. `internal/fanout` merges them.
+
+* `query_range`, log query:
+  `{"status":"success","data":{"resultType":"streams","result":[{"stream":{...},"values":[["<ns>","<line>"]]}],"stats":{summary,querier,ingester,cache,index}}}`.
+  * `direction=backward` (the default) lists streams and entries newest first, `forward` oldest first.
+  * Each label set is a separate stream (Loki adds `detected_level` and `service_name`).
+  * No match: `"result":[]` (`stats` is still there).
+  * With the header `X-Loki-Response-Encoding-Flags: categorize-labels`, the data object gets
+    `"encodingFlags":["categorize-labels"]`, and each entry gets a third element
+    `{"structuredMetadata":{...}}` (and `detected_level` leaves the stream labels).
+  * `stats.summary` has counters, rates (`bytesProcessedPerSecond`, ...) and `execTime`.
+* `labels`: `{"status":"success","data":["app","env"]}`. **No match: `{"status":"success"}` without
+  `data`**. `label/<n>/values` has the same shape.
+* `series`: `{"status":"success","data":[{"app":"a",...}]}`. No match: `"data":[]`. Without `match[]`,
+  Loki returns all series.
+* `detected_labels`: `{"detectedLabels":[{"label","cardinality"}]}`. No match: `{}` (see
+  [Q1](#q1-detected_labels-loki-350)).
+* `detected_fields`: `{"fields":[{"label","type","cardinality","parsers":["logfmt"]|null}],"limit":1000}`.
+  No match: `{}`. **`query` is required: without it, Loki answers 400**
+  (`parse error : syntax error: unexpected $end`).
+* `detected_field/<n>/values`: `{"limit":1000,"values":["hello"]}`. No match: `{}`.
+* `index/stats`: flat `{"streams":N,"chunks":N,"bytes":N,"entries":N}` (zeros when nothing matches).
+* `index/volume`:
+  `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"app":"a"},"value":[<sec>,"<bytes>"]}],"stats":{...}}}`.
+  Without `targetLabels`, the metric is the full label set of the series (so denied labels would be
+  visible). With `aggregateBy=labels&targetLabels=app`, it is `{"app":"a"}` for each value.
+* `index/volume_range`: Loki answers the documented `matrix` (`values:[[ts,"n"],...]`) only when the
+  data of the selector spans several steps. When all data is in one step (always for a step larger than
+  the data span), the answer is a `vector` with one sample for each series at that step. When nothing
+  matches, the answer is an empty `vector` (Loki 3.5.0, seen in the end-to-end suite). Thus the fan-out
+  branches of one request can have different shapes. The merge treats a vector branch as a matrix
+  series with a single point.
+* `patterns`: Loki answers 404 unless the pattern ingester is enabled (`pattern_ingester.enabled: true`).
+  With the ingester enabled and little data, the answer was `{"status":"success","data":[]}`. The
+  non-empty shape `data:[{"pattern":"...","samples":[[<sec>,<count>],...]}]` comes from the public
+  documentation and is **not verified**.
