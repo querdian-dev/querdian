@@ -204,6 +204,9 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   unrestricted users in PromQL, LogQL and TraceQL.
 * `docs/limitations.md` gives the limits in tables with the effect for the user and the correction.
   `docs/endpoints.md` gives the decision of the code for each open question of the endpoint inventory.
+* The threat model starts with a summary: the trust boundaries, the main assumption and a table of the
+  threats with their mitigations. The security self-assessment describes the current state: three
+  releases, the `e2e` job in CI, 22 fuzz targets and 153 checks of the quickstart verification.
 
 ## [0.1.2] - 2026-10-28
 

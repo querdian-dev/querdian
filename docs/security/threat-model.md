@@ -7,8 +7,9 @@ In short:
 
 * Querdian protects metrics, logs and traces against authenticated users who do not have permission to
   read them. It denies all write paths.
-* All isolation depends on the namespace label in the telemetry. In a multi-cluster setup, it also
-  depends on the cluster label. Querdian cannot verify these labels.
+* The isolation of an `AccessPolicy` depends on the namespace label in the telemetry. Each other policy
+  matcher depends on its label in the same way. In a multi-cluster setup, the isolation also depends on
+  the cluster label. Querdian cannot verify these labels.
 * Querdian fails closed. An error in authentication, resolution, parsing, rewriting or merging gives a
   rejection, never an unenforced pass-through.
 * Querdian has no built-in rate limiting, no token revocation and no TLS termination.
@@ -29,10 +30,11 @@ the page says so. To report a vulnerability, follow [SECURITY.md](../../SECURITY
 * **Collection pipeline to the backends.** Querdian does not see this path. The pipeline writes the
   labels that the policies use.
 * **Spoke to hub (multi-cluster).** The receiver, the agent CA, the agent certs and the ingest gateway
-  are added to the trusted set. Each spoke is trusted only for its own data.
+  are added to the trusted set, and also the hub admins who write `SpokeCluster` objects and the
+  service account of the receiver. Each spoke is trusted only for its own data.
 
-**The one assumption.** Querdian adds the matcher `<namespaceLabel>="X"` to each query of an
-`AccessPolicy` in namespace `X`. Thus the isolation is only as strong as the namespace label in the
+**The main assumption.** Querdian adds the matcher `<namespaceLabel>="X"` to each query of a user who
+gets access from an `AccessPolicy` in namespace `X`. Thus the isolation is only as strong as the namespace label in the
 telemetry. The collection pipeline must write this label from trusted metadata, and workloads must not
 be able to set it. In a multi-cluster setup, the cluster label has the same weight: the ingest gateway
 must overwrite it. See [section 1](#1-namespace-label-integrity-the-assumption-everything-rests-on).
@@ -46,21 +48,22 @@ must overwrite it. See [section 1](#1-namespace-label-integrity-the-assumption-e
 | A client sends queries directly to a backend ([1](#1-namespace-label-integrity-the-assumption-everything-rests-on)) | None in Querdian. Isolate the backends with NetworkPolicy. | Direct access bypasses all policies. |
 | A person who can edit policies or namespace labels grants access ([1](#1-namespace-label-integrity-the-assumption-everything-rests-on), [11](#11-other-considerations)) | Kubernetes RBAC. An `AccessPolicy` cannot grant `unrestricted` access, tenants or matchers outside its namespace. | RBAC is part of the policy. |
 | A client chooses its tenant or sends backend controls in headers ([3](#3-header-and-request-handling)) | Header allow-list. Querdian sets the tenant header from the policy. | An operator who allow-lists a header gives its effect to each client. |
-| A path, parameter or protocol switch that bypasses the checks ([3](#3-header-and-request-handling)) | Canonical paths. Duplicate and unknown parameters are rejected. A `101` outside Loki tail gives `502`. | — |
-| Error text shows data ([3](#3-header-and-request-handling)) | With redactions, no upstream error text gets to the client. | Without redactions, fan-out failures show the first 256 bytes of the backend error body. |
-| Query injection and parser divergence ([4](#4-query-injection-and-parser-divergence)) | Real parsers that are stricter than the backends, re-parse checks, fuzz targets, differential suites. | The parsers can diverge from the backends in rare constructs and in versions that were not tested. |
+| A path, parameter or protocol switch that bypasses the checks ([3](#3-header-and-request-handling)) | Canonical paths. Duplicate single-valued parameters and unknown parameters are rejected. A `101` outside Loki tail gives `502`. | — |
+| Error text shows data ([3](#3-header-and-request-handling)) | With redactions, no upstream error text gets to the client. | Without redactions, the backend error body gets to the client (for fan-out failures, only the first 256 bytes). |
+| Query injection and parser divergence ([4](#4-query-injection-and-parser-divergence)) | The Prometheus parser for PromQL. For LogQL and TraceQL, parsers of the project that are stricter than the backends. Re-parse checks, fuzz targets, differential suites. | The parsers can diverge from the backends in rare constructs and in versions that were not tested. |
 | A user learns the values of a denied label ([5](#5-label-oracle-attacks-denied-labels)) | `403 denied_label` for each query that uses the label. Opt-in redaction with `labels.redact`. | `labels.deny` alone does not remove values from results. Redaction does not hide cardinality, order, timing or log lines. |
-| Tempo search returns data of spans outside the policy ([6](#6-tempo-metadata-leaks-and-the-root-span-redaction-rules)) | Allow-list rewrite of the response. Root fields are removed, start and duration are calculated again. | — |
+| Tempo search returns data of spans outside the policy ([6](#6-tempo-metadata-leaks-and-the-root-span-redaction-rules)) | Allow-list rewrite of the response. Root fields are removed unless the policy admits each span. Start and duration are calculated again from the matched spans. | — |
 | Trace-level intrinsics as an oracle ([7](#7-trace-intrinsics-oracle-fixed)) | `400` for these intrinsics, `compare()` and root-name tag values, unless the policy covers the root span. | Policies that cover only part of a trace depend on this restriction. |
 | Resource exhaustion ([8](#8-resource-exhaustion)) | Limits on policy terms, fan-out, merge bytes, regex weight, body size and time. | No rate limiting. The number of policy objects and of open tails is not limited. |
 | A stolen or replayed token ([9](#9-token-replay-and-authentication)) | Verification on each request. The token is never forwarded or logged. | A stolen token is valid until it expires. Open tails continue after the token expires. |
 | Revoked access stays active ([10](#10-snapshot-staleness)) | Snapshot rebuild, normally in less than one second. Time limit for spoke policies. | Revocation is eventually consistent. Revoked access stays during an API outage. |
 | Disclosure through the management port, the dashboard or the telemetry of Querdian ([11](#11-other-considerations)) | Dashboard off by default, host check, OIDC option. No query text in spans by default. | The management port has no authentication. Spans always record policy names and counts. |
-| A compromised receiver ([12](#12-multi-cluster)) | Separate Deployment, mTLS, strict decoding, rate limits, narrow RBAC. | It can grant the data of all spokes. |
+| An attack on the receiver, or a compromised receiver ([12](#12-multi-cluster)) | Separate Deployment, mTLS, strict decoding, rate limits, narrow RBAC. A compromised receiver cannot grant hub data. | A compromised receiver can grant the data of all spokes. |
 | A stolen agent cert ([12](#12-multi-cluster)) | The cert grants only data of its own spoke. Procedure to suspend the spoke. | It grants the data of its spoke until a hub admin suspends the spoke. |
 | A spoke admin tries to get the data of the hub or of other spokes ([12](#12-multi-cluster)) | Implicit cluster matcher, tenant allow-list, a spoke rule is never unrestricted. | She can decrease the access of a shared group in other places. No data leaks. |
 
-A dash means that this page states no residual risk for the threat.
+A dash means that the section states no residual risk. It does not mean that there is no risk. The
+residual risks in the table are not complete.
 [Section 13](#13-summary-of-residual-risks) lists all residual risks.
 
 ## 1. Namespace-label integrity (the assumption everything rests on)
@@ -99,9 +102,10 @@ Two more integrity requirements follow:
     policies map to (`policy.querdian.dev/tenant`).
   * Only `ClusterAccessPolicy` objects can grant `unrestricted` access or arbitrary matchers. Give
     permission to write them only to platform administrators.
-* **Clients must not reach the backends around Querdian.** Isolate the backends with NetworkPolicy or an
-  equivalent. Give the credentials and the network path to the backends only to Querdian. A person who
-  can send requests directly to a backend bypasses all policies, and can also set the tenant header.
+* **Nothing other than Querdian must be able to reach the backends.** Isolate the backends with
+  NetworkPolicy or an equivalent. Give the credentials and the network path to the backends only to
+  Querdian. Each person or workload that can send requests directly to a backend bypasses all policies,
+  and can also set the tenant header.
 
 **Multi-cluster: the cluster label has the same weight.** With the `multicluster` block
 ([multi-cluster](../multicluster.md)), each hub `AccessPolicy` and each spoke policy gets an implicit
@@ -190,7 +194,7 @@ The design keeps these properties:
   * Querdian drops all other headers, for example backend controls such as `X-Loki-Query-Limits`.
   * These headers cannot be allow-listed: credentials, tenant headers, trace context, forwarding
     headers, hop-by-hop headers (`Upgrade`, `Connection`, ...), `Host`, `Content-Type` and
-    `Content-Length`. If the configuration contains one of them, Querdian rejects it at startup.
+    `Content-Length`. If the configuration contains one of them, Querdian rejects the configuration at startup.
   * An operator who adds a header gives its effect in the backend to each client.
   * Querdian sets `Content-Type`, the tenant header, and `traceparent` from its own span. Only W3C trace
     context goes out. The propagator is fixed in code.
@@ -403,8 +407,8 @@ data about spans outside the policy. Tempo 2.9.0 returned these fields:
 5. Tag lookups:
    * Querdian removes denied tags from tag listings (`api/v2/search/tags`). Tag values endpoints answer
      `403` for a denied tag.
-   * For some `q` shapes, Tempo answers both endpoints without the filter, and thus drops an injected
-     policy (GHSA-jcqw-3c3f-xrmj).
+   * For `q` shapes that Tempo does not evaluate on these endpoints, Tempo ignores the filter. Without
+     the rule below, this would drop an injected policy (GHSA-jcqw-3c3f-xrmj).
    * Thus Querdian sends restricted lookups one time for each policy term, as a conjunction of `=`
      conditions only, and unites the results. Querdian refuses policies that it cannot write in this
      form.
@@ -435,7 +439,8 @@ An end-to-end test against Tempo 2.9.0 confirmed this. The same information was 
 
 **Mitigation.** The enforcer rejects these intrinsics, `compare()` and the tag-value lookup of the root
 names with `400`. This applies to each user whose policy does not cover the root span
-(`traceql.RootCovered`: the policy is unrestricted or has a term without matchers). Thus, to give a team
+(`traceql.RootCovered`: the policy is unrestricted, or has a term without matchers and without tenant
+binding). Thus, to give a team
 trace-level queries, give it a policy that admits whole traces. Regression tests:
 `internal/enforce/traceql/rootintrinsics_test.go` and `test/e2e/tempo`.
 
@@ -551,8 +556,8 @@ term. At these limits, one request used at most about 25 MiB and 25 milliseconds
   Querdian.
 * A WebSocket tail authenticates only at the handshake. It continues after the token expires or the
   policy changes, until it closes. The one exception is the multi-cluster time limit
-  ([section 10](#10-snapshot-staleness)). A tail closes in 10 seconds if a spoke whose rules gave its
-  terms expires, is suspended, or gets a new `SpokeCluster` spec or UID.
+  ([section 10](#10-snapshot-staleness)). A tail closes in 10 seconds if a spoke whose rules gave terms
+  to the tail expires, is suspended, or gets a new `SpokeCluster` spec or UID.
 * The issuer discovery runs in the background. Until it succeeds, all requests fail with `503`.
 
 ## 10. Snapshot staleness
@@ -598,7 +603,7 @@ and the receiver. Thus its revocation takes longer.
 
 ## 11. Other considerations
 
-* **Confused deputy through policies.** A user cannot make access for himself: only the objects in
+* **Confused deputy through policies.** A user cannot grant access to their own account: only the objects in
   [section 1](#1-namespace-label-integrity-the-assumption-everything-rests-on) can grant access.
   Validation fails closed, thus an invalid policy grants nothing. An `AccessPolicy` cannot express
   `unrestricted`, tenants, or matchers outside its own namespace. The namespace matcher comes first and

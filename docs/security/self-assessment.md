@@ -43,7 +43,8 @@ Querdian is default deny and fails closed.
 Prometheus, Loki and Tempo have no authorisation on labels for each user. Multi-tenancy in Loki and
 Tempo (and Mimir) uses only the tenant header, with no finer granularity. Thus teams that share a backend
 run one stack for each team, or put a filtering layer in front of the backend. Querdian is such a layer.
-[How Querdian works](../architecture.md) describes the architecture and the path of a request.
+[How Querdian works](../architecture.md) describes the architecture and the path of a request. Where the
+code and `PLAN.md` differ, the pages under `docs/` describe the code.
 
 ### Actors
 
@@ -106,8 +107,8 @@ Diagram and trust boundary: [threat model, section 2](threat-model.md#2-assets-a
 
 The maintainer wrote this self-assessment to help possible adopters and reviewers (TAG Security, CNCF
 TOC, OpenSSF) to judge the project. It is not a security audit, not a certification and not a guarantee.
-Read it together with the threat model and the limitations. In practice, the limitations are the most
-important part.
+Read it together with the threat model and the limitations. In practice, the limitations are the part
+that is most likely to matter.
 
 ## Security functions and features
 
@@ -122,7 +123,7 @@ differential tests against real backends cover most of them.
 | Default-deny routing, canonical paths, parameter allow-lists | `internal/routes`, `internal/proxy` | Querdian rejects an unknown path, method or parameter. Encodings cannot make an alias of a different route. Querdian rejects duplicate enforcement parameters. Table tests include traversal and encoded-slash cases. |
 | Policy compilation and exact-union resolution | `internal/policy` | An invalid policy grants nothing. Users and groups are separate keyspaces. The DNF normalisation keeps the semantics (fuzzed property: the normalised DNF matches if and only if the input DNF matches). There is a limit on terms. |
 | Tenant handling | `internal/policy`, `internal/proxy` | The tenant header comes only from the policy. `__tenant_id__` is bound only for federation headers. Querdian rejects cross-tenant unions that the backend does not support. |
-| Query rewriting | `internal/enforce/*`, `pkg/logql`, `pkg/traceql` | Each selector or spanset filter carries the policy. PromQL uses the Prometheus parser. LogQL and TraceQL use clean-room parsers that are stricter than the backends. Property fuzzing (the repository has 22 fuzz targets), differential suites (see below). |
+| Query rewriting | `internal/enforce/*`, `pkg/logql`, `pkg/traceql` | Each selector or spanset filter carries the policy. PromQL uses the Prometheus parser. LogQL and TraceQL use clean-room parsers that are stricter than the backends. Property fuzzing (the repository has 22 fuzz targets, also for other components), differential suites (see below). |
 | Denied labels and attributes | `internal/enforce/*` | Queries that refer to denied labels get `403`. Querdian filters label listings. The token scan for LogQL is conservative. |
 | Fan-out and merge | `internal/fanout` | All or nothing. Byte limits. Property tests prove the merges (for example top-L of the union). |
 | Response filtering and redaction | `internal/fanout`, `internal/enforce/traceql`, `internal/enforce/redact` | Redaction of Tempo search metadata, trace-by-ID filtering, Prometheus/Loki series and label filtering, and `labels.redact` value rewriting. A body that Querdian cannot decode gets `502`, never an unfiltered answer. |
@@ -320,7 +321,7 @@ as the maintainer understands it. They change, so examine them again.
 |---|---|---|
 | [prom-label-proxy](https://github.com/prometheus-community/prom-label-proxy) | A mature and widely used PromQL proxy that enforces a label matcher on Prometheus-compatible queries (used by Thanos, Observatorium and Prometheus-operator setups). Prometheus API only. The enforced label value comes from a request parameter or header that a trusted gateway in front chooses. | Smaller, simpler and battle-tested for exactly one label on PromQL. Querdian adds LogQL and TraceQL, OIDC authentication, policy CRDs, unions of more than one policy with or-lifting, denied labels, tenant handling and response redaction. The cost is much more code and much less field time. If you only need one label on Prometheus and you already authenticate in a different place, prom-label-proxy is the choice with lower risk. |
 | PromQL AST-rewriting proxies in general (the "prom-lens-style" approach: parse, inject matchers, print) | The same technique as the PromQL path of Querdian. | Nothing unique there. The contribution is the same discipline for LogQL and TraceQL (clean-room parsers), the merge of fan-out results, and the management with CRDs. |
-| Grafana Enterprise / Grafana Cloud label-based access control (LBAC) for data sources | Commercial and closed source. Enforces label selectors for each team for supported data sources, in the data source proxy of Grafana. | Not comparable on code maturity, support or integration with Grafana teams. Querdian is open source and does not depend on the edition of Grafana. It enforces in front of the backends, thus it also protects clients other than Grafana (if the backends are not reachable in a different way). Grafana states the scope and the supported data sources of LBAC. |
+| Grafana Enterprise / Grafana Cloud label-based access control (LBAC) for data sources | Commercial and closed source. Enforces label selectors for each team for supported data sources, in the data source proxy of Grafana. | Not comparable on code maturity, support or integration with Grafana teams. Querdian is open source and does not depend on the edition of Grafana. It enforces in front of the backends, thus it also protects clients other than Grafana (if the backends are not reachable in a different way). Only Grafana can state the scope and the supported data sources of LBAC. |
 | [kube-rbac-proxy](https://github.com/brancz/kube-rbac-proxy) | An AuthN/AuthZ proxy in front of a metrics endpoint. It uses Kubernetes TokenReview/SubjectAccessReview. It decides for each request path and verb. | Coarse: it decides if a caller can reach an endpoint. It does not examine or rewrite the query. It is a complement to Querdian (for example, to protect the management port of Querdian), not a substitute. |
 | Loki/Tempo/Mimir native multi-tenancy (`X-Scope-OrgID`) | Isolation by tenant. | Querdian uses it where tenants exist, and adds isolation by label in a tenant. |
 | Simple tenant-header proxies (for example basic-auth users mapped to a tenant) | Map credentials to a tenant header. | No control on labels, no examination of queries. |
