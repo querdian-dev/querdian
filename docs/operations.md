@@ -4,11 +4,12 @@ This page is the reference for the operator who installs, configures, runs and o
 
 In short:
 
-* Querdian does not terminate TLS. An ingress, a gateway or a service mesh in front of it must be the
-  only path from the clients to the backends.
+* Querdian does not terminate TLS. Put an ingress, a gateway or a service mesh in front of Querdian.
+  Clients must reach the backends only through Querdian.
 * The management port (`/metrics`, `/healthz`, `/readyz`) has no authentication. Keep it in the cluster.
 * Querdian reads the configuration file only at startup. After a change, restart the pods.
-* Set the pod memory limit to at least 100 MiB + 6 x `limits.maxInflightMergeBytes` (see [Scaling](#scaling)).
+* Set the pod memory limit to at least 100 MiB + 6 x `limits.maxInflightMergeBytes`, plus headroom for
+  the regex compiles (see [Scaling](#scaling)).
 
 Releases are a signed multi-arch image `ghcr.io/querdian-dev/querdian` and a Helm chart
 `oci://ghcr.io/querdian-dev/charts/querdian` (latest: 0.1.2, see the
@@ -18,7 +19,9 @@ resources, see [policy-guide.md](policy-guide.md). For denials, see [troubleshoo
 
 ## Installation checklist
 
-The Helm chart installs the CRDs and the RBAC. Without the chart, apply them yourself.
+The Helm chart installs the CRDs (only at the first installation, see
+[Upgrade](#upgrade-and-failure-behaviour)) and the RBAC (`rbac.create`). Without the chart, apply them
+yourself.
 
 | Item | Necessary for an installation |
 |---|---|
@@ -133,7 +136,7 @@ introspection, and no revocation check other than the token expiry.
 | `name` | required, unique | Policy rules refer to it. It is the `backend` metric label. |
 | `type` | required | `prometheus` (Prometheus and Thanos Query; the Prometheus-compatible API of Mimir was only examined for tenant federation, not tested end to end), `loki` or `tempo`. |
 | `url` | required | `http` or `https` URL with a host. A path in the URL becomes a prefix of the upstream path. Upstream TLS uses the system trust store. |
-| `pathPrefix` | required | Route prefix on the proxy. It starts with `/`, is not `/`, and has no trailing `/`. Prefixes must not be equal or nest (`/a` and `/a/b` conflict). |
+| `pathPrefix` | required | Route prefix on the proxy. It must start with `/`. It must not be `/`. It must not end with `/`. Prefixes must not be equal or nest (`/a` and `/a/b` conflict). |
 | `namespaceLabel` | required | Label or attribute with the namespace in this backend, for the implicit matcher of `AccessPolicy`. It must be a valid name for the type (Tempo: `resource.<name>` or `span.<name>`), or each `AccessPolicy` for the backend is `InvalidMatcher`. **Its integrity is a security requirement**, see [policy-guide.md](policy-guide.md). |
 | `tenantHeader` | empty | Header that selects the tenant upstream (for example `X-Scope-OrgID`). Empty means single-tenant: Querdian ignores the tenants in policies. The proxy sets this header itself and drops client tenant headers (see `forwardHeaders`). For Thanos Query with `--query.enforce-tenancy`, set the tenant header of Thanos (`THANOS-TENANT`, unless `--query.tenant-header` changes it). Without it, Thanos applies its default tenant to each request. |
 | `tenantFederation` | `none` | `none` or `tenantIdLabel`. `tenantIdLabel` needs a `tenantHeader`. It tells Querdian that the backend can filter `__tenant_id__` under a `t1\|t2` header (Loki, Mimir). Use `none` for Tempo. See [policy-guide.md](policy-guide.md#cross-tenant-behaviour-per-backend). |
@@ -177,7 +180,7 @@ All values must be positive. For what happens when a limit trips, and for the fi
 | `maxQueryRegexWeight` | 32768 | Maximum [weight](policy-guide.md#size-limits) of the regexes of one PromQL or LogQL client query (all selectors, all `match[]` values). It also sets the work budget of the regex parse (32 steps for each unit), which stops a costly regex before a compile. From 1 to 262144. |
 | `maxRequestRegexWeight` | 131072 | Maximum regex weight that the proxy compiles for one request (the request regex weight, see below). From 1 to 262144. |
 | `maxMergeBytes` | 67108864 (64 MiB) | Total size of the buffered upstream bodies of one merged request, for all branches together. The branches count the bytes while they read, so the read stops when the total is above the limit. Also the buffer limit of the trace-by-ID filter. |
-| `maxInflightMergeBytes` | `maxMergeBytes` (64 MiB) | Total size of the buffered fan-out bodies (and then merged responses) of all concurrent requests of one replica. At least `maxMergeBytes`. When it is full, the oldest fan-out that still reads waits for space, and the others fail with `503` (`merge_budget_exhausted`). See [Scaling](#scaling). |
+| `maxInflightMergeBytes` | `maxMergeBytes` (64 MiB) | Total size of the buffered fan-out bodies (and then merged responses) of all concurrent requests of one replica. It must be at least `maxMergeBytes`; other values stop the startup. When it is full, the oldest fan-out that still reads waits for space, and the others fail with `503` (`merge_budget_exhausted`). See [Scaling](#scaling). |
 | `upstreamTimeout` | `5m` | Deadline of one proxied request (all of its upstream requests together). Go duration syntax. |
 
 The request regex weight is (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight.
@@ -228,7 +231,8 @@ the replica stays ready when the Kubernetes API is not reachable: it uses the la
 * **No rate limit**: Querdian has no built-in rate limit. Apply one at the ingress.
 * **Snapshot**: each replica holds it in memory. It rebuilds it completely at each change of a policy
   or a namespace label (about 250 ms after the last change). The size grows with the number of rules.
-* **WebSocket tails** keep one connection for each client plus one for each term open.
+* **WebSocket tails.** Each open WebSocket tail keeps one connection to the client and one upstream
+  connection for each term.
 
 **Memory sizing.** Set the memory limit of the pod to at least 100 MiB + 6 x `maxInflightMergeBytes`.
 If you increase `maxMergeBytes` or `maxInflightMergeBytes`, increase the memory limit by 6 x the
@@ -253,9 +257,9 @@ How Querdian limits the memory:
   has a deadline of 10 seconds plus 1 second for each MiB (at most 2 minutes). Thus a client that does
   not read cannot hold the budget for longer.
 * The budget counts body bytes only. The buffers can be larger than the bodies (the capacity doubles
-  below 1 MiB and grows by a quarter above it), and the merge step decodes the bodies. For Loki log
-  queries of 16 branches and short lines, the merge needs about 5 x the body bytes, and about 6 x with
-  redaction. This gives the factor 6 of the rule.
+  below 1 MiB and grows by a quarter above it), and the merge step decodes the bodies. Measured with
+  Loki log queries of 16 branches and short lines, the merge needs about 5 x the body bytes, and about
+  6 x with redaction. This gives the factor 6 of the rule.
 * Single-request filters (trace by ID, Prometheus labels/series, redaction of a single request) buffer
   up to their own limits, outside this budget.
 
@@ -282,7 +286,8 @@ Only the standard `OTEL_*` environment variables configure tracing: `OTEL_SERVIC
 
 * If there is no OTLP endpoint and no `OTEL_TRACES_EXPORTER`, Querdian discards the spans.
 * If `OTEL_TRACES_SAMPLER` is not set, the sampler is `parentbased_traceidratio` with ratio 1.0. The
-  Helm chart sets the ratio to `0.1` (`tracing.samplerArg`).
+  Helm chart sets `OTEL_TRACES_SAMPLER=parentbased_traceidratio` (`tracing.sampler`) and the ratio `0.1`
+  (`tracing.samplerArg`).
 * The server span does not use the trace context of the client as its parent. It starts a new trace with
   a span link to the trace context of the client. Thus a client cannot select the trace ID or force
   sampling. Set `--tracing.trust-inbound-context` only if all clients that can reach the proxy are
@@ -291,7 +296,8 @@ Only the standard `OTEL_*` environment variables configure tracing: `OTEL_SERVIC
   `tracecontext` only. Querdian ignores `OTEL_PROPAGATORS` on purpose, so client baggage never gets to a
   backend.
 * Each response has `X-Trace-Id`, and each error body has a `traceId`. Use it to find the trace.
-  The span tree is in the [operations reference](operations-reference.md#spans).
+
+The span tree is in the [operations reference](operations-reference.md#spans).
 
 Privacy flags, both **off by default**:
 
@@ -323,8 +329,9 @@ incompatible way before a stable version.
 To upgrade:
 
 1. Read the release notes and the [changelog](../CHANGELOG.md) of each release.
-2. Apply the updated CRDs: `kubectl apply --server-side -f config/crd`. Helm installs the `crds/` of the
-   chart only at the first installation and never upgrades them. Thus apply `crds/` manually at each
+2. Apply the updated CRDs before the rollout: `kubectl apply --server-side -f config/crd`. The
+   directory `crds/` of the chart is a copy of `config/crd`. Helm installs the CRDs of the chart only at
+   the first installation. It does not upgrade or delete them. Thus apply the CRDs manually at each
    chart upgrade.
 3. Roll out the deployment. Querdian reads the static configuration at startup, so a configuration
    change also needs a rollout.

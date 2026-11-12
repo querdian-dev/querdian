@@ -33,7 +33,8 @@ The configurable limits are in [operations.md](operations.md#limits).
 | tail dedupe memory (fixed) | 10 000 entries | Querdian forgets the oldest entries; then duplicates are possible | n/a | n/a |
 | parser nesting (fixed) | 100 levels | LogQL or TraceQL nesting is deeper | `400 bad_data` | deny / `parse_error` |
 
-If **one** branch of a fan-out fails upstream, the whole request fails with `502`. The message has the
+If a branch of a fan-out fails upstream, the whole request fails with `502`, also when only one branch
+fails. The message has the
 upstream status and the first 256 bytes of its error body. If the policy of the caller redacts labels,
 Querdian withholds the body (see the [threat model](security/threat-model.md#3-header-and-request-handling)).
 
