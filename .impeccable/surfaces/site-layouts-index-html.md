@@ -8,7 +8,7 @@ related_targets: []
 # Surface: querdian.dev landing page (Persuade) and docs (Read)
 
 Scope: landing page `site/layouts/index.html`, documentation templates under `site/layouts/_default/`.
-Audience: broad CNCF / cloud-native audience; platform and SRE engineers first. Alpha (first release v0.1.0), said plainly.
+Audience: broad CNCF / cloud-native audience; platform and SRE engineers first. Alpha (current release v0.1.2), said plainly.
 Action: read the docs, run the kind quickstart.
 
 ## Direction contract
