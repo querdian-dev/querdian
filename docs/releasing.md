@@ -212,7 +212,7 @@ Documents to update in the release commit (a pull request, like any change):
   * [README.md](../README.md): status paragraph and "Install" section;
   * [charts/querdian/README.md](../charts/querdian/README.md): install and verify commands (this
     README is packaged with the chart and shown on Artifact Hub);
-  * [docs/quickstart.md](quickstart.md): the "published image" instructions;
+  * [docs/quickstart-details.md](quickstart-details.md): the "published image" instructions;
   * [docs/operations.md](operations.md): the "latest" release in the introduction;
   * `site/hugo.toml`: `params.version` (landing page and footer), and `site/data/nav.yaml`: the
     release notes page. The documentation version of the release needs no change: the website
