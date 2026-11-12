@@ -8,8 +8,8 @@ ordered steps.
 In short:
 
 * The hub needs the `multicluster` block and a `clusterLabel` on each backend. Querdian refuses to start
-  if one of them is wrong.
-* A hub admin writes one `SpokeCluster` for each spoke. Only the receiver writes `SpokePolicy` objects.
+  if the configuration of the block or of a `clusterLabel` is not valid (see the table below).
+* A hub admin writes one `SpokeCluster` for each spoke. Only the receiver writes the `spec` of `SpokePolicy` objects.
 * The receiver runs on the hub and is the only component with a write path. The agent runs in each spoke.
 * Alert on `querdian_cluster_policy_age_seconds` long before the time limit.
 
@@ -42,7 +42,7 @@ Querdian refuses to start in these conditions:
 | Condition | Reason |
 |---|---|
 | `multicluster.hubCluster` is empty. | A matcher `cluster=""` would also accept data without the label. |
-| `multicluster.maxStaleness` is zero or negative. | If it is absent, the default of 48 hours applies. |
+| `multicluster.maxStaleness` is zero or negative. | The time limit must be positive. If the key is absent, the default of 48 hours applies. |
 | A backend has no `clusterLabel`. | The label is required on each backend with the block. |
 | The `clusterLabel` name is not valid for the backend type. | Tempo permits `resource.<name>` only, because an application can set its own `span.` attributes. |
 | The `clusterLabel` starts with `__`. | Names that start with `__` are reserved. |
@@ -145,7 +145,7 @@ Limits on the requests of the agents:
 | One changed sync from one cluster in 10 seconds. | `429` |
 
 An agent sends at most a heartbeat and a full sync each heartbeat interval (at least 10 seconds). Thus
-the limits have no effect on a normal agent. The HTTP statuses of the receiver are in
+the limit on the requests of one identity has no effect on a normal agent. The HTTP statuses of the receiver are in
 [troubleshooting](troubleshooting.md#receiver-http-statuses).
 
 * **Memory.** With the default limits, one request uses at most about 50 MiB: the body and the decoded

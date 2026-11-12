@@ -107,8 +107,8 @@ protocol has no cluster field.
 * **A hub-controlled CA.** `querdian receiver --client-ca-file` must contain only a CA that the hub
   controls. No spoke may be able to issue certs from it: a spoke admin with access to the CA key can
   issue a cert for a different spoke. Do not use a cert-manager issuer whose CA key is stored in a
-  spoke. Issue the cert on the hub and copy it to the spoke. As an alternative, use a process that
-  signs the certs with the approval of the hub.
+  spoke. Issue the cert on the hub and copy it to the spoke. As an alternative, use a signing
+  process that the hub approves.
 * **A dedicated agent cert.** The agent cert must not be the ingest cert, and its identity must not
   occur on an ingest cert. If it does, the theft of a write-only telemetry credential also gives the
   power to grant read access. Use a separate CA for agent certs, so that the receiver does not accept
@@ -361,7 +361,7 @@ setups do not have the limits.
 ## Day-2 operations
 
 The [multi-cluster reference](multicluster-reference.md#metrics-and-alerts) gives the metrics and the
-alerts that find a spoke before it expires.
+alerts for the time limit of the spokes.
 
 ### Certificate rotation
 
@@ -388,7 +388,7 @@ To change the client CA:
 | The agent cert expires | Only the syncs stop. The grants continue until the time limit. |
 | The receiver, the network path or the hub API server fails | **All** spokes expire after the time limit. Hub grants stay active. A hub admin can add a temporary hub `ClusterAccessPolicy`. |
 | One spoke policy is over a [size limit](policy-guide.md#size-limits) | The receiver rejects the whole sync of its spoke (see below). |
-| A spoke expires or is suspended, or its `SpokeCluster` gets a new spec or is created again | An open Loki tail that uses terms of that spoke closes within 10 seconds (WebSocket close code 1008, reason `policy source expired`). An example is a smaller tenant allow-list. A heartbeat does not close the tail. |
+| A spoke expires or is suspended, or its `SpokeCluster` gets a new spec (for example a smaller tenant allow-list) or is created again | An open Loki tail that uses terms of that spoke closes within 10 seconds (WebSocket close code 1008, reason `policy source expired`). A heartbeat does not close the tail. |
 
 A spoke expires if one of these conditions is true:
 
@@ -453,6 +453,8 @@ no certificate revocation list. Do these steps on the hub:
 5. Set `suspended: false`. The generation changed, so grants return only after a new valid sync from
    the agent with the new cert.
 
+This guide is the reference for the procedure. The threat model refers to it.
+
 ### Remove a spoke
 
 1. Uninstall the agent in the spoke.
@@ -482,7 +484,7 @@ Before such a rollback, do one of these:
   objects with an explicit cluster matcher.
 * Keep the block until the spoke data has left retention.
 
-To pause the spokes, suspend them. Do not remove the block.
+To pause the spokes, suspend them. Do not remove the block for this purpose.
 
 ### Do not add a standalone Querdian to a spoke
 

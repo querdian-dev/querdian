@@ -19,7 +19,7 @@ Environment variables:
 | Variable | Default | Effect |
 |---|---|---|
 | `CLUSTER_PREFIX` | `querdian` | Prefix of the cluster names: `querdian-hub`, `querdian-spoke-a`, `querdian-spoke-b`. |
-| `MC_WORK_DIR` | `$XDG_CACHE_HOME/querdian-quickstart-multicluster`, or `~/.cache/querdian-quickstart-multicluster` if `XDG_CACHE_HOME` is not set | Work directory for the certs. Use a new or empty directory, because `down.sh` deletes it. `up.sh` refuses a directory with other files. `down.sh` deletes only a directory that `up.sh` made. |
+| `MC_WORK_DIR` | `$XDG_CACHE_HOME/querdian-quickstart-multicluster`, or `~/.cache/querdian-quickstart-multicluster` if `XDG_CACHE_HOME` is not set | Work directory for the certs. Use a new or empty directory, because `down.sh` deletes it. `up.sh` refuses a directory with other files. `down.sh` deletes only a directory that `up.sh` marked (file `.querdian-quickstart-multicluster`). It never deletes `/` or `$HOME`. |
 | `KEYCLOAK_PORT` | `8080` | Host port of Keycloak. |
 | `IMAGE_TAG` | `quickstart` | Tag of the Querdian image. |
 | `SKIP_BUILD=1` | off | `up.sh` does not build the Querdian image. It uses the image with `IMAGE_TAG`. |

@@ -5,7 +5,7 @@
 #
 # Environment (all optional):
 #   CLUSTER_PREFIX  prefix of the kind cluster names               (default querdian)
-#   MC_WORK_DIR     work directory for the certs                    (default ~/.cache/querdian-quickstart-multicluster)
+#   MC_WORK_DIR     work directory for the certs                    (default $XDG_CACHE_HOME/querdian-quickstart-multicluster, or ~/.cache/...)
 #                   a new or empty directory: down.sh deletes it
 #
 # The scripts are for bash 3.2 (macOS) too: no associative arrays, no mapfile, and each expansion of an

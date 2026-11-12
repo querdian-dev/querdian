@@ -12,7 +12,8 @@ In short:
 * `up.sh` follows the [ordered migration steps](multicluster.md#migration-ordered-steps). It tests the
   ingest gateway with forged cluster labels before it activates a spoke.
 * `verify.sh` checks the isolation and the suspension of a spoke through the Querdian proxy.
-* The container VM needs 8 GiB of memory. `up.sh` needs about 8 to 20 minutes (an estimate).
+* The container VM needs about 8 GiB of memory, and `up.sh` needs about 8 to 20 minutes. These values
+  are estimates.
 
 > **Demo only.** Keycloak runs in dev mode over plain HTTP with known passwords. All CA keys are in one
 > directory on the laptop. The ingest gateway is a demo pattern, not a part of Querdian. The pods of the
@@ -41,7 +42,7 @@ hack/quickstart-multicluster/down.sh     # removes the clusters, the certs and t
   Docker or Podman with the `docker` shim.
 * `openssl` (OpenSSL 1.1 or later; LibreSSL was not tested).
 * Bash 3.2 or later. The scripts do not use features of later versions.
-* A container VM with **8 GiB** of memory and 4 CPUs or more, and about 6 GiB of disk space (see
+* A container VM with **8 GiB** of memory and 4 CPUs or more, and about 6 GiB of disk space (estimates, see
   [resources](quickstart-multicluster-details.md#resources-and-run-time)).
 * Free host ports `8080` (Keycloak), `3000` (Grafana) and `8081` (policy dashboard). The single-cluster
   quickstart uses the same three ports, so remove it first (`hack/quickstart/down.sh`).
