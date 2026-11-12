@@ -19,12 +19,10 @@ Contents: [how it works](#how-it-works) / [requirements](#requirements) /
 
 ## How it works
 
-```
-spoke: [ querdian agent ] --mTLS: digest, or full state--> hub: [ querdian receiver ] --> SpokePolicy, SpokeCluster.status
-          ^ reads ClusterAccessPolicy, AccessPolicy, Namespace                                   | informers
-          | from the spoke API server                                                            v
-                                                                    Grafana --> [ querdian (proxy) ] --> backends
-```
+![Hub and spoke: the paths of policies, telemetry and queries](img/multicluster.svg)
+
+The agent sends a digest of the policies, or the full state when the digest differs. The receiver also
+writes the status of the `SpokeCluster` object.
 
 Three processes from the same image take part:
 

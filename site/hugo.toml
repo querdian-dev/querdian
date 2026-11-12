@@ -7,6 +7,9 @@ enableGitInfo = false
 
 [markup]
   [markup.goldmark]
+    [markup.goldmark.parser]
+      # An image that is a paragraph of its own becomes a figure (layouts/_default/_markup/render-image.html).
+      wrapStandAloneImageWithinParagraph = false
     [markup.goldmark.renderer]
       unsafe = false
   [markup.highlight]

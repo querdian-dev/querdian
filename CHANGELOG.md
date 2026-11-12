@@ -189,6 +189,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   [docs/quickstart-details.md](docs/quickstart-details.md).
 * The website does not publish `docs/releasing.md` and `docs/openssf-best-practices.md` after this
   release. The files stay in the repository.
+* The new page [docs/architecture.md](docs/architecture.md) explains how Querdian works, with drawings
+  of the path of a query and of hub and spoke.
 
 ## [0.1.2] - 2026-10-28
 
