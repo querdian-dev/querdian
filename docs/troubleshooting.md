@@ -37,17 +37,17 @@ The table gives each reason that the server can set.
 | `unauthenticated` | deny | 401 | `unauthorized` | Token missing, malformed, expired or wrongly issued; wrong issuer or audience; no username claim; groups claim not usable. The message gives the cause. | Check `querdian_auth_failures_total{reason}` ([reasons](#authentication-failure-reasons)), `auth.issuer`/`audiences`/`claims`, and the token (`iss`, `aud`, `exp`, claims). |
 | `auth_unavailable` | error | 503 | `unavailable` | OIDC issuer discovery is not complete. | For the cause, find `issuer discovery failed` in the pod log. Check the connection to the issuer and `caFile`. The pod is not ready until discovery is successful. |
 | `snapshot_not_ready` | error | 503 | `unavailable` | No policy snapshot exists (startup, or the Kubernetes caches did not sync). | Wait. If the error continues, check the pod log and the access of the pod to the Kubernetes API (RBAC). |
-| `internal` | error | 500 | `internal` | The authentication middleware passed a request without an identity. This must not occur. | Report a bug with the trace ID. |
-| `no_grant` | deny | 403 | `forbidden` | No active rule gives this user (by username or by a group) access to this backend. | Look at `policies.matched` on the `policy.resolve` span. Check the groups in the token (a nested group claim needs, for example, `auth.claims.groups: realm_access.roles`), the `subjects` of the policy, the backend name in the rules, and that the policy is `Ready` (`kubectl get cap,ap -A`). A policy in `TenantNotAssigned` or a different failed status gives nothing. Users and groups are matched exactly and separately. |
-| `policy_source_expired` | deny | 403 | `forbidden` | Multi-cluster only. Rules give access to the backend, but each rule that gives a term comes from an expired or suspended spoke (no valid sync in `maxStaleness`, `suspended: true`, `SpokeCluster` changed or deleted). The message does not name the cluster. | Check `kubectl get spokeclusters` (`LastSync`, `Suspended`), `querdian_cluster_policy_expired`, the agent in the spoke and the receiver logs. The next valid sync gives the access again. See [multicluster.md](multicluster.md#time-limit-and-outages). |
+| `internal` | error | 500 | `internal` | The authentication middleware passed a request without an identity. This is not expected. | Report a bug with the trace ID. |
+| `no_grant` | deny | 403 | `forbidden` | No active rule gives this user (by username or by a group) access to this backend. The message is `no policy grants access to this backend`. | Look at `policies.matched` on the `policy.resolve` span. Check the groups in the token (a nested group claim needs, for example, `auth.claims.groups: realm_access.roles`), the `subjects` of the policy, the backend name in the rules, and that the policy is `Ready` (`kubectl get cap,ap -A`). A policy in `TenantNotAssigned` or a different failed status gives nothing. Users and groups are matched exactly and separately. |
+| `policy_source_expired` | deny | 403 | `forbidden` | Multi-cluster only. Rules give this user access to the backend, but each rule that gives a term comes from an expired or suspended spoke (no valid sync in `maxStaleness`, `suspended: true`, `SpokeCluster` changed or deleted). The message does not name the cluster. | Check `kubectl get spokeclusters` (`LastSync`, `Suspended`), `querdian_cluster_policy_expired`, the agent in the spoke and the receiver logs. The next valid sync gives the access again. See [multicluster.md](multicluster.md#time-limit-and-outages). |
 | `policy_too_complex` | deny | 403 | `forbidden` | The merged policy of the user has more than `limits.maxPolicyTerms` terms. Or the matched rules are over a fixed limit for one request: before the simplification, more than 4096 terms, 32768 matchers or 1 MiB of matcher text; too many simplification steps; after the simplification, a [weight](policy-guide.md#size-limits) of more than 32768. | Make the policies simpler (fewer, broader rules, or rules that differ in one label so that they merge). Or increase the limit, if you accept the effect. |
 | `cross_tenant_union_unsupported` | deny | 403 | `forbidden` | The user has rules with different terms in more than one tenant, on a backend with `tenantFederation: none`. | Give the user the same rules in each tenant, use one tenant, or use a backend that supports `__tenant_id__` filters. See the status `CrossTenantUnionUnsupported`. |
 | `resolve_failed` | error | 500 | `internal` | The policy resolution failed unexpectedly (for example, the snapshot does not know the backend). | Report a bug with the trace ID. Make sure that all replicas have the same configuration. |
 | `trace_by_id_denied` | deny | 403 | `forbidden` | A trace-by-ID request on a Tempo backend with `traceByID: deny` (the default). | To permit trace lookup by ID, set `traceByID: filter` on the backend. |
 | `bad_request` | deny | 400 | `bad_data` | The request does not obey the normalisation rules: a method that is not permitted; a POST without a form content type; a body of more than 1 MiB; more than one value for a parameter whose name does not end in `[]`; a parameter that is not on the allow-list of the route. The message names the cause. | Correct the client. Remove parameters that are not supported (for example `storeMatch[]`, Tempo `tags`). |
 | `query_too_complex` | deny | 403 | `forbidden` | (1) The plan needs more upstream requests than `limits.maxFanout`. (2) The query expands to too many selector copies: more than 2048 for PromQL or-lifting, more than 256 for Prometheus `match[]`. (3) The regexes that the request compiles have a [weight](policy-guide.md#size-limits) of more than `limits.maxRequestRegexWeight` (default 131072; (2 x terms + 1) x client regex weight + (2 x selectors + 1) x policy weight). (4) The regexes of the query have a weight of more than `limits.maxQueryRegexWeight` (default 32768). The message gives the cause. | (1) Make the query narrower, make the policy simpler, or increase `maxFanout` (this multiplies the backend load). (3) Divide the query into queries with fewer selectors, use fewer or shorter regexes, or make the policy smaller. (4) Use shorter regexes, fewer Unicode classes, no case folding on classes, or fewer counted repetitions. |
-| `enforcer_unavailable` | error | 503 | `unavailable` | No enforcer is registered for the backend type, or tail is not available. Restricted requests fail closed. | Report a bug. This shows a build or wiring problem. |
-| `denied_label` | deny | 403 | `forbidden` | The query, `match[]`, the path (`label/<name>/values`, tag values) or `targetLabels` refers to a label or attribute that the policy of the user denies, or (LogQL) a template could read it. The message names the label. For a LogQL template, it shows `(template reading all labels)` (a node or function outside the allow-list) or `(template that does not parse)` (not a valid Go template). | Remove the reference from the query or the dashboard variable (for example `label_values(customer_id)` or `by (customer_id)`), or change `labels.deny`. The denied labels of one matched rule apply to the full request. |
+| `enforcer_unavailable` | error | 503 | `unavailable` | No enforcer is registered for the backend type, or the backend type has no tail (WebSocket) support. Restricted requests fail closed. | Report a bug. This shows a build or wiring problem. |
+| `denied_label` | deny | 403 | `forbidden` | The query, `match[]`, the path (`label/<name>/values`, tag values) or `targetLabels` refers to a label or attribute that the policy of the user denies, or (LogQL) has a template that could read it. The message names the label. For a LogQL template, it shows `(template reading all labels)` (a node or function outside the allow-list) or `(template that does not parse)` (not a valid Go template). | Remove the reference from the query or the dashboard variable (for example `label_values(customer_id)` or `by (customer_id)`), or change `labels.deny`. The denied labels of one matched rule apply to the full request. |
 | `parse_error` | deny | 400 | `bad_data` | The query (or `match[]`) did not parse. The parsers of Querdian are stricter than the parsers of the backends (see [limitations.md](limitations.md)). The message gives the position. | Correct the query. If the backend accepts it, check the list of strict rules. |
 | `unsupported` | deny | 400 | `bad_data` | The query is valid, but Querdian cannot rewrite it exactly for the policy of the user. Examples: a PromQL range vector that cannot be or-lifted, a LogQL aggregation with `by` over more than one term, a metric query where a selector is necessary, Tempo legacy parameters, tenant-bound terms on Tempo. Or the rewritten query did not parse again. | Read the message and [limitations.md](limitations.md). Write the query again, or make the policy of the user simpler (one term). If a dashboard works for admins but not for teams, teams with more than one term can be over the or-lifting limits: check `dnf.terms` on the `policy.resolve` span. |
 | `enforcement_error` | error | 500 | `internal` | An unexpected enforcer error without a type. The request fails closed. | Report a bug with the trace ID. |
@@ -63,8 +63,8 @@ The table gives each reason that the server can set.
 
 | Reason | Cause |
 |---|---|
-| `missing_token` | No token. |
-| `invalid_token` | Malformed token, bad signature, bad `Authorization` scheme, or a groups claim that is not valid. |
+| `missing_token` | No `Authorization` header. |
+| `invalid_token` | Malformed token, bad signature, bad or empty `Authorization` scheme or token, or a groups claim that is not valid. |
 | `expired` | Expired token. |
 | `audience` | Wrong audience. |
 | `issuer` | Wrong issuer. |
@@ -92,7 +92,8 @@ policy is still in `policies.matched` and `querdian.policies`, and its denied la
      filter. Make the time range or the selector narrower.
    * `errorType: "upstream"` with `upstream request N failed: status 500: ...`: the message names the
      failed branch and shows the first 256 bytes of the backend error. If the policy of the caller
-     redacts labels, the message has `details withheld because the policy redacts label values`. Then
+     redacts labels, the message does not show the backend text. It shows
+     `details withheld because the policy redacts label values`. Then
      find the backend error in the warning log of Querdian or in the backend.
    * `upstream request failed` without a detail is a transport error or a timeout.
 2. **Timeout.** Querdian stops requests after `limits.upstreamTimeout` (default 5 minutes). Compare
@@ -201,7 +202,8 @@ querdian_policies{ready="false"} > 0
 increase(querdian_snapshot_rebuilds_total{result="error"}[15m]) > 0
 ```
 
-`querdian_snapshot_generation` is a counter of one replica. Do not compare it between replicas.
+`querdian_snapshot_generation` is a gauge that counts the snapshot rebuilds of one replica. Do not
+compare it between replicas.
 
 ## Trace queries (TraceQL)
 
@@ -236,7 +238,7 @@ Denials for each reason as a rate (Tempo must support TraceQL metrics):
 { resource.service.name = "querdian" && span.querdian.decision = "deny" } | rate() by (span.querdian.decision.reason)
 ```
 
-To find the trace of a user, open the `X-Trace-Id` that the user reports in Grafana. With
+To find the trace of a user, get the `X-Trace-Id` from the user. Open the trace with this ID in Grafana. With
 `--tracing.record-user`, you can also filter `{ span.enduser.id = "alice@example.com" }`. The matched
 policies are in `span.querdian.policies`.
 
@@ -283,7 +285,7 @@ The [policy dashboard](dashboard.md) answers some requests with these statuses, 
 In a [multi-cluster](multicluster.md) setup, `querdian receiver` answers each agent request with one of
 these statuses. Each rejection has the JSON body `{"error":"..."}` with a generic message. The receiver
 logs it as `sync rejected`, with the identity and the cause. A rejected sync never renews
-`lastSyncTime`. If `--client-ca-file` did not sign the cert, the TLS handshake fails before an HTTP
+`lastSyncTime`. If the CA in `--client-ca-file` did not sign the cert, the TLS handshake fails before an HTTP
 status, and the agent logs a connection error.
 
 | Status | Message | Cause | Agent behaviour |

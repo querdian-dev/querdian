@@ -6,7 +6,8 @@ In short:
 
 * `charts/querdian/dashboards/querdian.json` is the overview dashboard (uid `querdian-overview`, tags
   `querdian`, `observability`, ...). It uses only the metrics of Querdian from the management port.
-* If `dashboards.enabled=true`, the chart installs the dashboard as a ConfigMap for the Grafana sidecar.
+* If `dashboards.enabled=true`, the chart installs the dashboard as a ConfigMap for the Grafana sidecar
+  (mode `proxy` only; the default is `false`).
 * The links from exemplars to Tempo need a setting on the Prometheus data source.
 * The quickstart has four different [demo dashboards](#demo-dashboards-quickstart) for the sample services.
 
@@ -120,10 +121,6 @@ groups:
         expr: sum(increase(querdian_snapshot_rebuilds_total{result!="ok"}[15m])) > 0
         for: 15m
         labels: {severity: warning}
-      - alert: QuerdianSnapshotDiverged
-        expr: max(querdian_snapshot_generation) - min(querdian_snapshot_generation) > 0
-        for: 15m
-        labels: {severity: warning}
       - alert: QuerdianFanOutNearCap
         expr: |
           histogram_quantile(0.99, sum by (le, backend) (rate(querdian_policy_terms_bucket[15m]))) >= 32
@@ -142,7 +139,7 @@ The [quickstart reference](quickstart-details.md#dashboards) tells what each das
 * The dashboards use only the three provisioned data sources (`prometheus`, `loki`, `tempo`), all
   through Querdian with OAuth pass-through, and only constructs that Querdian accepts.
 * `go test ./hack/quickstart/dashboards/` parses each PromQL expression with the Prometheus parser, each
-  LogQL expression with `pkg/logql` and each TraceQL query with `pkg/traceql`. These are the parsers that
-  Querdian enforces with (with the Grafana variables replaced). The test also checks the panel ids, the
+  LogQL expression with `pkg/logql` and each TraceQL query with `pkg/traceql`. The test replaces the
+  Grafana variables before it parses. These are the parsers that Querdian uses for enforcement. The test also checks the panel ids, the
   variables, and that each data source uid is one of the provisioned uids.
 * `hack/quickstart/verify.sh` then runs each query of each dashboard as alice, bob and carol through Grafana.
