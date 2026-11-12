@@ -499,7 +499,7 @@ The CRDs limit the size of each policy. The compiler and the receiver apply the 
 compiler applies them also to objects that were stored before the CRD had them. A policy over a limit grants nothing and gets the
 status reason `PolicyTooLarge`. Lengths count characters. The same limits apply to the policies of a
 spoke (`SpokePolicy`). For the limits of each request, see
-[operations](operations.md#limits-and-what-happens-when-they-trip).
+[operations](operations-reference.md#limits-and-what-happens-when-they-trip).
 
 | Field | Limit |
 |---|---|

@@ -13,6 +13,10 @@
 - title: Reference
   pages:
     - quickstart-details | Quickstart reference
+    - quickstart-multicluster-details | Multi-cluster quickstart reference
+    - policy-reference
+    - operations-reference
+    - multicluster-reference
     - endpoints | Endpoint inventory
     - promql-enforcement
     - limitations

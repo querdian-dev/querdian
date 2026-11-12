@@ -59,10 +59,15 @@ The website (landing page and rendered documentation) is built from [site/](site
   The [quickstart reference](docs/quickstart-details.md) has the options and the internals of the demo.
 * [Policy guide](docs/policy-guide.md): the CRDs, union semantics, tenants, denied labels and status
   conditions. Includes the requirement that the namespace label is set by your telemetry pipeline.
+  The [policy reference](docs/policy-reference.md) has the tables for denied labels and redaction.
 * [Policy dashboard](docs/dashboard.md): optional read-only view of active policies and a query test bench.
-* [Operations](docs/operations.md): configuration reference, flags, limits, metrics, tracing, logging.
+* [Operations](docs/operations.md): installation checklist, configuration reference, flags, tracing,
+  logging and upgrade. The [operations reference](docs/operations-reference.md) has the limits, the
+  metrics and the spans.
 * [Multi-cluster](docs/multicluster.md): one hub Querdian for the policies of several clusters, with the
-  receiver, the agent, the migration steps and the procedures for certs and spokes.
+  requirements, the migration steps and the procedures for certs and spokes. The
+  [multi-cluster reference](docs/multicluster-reference.md) has the configuration, the receiver and
+  the agent. The [multi-cluster quickstart](docs/quickstart-multicluster.md) is a demo on kind.
 * [Troubleshooting](docs/troubleshooting.md): decision reason codes and ready-made PromQL/TraceQL queries.
 * [Known limitations](docs/limitations.md): strictness choices and unsupported syntax.
 * [Threat model](docs/security/threat-model.md) and [security policy](SECURITY.md).

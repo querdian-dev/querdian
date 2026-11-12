@@ -61,7 +61,7 @@ The table shows how each backend applies the effective terms. For details, see
 ## Regex weight
 
 The [size limits](policy-guide.md#size-limits) and the
-[request limits](operations.md#limits-and-what-happens-when-they-trip) use the weight of a regex. The
+[request limits](operations-reference.md#limits-and-what-happens-when-they-trip) use the weight of a regex. The
 weight measures the cost of a compile. The compiler and the receiver get it from a parse with a work
 budget, without a compile. The weight is the sum of:
 
