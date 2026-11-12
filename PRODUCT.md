@@ -12,7 +12,7 @@ label matchers that are injected into every query before it reaches the backend,
 read its own namespace's metrics, logs and traces.
 
 ## Status (must be stated plainly on every public surface)
-Alpha. v0.1.0 is the first release (signed image and Helm chart on ghcr.io, chart on Artifact Hub);
+Alpha. v0.1.2 is the current release (`params.version` in site/hugo.toml; signed image and Helm chart on ghcr.io, chart on Artifact Hub);
 the policy API is v1alpha1. Repository is public. No adopters, no benchmarks, no production claims.
 Known limits are documented in docs/limitations.md.
 
