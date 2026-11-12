@@ -6,7 +6,8 @@
 #     the default and lives at /docs/, older lines live at /docs/<tag>/;
 #   * the working tree as "main" at /docs/main/.
 #
-# Every version brings its own docs/, navigation (site/data/nav.yaml) and overview page, so a page
+# Every version brings its own docs/, navigation (site/data/nav.yaml), overview page and images
+# (docs/img, copied to site/assets/docs/<version>/img for the image render hook), so a page
 # describes the release it belongs to. Without release tags (a clone without tags, a source archive)
 # only the working tree is published, at /docs/. A git error in a repository stops the script.
 #
@@ -20,7 +21,8 @@ data="$here/data/versions.yaml"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-rm -rf "$dst"
+img="$here/assets/docs"
+rm -rf "$dst" "$img"
 mkdir -p "$dst"
 : >"$data"
 
@@ -96,6 +98,11 @@ generate() {
     weight=$((weight + 10))
     count=$((count + 1))
   done <<<"$pages"
+
+  if [ -d "$root/docs/img" ]; then
+    mkdir -p "$img/$name"
+    cp -R "$root/docs/img" "$img/$name/img"
+  fi
 
   {
     printf -- '- name: %s\n  path: %s\n  ref: %s\n  latest: %s\n  release: %s\n  nav:\n' \

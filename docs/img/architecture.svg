@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 410" class="qd-diagram qd-arch" role="img" aria-labelledby="qd-arch-title qd-arch-desc">
+  <title id="qd-arch-title">How Querdian handles a query</title>
+  <desc id="qd-arch-desc">A client sends a query with an OIDC token to Querdian. Querdian verifies the token with the keys of the OIDC provider, finds the rules of the user in the policies from the Kubernetes API, rewrites the query with a parser and sends it to Prometheus, Loki or Tempo. If a check fails, Querdian rejects the query. The telemetry pipeline sets the namespace label in the backends.</desc>
+  <style>
+    .qd-arch text { font-family: Archivo, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #101418; }
+    .qd-arch .qd-h { font-size: 15px; font-weight: 700; }
+    .qd-arch .qd-s { font-size: 12.5px; fill: #3b434c; }
+    .qd-arch .qd-m { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .qd-arch .qd-lab { font-size: 12.5px; fill: #3b434c; stroke: #f4f4f0; stroke-width: 4px; paint-order: stroke; stroke-linejoin: round; }
+    .qd-arch .qd-p { fill: #f4f4f0; }
+    .qd-arch .qd-w { fill: #ffffff; }
+    .qd-arch .qd-box { fill: #ffffff; stroke: #101418; stroke-width: 2.5; }
+    .qd-arch .qd-ink { fill: #101418; stroke: #101418; stroke-width: 2.5; }
+    .qd-arch .qd-line { fill: none; stroke: #101418; stroke-width: 2.5; }
+  </style>
+  <defs>
+    <marker id="qd-arch-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#101418"/>
+    </marker>
+    <pattern id="qd-arch-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(135)">
+      <rect width="8" height="8" fill="#ffffff"/>
+      <rect width="3" height="8" fill="#101418" fill-opacity="0.16"/>
+    </pattern>
+  </defs>
+  <rect width="720" height="410" fill="#f4f4f0"/>
+
+  <!-- OIDC provider -->
+  <rect class="qd-box" x="20" y="16" width="150" height="76" rx="12"/>
+  <text class="qd-h" x="95" y="50" text-anchor="middle">OIDC provider</text>
+  <text class="qd-s" x="95" y="68" text-anchor="middle">such as Keycloak</text>
+
+  <!-- Kubernetes API -->
+  <rect class="qd-box" x="250" y="16" width="220" height="76" rx="12"/>
+  <text class="qd-h" x="360" y="40" text-anchor="middle">Kubernetes API</text>
+  <text class="qd-m" x="360" y="59" text-anchor="middle">ClusterAccessPolicy</text>
+  <text class="qd-m" x="360" y="75" text-anchor="middle">AccessPolicy</text>
+
+  <!-- Client -->
+  <rect class="qd-box" x="20" y="190" width="150" height="70" rx="12"/>
+  <text class="qd-h" x="95" y="220" text-anchor="middle">Grafana</text>
+  <text class="qd-s" x="95" y="239" text-anchor="middle">or an API client</text>
+
+  <!-- Querdian -->
+  <rect class="qd-ink" x="250" y="160" width="220" height="130" rx="12"/>
+  <text class="qd-p" x="360" y="186" text-anchor="middle" font-size="16" font-weight="800">Querdian</text>
+  <text class="qd-p" x="270" y="212" font-size="12.5">1  Verify the token</text>
+  <text class="qd-p" x="270" y="231" font-size="12.5">2  Find the rules of the user</text>
+  <text class="qd-p" x="270" y="250" font-size="12.5">3  Rewrite it with a real parser</text>
+  <text class="qd-p" x="270" y="269" font-size="12.5">4  Send it to the backend</text>
+
+  <!-- Backends: the zone colours of the site (metrics, logs, traces) -->
+  <rect x="534" y="160" width="166" height="40" rx="8" fill="#ff5a1f" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h" x="548" y="185">Prometheus</text>
+  <text class="qd-m" x="688" y="185" text-anchor="end">PromQL</text>
+  <rect x="534" y="205" width="166" height="40" rx="8" fill="#2a63f0" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h qd-w" x="548" y="230">Loki</text>
+  <text class="qd-m qd-w" x="688" y="230" text-anchor="end">LogQL</text>
+  <rect x="534" y="250" width="166" height="40" rx="8" fill="#c8f169" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h" x="548" y="275">Tempo</text>
+  <text class="qd-m" x="688" y="275" text-anchor="end">TraceQL</text>
+
+  <!-- Rejected -->
+  <rect x="250" y="330" width="220" height="66" rx="12" fill="url(#qd-arch-hatch)" stroke="#101418" stroke-width="2.5"/>
+  <text class="qd-h" x="360" y="358" text-anchor="middle">Rejected</text>
+  <text class="qd-s" x="360" y="377" text-anchor="middle">400, 401 or 403, with a reason</text>
+
+  <!-- Telemetry pipeline -->
+  <rect class="qd-box" x="534" y="326" width="166" height="70" rx="12"/>
+  <text class="qd-h" x="617" y="348" text-anchor="middle" style="font-size:14px">Telemetry pipeline</text>
+  <text class="qd-s" x="617" y="366" text-anchor="middle">sets the namespace</text>
+  <text class="qd-s" x="617" y="381" text-anchor="middle">label of the data</text>
+
+  <!-- Token: OIDC provider to client -->
+  <path class="qd-line" d="M95 92V186" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="104" y="145">token</text>
+  <!-- Keys: OIDC provider to Querdian -->
+  <path class="qd-line" d="M170 54H210V176H246" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="202" y="120" text-anchor="end">keys</text>
+  <!-- Policies and status -->
+  <path class="qd-line" d="M360 96V156" marker-start="url(#qd-arch-arrow)" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="370" y="122">policies</text>
+  <text class="qd-lab" x="370" y="137">and status</text>
+  <!-- Query -->
+  <path class="qd-line" d="M170 236H246" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="210" y="211" text-anchor="middle">query</text>
+  <text class="qd-lab" x="210" y="225" text-anchor="middle">with token</text>
+  <!-- Rewritten query -->
+  <path class="qd-line" d="M470 225H530" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="502" y="200" text-anchor="middle">rewritten</text>
+  <text class="qd-lab" x="502" y="214" text-anchor="middle">query</text>
+  <!-- Rejection -->
+  <path class="qd-line" d="M360 290V326" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="370" y="313">if a check fails</text>
+  <!-- Telemetry -->
+  <path class="qd-line" d="M617 326V294" marker-end="url(#qd-arch-arrow)"/>
+</svg>

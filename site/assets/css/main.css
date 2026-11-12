@@ -261,6 +261,10 @@ pre .c { color: #98a2ad; }
 .prose tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
 .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2.4em 0; }
 .prose img { height: auto; }
+/* drawings of docs/img: the SVG is in the page, on the paper ground and without a frame */
+.doc-figure { margin: 1.8em 0; overflow-x: auto; }
+.doc-figure svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.doc-figure figcaption { margin-top: 8px; font-size: 0.85rem; color: var(--ink-3); }
 /* syntax: monochrome on purpose, the zone colours are reserved for metrics, logs and traces */
 .chroma .c, .chroma .c1, .chroma .cm, .chroma .cs, .chroma .ch { color: #98a2ad; }
 .chroma .k, .chroma .kd, .chroma .kn, .chroma .kp, .chroma .kr, .chroma .kt, .chroma .nt, .chroma .na, .chroma .nf, .chroma .nb { font-weight: 700; color: #fff; }
