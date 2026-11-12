@@ -38,8 +38,17 @@ alias_list() {
   [ -z "$out" ] || printf 'aliases: [%s]\n' "$out"
 }
 
+# no_sitemap <latest: true|false> <file of the same page in the latest release>: the front matter line
+# that keeps a page out of the sitemap, or nothing. A page of another version names the page of the
+# latest release as its canonical address (layouts/_default/baseof.html), thus the sitemap lists only
+# that page. A page that the latest release does not have stays in the sitemap.
+no_sitemap() {
+  if [ "$1" = false ] && [ -f "$2" ]; then printf 'sitemap: {disable: true}\n'; fi
+}
+
 # generate <name> <source root> <url path> <git ref> <latest: true|false> <release: true|false> [alias name...]
-# The source root holds docs/, site/data/nav.yaml and the overview page of that version.
+# The source root holds docs/, site/data/nav.yaml and the overview page of that version. The latest
+# release must be the first call: the other versions compare their pages with its files.
 generate() {
   local name="$1" root="$2" url="$3" ref="$4" latest="$5" release="$6"
   shift 6
@@ -50,11 +59,14 @@ generate() {
   [ -f "$nav" ] || { echo "$name: missing site/data/nav.yaml" >&2; exit 1; }
   [ -n "$overview" ] || { echo "$name: missing the docs overview page" >&2; exit 1; }
   [ "$(head -n 1 "$overview")" = "---" ] || { echo "$name: the docs overview page has no front matter" >&2; exit 1; }
+  # no_sitemap compares with the files of the latest release.
+  [ "$latest" = true ] || [ -f "$dst/_index.md" ] || { echo "$name: the latest release must be generated first" >&2; exit 1; }
 
   mkdir -p "$out"
   {
     printf -- '---\nversion: %s\n' "$(yaml_str "$name")"
     alias_list "" "$@"
+    no_sitemap "$latest" "$dst/_index.md"
     tail -n +2 "$overview"
   } >"$out/_index.md"
 
@@ -76,6 +88,7 @@ generate() {
       printf -- '---\ntitle: %s\nweight: %d\nsource: docs/%s.md\nversion: %s\n' \
         "$(yaml_str "$title")" "$weight" "$p" "$(yaml_str "$name")"
       alias_list "$p" "$@"
+      no_sitemap "$latest" "$dst/$p.md"
       printf -- '---\n'
       # body without the first H1
       awk 'BEGIN{done=0} !done && /^# /{done=1; next} {print}' "$in"

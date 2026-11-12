@@ -142,7 +142,8 @@ func TestBuildContentVersions(t *testing.T) {
 
 	// v0.1.0 and v0.1.1: one release line. The overview page is at its first location.
 	r.write("docs/quickstart.md", "# Quickstart\n\nBody of 0.1.0.\n")
-	r.write("site/data/nav.yaml", navStart)
+	r.write("docs/legacy.md", "# Legacy\n\nOnly in 0.1.\n")
+	r.write("site/data/nav.yaml", navStart+"    - legacy\n")
 	r.write("site/content/docs/_index.md", overview)
 	r.release("v0.1.0")
 	r.write("docs/quickstart.md", "# Quickstart\n\nBody of 0.1.1.\n")
@@ -162,7 +163,7 @@ func TestBuildContentVersions(t *testing.T) {
 	// The working tree has a page that is not in a release, without a commit.
 	r.write("docs/quickstart.md", "# Quickstart\n\nBody of main.\n")
 	r.write("docs/next.md", "# Next\n\nUnreleased.\n")
-	r.write("site/data/nav.yaml", navStart+"    - next\n")
+	r.write("site/data/nav.yaml", navStart+"    - next\n- title: Security\n  pages:\n    - security/threat-model\n")
 	// A file of an earlier build must not stay.
 	r.write("site/content/docs/v0.0.9/stale.md", "stale")
 
@@ -184,7 +185,7 @@ func TestBuildContentVersions(t *testing.T) {
 	if main.Latest || main.Release || main.Ref != "main" {
 		t.Errorf("main = %+v", main)
 	}
-	if got, want := older.Nav[0].Pages, []string{"quickstart"}; !reflect.DeepEqual(got, want) {
+	if got, want := older.Nav[0].Pages, []string{"quickstart", "legacy"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("navigation of v0.1.1 = %q, want %q", got, want)
 	}
 	if got, want := latest.Nav[0].Pages, []string{"quickstart", "guide | The guide"}; !reflect.DeepEqual(got, want) {
@@ -213,6 +214,7 @@ func TestBuildContentVersions(t *testing.T) {
 		"site/content/docs/vnext",
 		"site/content/docs/v0.0.9",
 		"site/content/docs/main/guide.md", // not in the navigation of main
+		"site/content/docs/legacy.md",     // removed in v0.2.0
 	} {
 		if r.exists(file) {
 			t.Errorf("%s must not exist", file)
@@ -233,11 +235,36 @@ func TestBuildContentVersions(t *testing.T) {
 		t.Errorf("threat model:\n got %q\nwant %q", got, want)
 	}
 	if got, want := r.read("site/content/docs/v0.1.1/quickstart.md"),
-		"---\ntitle: \"Quickstart\"\nweight: 10\nsource: docs/quickstart.md\nversion: \"v0.1.1\"\naliases: [\"/docs/v0.1.0/quickstart/\"]\n---\n\nBody of 0.1.1.\n"; got != want {
+		"---\ntitle: \"Quickstart\"\nweight: 10\nsource: docs/quickstart.md\nversion: \"v0.1.1\"\naliases: [\"/docs/v0.1.0/quickstart/\"]\nsitemap: {disable: true}\n---\n\nBody of 0.1.1.\n"; got != want {
 		t.Errorf("older quickstart:\n got %q\nwant %q", got, want)
 	}
 	if got := r.read("site/content/docs/main/quickstart.md"); strings.Contains(got, "aliases") {
 		t.Errorf("main must not have aliases:\n%s", got)
+	}
+
+	// Sitemap: a page that the latest release also has is not listed for the other versions. A page
+	// that the latest release does not have stays in the sitemap, and so do all pages of the latest
+	// release.
+	const noSitemap = "\nsitemap: {disable: true}\n"
+	for _, file := range []string{
+		"site/content/docs/main/quickstart.md",
+		"site/content/docs/main/security/threat-model.md", // a nested page
+		"site/content/docs/v0.1.1/quickstart.md",
+	} {
+		if got := r.read(file); !strings.Contains(got, noSitemap) {
+			t.Errorf("%s must not be in the sitemap:\n%s", file, got)
+		}
+	}
+	for _, file := range []string{
+		"site/content/docs/main/next.md",     // only on main
+		"site/content/docs/v0.1.1/legacy.md", // only in the older release line
+		"site/content/docs/quickstart.md",
+		"site/content/docs/guide.md",
+		"site/content/docs/_index.md",
+	} {
+		if got := r.read(file); strings.Contains(got, "sitemap") {
+			t.Errorf("%s must be in the sitemap:\n%s", file, got)
+		}
 	}
 
 	// Overview pages, from both locations of the source.
@@ -246,11 +273,11 @@ func TestBuildContentVersions(t *testing.T) {
 		t.Errorf("latest overview:\n got %q\nwant %q", got, want)
 	}
 	if got, want := r.read("site/content/docs/v0.1.1/_index.md"),
-		"---\nversion: \"v0.1.1\"\naliases: [\"/docs/v0.1.0/\"]\ntitle: Documentation\n---\n\nOverview.\n\n{{< docs-index >}}\n"; got != want {
+		"---\nversion: \"v0.1.1\"\naliases: [\"/docs/v0.1.0/\"]\nsitemap: {disable: true}\ntitle: Documentation\n---\n\nOverview.\n\n{{< docs-index >}}\n"; got != want {
 		t.Errorf("older overview:\n got %q\nwant %q", got, want)
 	}
 	if got, want := r.read("site/content/docs/main/_index.md"),
-		"---\nversion: \"main\"\ntitle: Documentation\n---\n\nOverview.\n\n{{< docs-index >}}\n"; got != want {
+		"---\nversion: \"main\"\nsitemap: {disable: true}\ntitle: Documentation\n---\n\nOverview.\n\n{{< docs-index >}}\n"; got != want {
 		t.Errorf("main overview:\n got %q\nwant %q", got, want)
 	}
 }
@@ -304,6 +331,11 @@ func TestBuildContentWithoutReleases(t *testing.T) {
 	}
 	if !r.exists("site/content/docs/quickstart.md") || r.exists("site/content/docs/main") {
 		t.Error("the working tree must be at /docs/ only")
+	}
+	for _, file := range []string{"site/content/docs/quickstart.md", "site/content/docs/_index.md"} {
+		if got := r.read(file); strings.Contains(got, "sitemap") {
+			t.Errorf("%s must be in the sitemap:\n%s", file, got)
+		}
 	}
 }
 
