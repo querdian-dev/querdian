@@ -1,24 +1,27 @@
-{{- /* Images of the repository's markdown. A relative image is a file of docs/ in the documentation
-       version of the page; build-content.sh copies docs/img of each version to assets/docs/<version>/img.
-       An SVG file goes into the page itself, so that its text uses the fonts of the site. Other files
-       get an img element. An image that does not exist stops the build. */ -}}
+{{- /* Images of the repository's markdown. An image is a file of docs/ in the documentation version of the
+       page; build-content.sh copies docs/img of each version to assets/docs/<version>/img. An SVG file
+       goes into the page itself, so that its text uses the fonts of the site (site/svg_test.go limits
+       what such a file can contain). Other files get an img element.
+
+       The build stops for an image that the site cannot show as GitHub shows it: a file that does not
+       exist, a path that goes out of docs/, an external address, an image in a line of text, and an
+       image on a page that does not come from docs/. */ -}}
 {{- $dest := .Destination -}}
-{{- $title := .Title -}}
-{{- $alt := .PlainText -}}
-{{- if or (hasPrefix $dest "http://") (hasPrefix $dest "https://") -}}
-<img src="{{ $dest | safeURL }}" alt="{{ $alt }}"{{ with $title }} title="{{ . }}"{{ end }} loading="lazy">
-{{- else -}}
-  {{- $v := partial "docs-version.html" .Page -}}
-  {{- $dir := path.Dir (.Page.Params.source | default "docs/x.md") -}}
-  {{- $file := strings.TrimPrefix "docs/" (path.Join $dir $dest) -}}
-  {{- $res := resources.Get (printf "docs/%s/%s" $v.name $file) -}}
-  {{- if not $res }}{{ errorf "%s: the image %q does not exist in docs/ of %s" .Page.File.Path $dest $v.name }}{{ end -}}
-<figure class="doc-figure">
+{{- $where := .Page.File.Path -}}
+{{- $source := .Page.Params.source -}}
+{{- if not $source }}{{ errorf "%s: the image %q is on a page that does not come from docs/" $where $dest }}{{ end -}}
+{{- if or (strings.Contains $dest "://") (hasPrefix $dest "//") (hasPrefix $dest "/") }}{{ errorf "%s: the image %q must be a relative path to a file in docs/" $where $dest }}{{ end -}}
+{{- if not .IsBlock }}{{ errorf "%s: the image %q must be a paragraph of its own" $where $dest }}{{ end -}}
+{{- $file := path.Join (path.Dir ($source | default "docs/x.md")) $dest -}}
+{{- if not (hasPrefix $file "docs/") }}{{ errorf "%s: the image %q goes out of docs/" $where $dest }}{{ end -}}
+{{- $v := partial "docs-version.html" .Page -}}
+{{- $res := resources.Get (printf "docs/%s/%s" $v.name (strings.TrimPrefix "docs/" $file)) -}}
+{{- if not $res }}{{ errorf "%s: the image %q does not exist in docs/ of %s" $where $dest $v.name }}{{ end -}}
+<figure class="doc-figure" role="group" aria-label="{{ .PlainText }}" tabindex="0">
   {{- if strings.HasSuffix $file ".svg" }}
   {{ $res.Content | safeHTML }}
   {{- else }}
-  <img src="{{ $res.RelPermalink }}" alt="{{ $alt }}" loading="lazy">
+  <img src="{{ $res.RelPermalink }}" alt="{{ .PlainText }}" loading="lazy">
   {{- end }}
-  {{- with $title }}<figcaption>{{ . }}</figcaption>{{ end }}
+  {{- with .Title }}<figcaption>{{ . }}</figcaption>{{ end }}
 </figure>
-{{- end -}}

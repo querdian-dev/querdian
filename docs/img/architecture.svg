@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 410" class="qd-diagram qd-arch" role="img" aria-labelledby="qd-arch-title qd-arch-desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 410" class="qd-diagram qd-arch" role="img" aria-labelledby="qd-arch-title" aria-describedby="qd-arch-desc">
   <title id="qd-arch-title">How Querdian handles a query</title>
-  <desc id="qd-arch-desc">A client sends a query with an OIDC token to Querdian. Querdian verifies the token with the keys of the OIDC provider, finds the rules of the user in the policies from the Kubernetes API, rewrites the query with a parser and sends it to Prometheus, Loki or Tempo. If a check fails, Querdian rejects the query. The telemetry pipeline sets the namespace label in the backends.</desc>
+  <desc id="qd-arch-desc">A client sends a query with an OIDC token to Querdian. Querdian verifies the token with the keys of the OIDC provider, finds the rules of the user in the policies from the Kubernetes API, rewrites the query with a parser and sends it to Prometheus, Loki or Tempo. If Querdian cannot check a request, it rejects the request. The telemetry pipeline sets the namespace label in the backends.</desc>
   <style>
     .qd-arch text { font-family: Archivo, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #101418; }
     .qd-arch .qd-h { font-size: 15px; font-weight: 700; }
@@ -45,8 +45,8 @@
   <text class="qd-p" x="360" y="186" text-anchor="middle" font-size="16" font-weight="800">Querdian</text>
   <text class="qd-p" x="270" y="212" font-size="12.5">1  Verify the token</text>
   <text class="qd-p" x="270" y="231" font-size="12.5">2  Find the rules of the user</text>
-  <text class="qd-p" x="270" y="250" font-size="12.5">3  Rewrite it with a real parser</text>
-  <text class="qd-p" x="270" y="269" font-size="12.5">4  Send it to the backend</text>
+  <text class="qd-p" x="270" y="250" font-size="12.5">3  Rewrite the query</text>
+  <text class="qd-p" x="270" y="269" font-size="12.5">4  Send the query</text>
 
   <!-- Backends: the zone colours of the site (metrics, logs, traces) -->
   <rect x="534" y="160" width="166" height="40" rx="8" fill="#ff5a1f" stroke="#101418" stroke-width="2.5"/>
@@ -62,7 +62,7 @@
   <!-- Rejected -->
   <rect x="250" y="330" width="220" height="66" rx="12" fill="url(#qd-arch-hatch)" stroke="#101418" stroke-width="2.5"/>
   <text class="qd-h" x="360" y="358" text-anchor="middle">Rejected</text>
-  <text class="qd-s" x="360" y="377" text-anchor="middle">400, 401 or 403, with a reason</text>
+  <text class="qd-s" x="360" y="377" text-anchor="middle">with a status and a reason</text>
 
   <!-- Telemetry pipeline -->
   <rect class="qd-box" x="534" y="326" width="166" height="70" rx="12"/>
@@ -93,4 +93,5 @@
   <text class="qd-lab" x="370" y="313">if a check fails</text>
   <!-- Telemetry -->
   <path class="qd-line" d="M617 326V294" marker-end="url(#qd-arch-arrow)"/>
+  <text class="qd-lab" x="627" y="315">data</text>
 </svg>

@@ -263,7 +263,7 @@ pre .c { color: #98a2ad; }
 .prose img { height: auto; }
 /* drawings of docs/img: the SVG is in the page, on the paper ground and without a frame */
 .doc-figure { margin: 1.8em 0; overflow-x: auto; }
-.doc-figure svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.doc-figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
 .doc-figure figcaption { margin-top: 8px; font-size: 0.85rem; color: var(--ink-3); }
 /* syntax: monochrome on purpose, the zone colours are reserved for metrics, logs and traces */
 .chroma .c, .chroma .c1, .chroma .cm, .chroma .cs, .chroma .ch { color: #98a2ad; }
