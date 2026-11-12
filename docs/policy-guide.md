@@ -5,7 +5,8 @@ This page explains how to write the policies that give users access to data thro
 In short:
 
 * Policies only grant access. An `AccessPolicy` grants the data of its own namespace. A
-  `ClusterAccessPolicy` grants the data that its matchers select, or all data.
+  `ClusterAccessPolicy` grants the data that its matchers select or, with `unrestricted: true`, all
+  data of its tenants.
 * The access of a request is the exact union of all rules that match the user name or a group of the
   user on the requested backend. If no rule matches, the answer is `403 no_grant`.
 * If one rule of a policy is not valid, the full policy grants nothing. The `Ready` condition of the
@@ -15,7 +16,7 @@ In short:
 * The isolation depends on the namespace label in the telemetry. Your collection pipeline must set it.
 
 For the path of a query through Querdian, see [How Querdian works](architecture.md). For the static
-configuration, see [operations](operations.md). The sections from
+configuration, see [operations](operations.md). For denials, see [troubleshooting](troubleshooting.md). The sections from
 [Status conditions](#status-conditions) to the end are reference tables. The
 [policy reference](policy-reference.md) gives more details.
 
@@ -131,7 +132,7 @@ subjects:
 
 ### ClusterAccessPolicy (cluster scoped, short name `cap`)
 
-For platform administrators. A rule can use all matchers, can name tenants and can be `unrestricted`.
+For platform administrators. A rule can use matchers on any label, can name tenants and can be `unrestricted`.
 
 | Field | Meaning |
 |---|---|
@@ -140,7 +141,7 @@ For platform administrators. A rule can use all matchers, can name tenants and c
 | `unrestricted` | `true` grants all data of the listed tenants. A rule must have `unrestricted: true` or a non-empty `matchers` list, not both. The CRD and the compiler check this. A rule with `unrestricted: false` and no matchers gets `InvalidMatcher`, also if it was stored without the CRD validation. |
 | `matchers` | Label constraints. All must be true (AND). |
 | `allClusters` | Multi-cluster only. The rule applies to all clusters, also to spokes that you add later. See [Multi-cluster](#multi-cluster). Without the `multicluster` configuration block, it has no effect. Do not use it together with `unrestricted`. |
-| `labels.deny` | Labels that this grant hides. See [Denied labels](#denied-labels). |
+| `labels.deny` | Labels that the user cannot use in queries. Query results still show them. See [Denied labels](#denied-labels). |
 
 ### AccessPolicy (namespaced, short name `ap`)
 
@@ -205,7 +206,9 @@ group rules, or on several backends. Querdian combines the rules as follows.
 2. The access of the user is *any* term (OR). A series, log line or span is visible if at least one
    term admits it. This is the **exact union**. Querdian never widens it, for example with a dropped
    matcher. It never narrows it, except with the denied labels.
-3. Querdian simplifies the set of terms to an equivalent, smaller set (disjunctive normal form, DNF):
+3. Querdian simplifies the set of terms to an equivalent, smaller set (disjunctive normal form, DNF).
+   The numbers below do not give a sequence: Querdian repeats steps 2 to 4 until nothing changes, then
+   it does step 1, step 6 and step 5.
    1. **Unrestricted absorbs, for each tenant.** An unrestricted rule admits all data of its tenant,
       so the other terms of that tenant are redundant. The user is `Unrestricted` only if *each*
       tenant of the request has an unrestricted rule. Unrestricted access on `tenant1` never widens a
@@ -215,15 +218,16 @@ group rules, or on several backends. Querdian combines the rules as follows.
       A is broader, and Querdian removes B.
    4. **Single-label merge.** Some terms of the same tenant are identical except for one label. If
       that label uses `Equal` or `RegexMatch` in all of them, the terms merge into one regex
-      alternation. `namespace="a"` and `namespace="b"` become `namespace=~"(?:a)|(?:b)"`. This step
-      repeats until nothing changes.
+      alternation. `namespace="a"` and `namespace="b"` become `namespace=~"(?:a)|(?:b)"`.
    5. **Disjointness.** Two terms are disjoint if they have different tenants, or if both have an
       `Equal` matcher on the same label with different values. If all pairs of terms are disjoint,
       summed Loki statistics are exact (see [limitations](limitations.md#approximate-results)).
    6. **Limits.** If the simplified policy has more than `limits.maxPolicyTerms` terms (default 16),
-      the answer is `403 policy_too_complex`. Fixed limits bound the work of each request, and two
-      regex weight limits bound the rewritten query (`403 query_too_complex`). See the table in
-      [operations](operations.md#limits-and-what-happens-when-they-trip).
+      the answer is `403 policy_too_complex`. Fixed limits bound the work of each request (also
+      `403 policy_too_complex`). `limits.maxQueryRegexWeight` limits the regexes of the client query,
+      and `limits.maxRequestRegexWeight` limits the regexes of the rewritten query
+      (`403 query_too_complex`). See the table in the
+      [operations reference](operations-reference.md#limits-and-what-happens-when-they-trip).
 4. Each backend applies the terms in the way that it can express them. It injects one term into each
    selector, or-lifts a query over several terms, expands `match[]` selectors, injects a DNF filter
    (Tempo), or sends one request for each term and merges the results (Loki). See
@@ -246,7 +250,7 @@ Properties to remember:
 ## Tenants
 
 A backend with a `tenantHeader` (Loki, Tempo, Mimir) is multi-tenant. Querdian sets that header on
-each upstream request from the effective policy. It removes a value that the client sends.
+each upstream request from the effective policy. It removes each value of this header that the client sends.
 
 * A `ClusterAccessPolicy` rule names its tenants. An `AccessPolicy` gets its tenant from the namespace
   label `policy.querdian.dev/tenant`.
@@ -377,8 +381,8 @@ or else from `spec.defaultTenant`. See [multicluster.md](multicluster.md#tenant-
 
 ### What it does
 
-* Querdian rejects a query that uses a denied label with `403 denied_label`. In PromQL, this applies to
-  unrestricted users too.
+* Querdian rejects a query that uses a denied label with `403 denied_label`. This also applies to
+  unrestricted users, in PromQL, LogQL and TraceQL.
 * Endpoints that list labels do not list denied labels. Endpoints that ask for the values of a denied
   label answer `403`.
 * With `traceByID: filter`, trace by ID removes denied attributes from each returned span.
@@ -491,8 +495,8 @@ enforce their own snapshot.
 
 ## Size limits
 
-The CRDs limit the size of each policy. The compiler and the receiver apply the same limits, also to
-objects that were stored before the CRD had them. A policy over a limit grants nothing and gets the
+The CRDs limit the size of each policy. The compiler and the receiver apply the same limits. The
+compiler applies them also to objects that were stored before the CRD had them. A policy over a limit grants nothing and gets the
 status reason `PolicyTooLarge`. Lengths count characters. The same limits apply to the policies of a
 spoke (`SpokePolicy`). For the limits of each request, see
 [operations](operations.md#limits-and-what-happens-when-they-trip).

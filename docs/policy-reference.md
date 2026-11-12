@@ -52,9 +52,9 @@ The table shows how each backend applies the effective terms. For details, see
 | Tempo: tags, tag values | one filter `{ a = "x" && b = "y" }`; `!=`, `!~` and open regexes are `400` | one request per term (regexes with a fixed value set expanded), union of names or values (`fanout`); see [limitations](limitations.md#traceql-and-tempo) |
 | Tempo: trace by ID | response filter | response filter |
 
-* If an unrestricted user has no denied labels, Querdian forwards the request without a query rewrite
-  or parse. This also applies to a user with a term without matchers. Only the tenant header and the
-  parameter allow-list apply.
+* If a user is unrestricted, or has a term without matchers, and has no denied labels, Querdian
+  forwards the request without a query rewrite or parse. Only the tenant header and the parameter
+  allow-list apply.
 * If a restricted user omits the enforcement parameter (`query`, `q`, `match[]`), Querdian does not
   pass the request through. It sends a selector with only the policy matchers.
 
