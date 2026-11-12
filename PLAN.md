@@ -449,7 +449,7 @@ an error (§18.4).
 Tracing exporter/sampler config uses standard `OTEL_*` environment variables (§11.2).
 
 The subcommands `querdian receiver` and `querdian agent` (§18.5) have their own flags. They do not read
-the config file. The flags are in `docs/multicluster.md`.
+the config file. The flags are in `docs/multicluster-reference.md`.
 
 ---
 

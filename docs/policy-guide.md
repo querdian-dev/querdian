@@ -1,147 +1,57 @@
 # Policy guide
 
-This guide describes how access is granted with the `policy.querdian.dev/v1alpha1` custom
-resources and how Querdian turns those grants into rewritten queries. It documents the behaviour
-of the code in this repository, not the plan. Companion documents:
-[operations](operations.md) (static configuration), [limitations](limitations.md),
-[troubleshooting](troubleshooting.md), [threat model](security/threat-model.md).
+This page explains how to write the policies that give users access to data through Querdian.
+
+In short:
+
+* Policies only grant access. An `AccessPolicy` grants the data of its own namespace. A
+  `ClusterAccessPolicy` grants the data that its matchers select or, with `unrestricted: true`, all
+  data of its tenants.
+* The access of a request is the exact union of all rules that match the user name or a group of the
+  user on the requested backend. If no rule matches, the answer is `403 no_grant`.
+* If one rule of a policy is not valid, the full policy grants nothing. The `Ready` condition of the
+  policy shows the reason.
+* `labels.deny` stops queries that use a label, but query results still show the label. To hide the
+  values, use `labels.redact`.
+* The isolation depends on the namespace label in the telemetry. Your collection pipeline must set it.
+
+For the path of a query through Querdian, see [How Querdian works](architecture.md). For the static
+configuration, see [operations](operations.md). For denials, see [troubleshooting](troubleshooting.md). The sections from
+[Status conditions](#status-conditions) to the end are reference tables. The
+[policy reference](policy-reference.md) gives more details.
 
 > **Read this first: namespace-label integrity**
 >
-> An `AccessPolicy` grants access to the data whose *namespace label* equals the policy's
-> namespace. Querdian cannot verify that label. It trusts whatever is stored in the telemetry.
+> An `AccessPolicy` grants access to the data whose *namespace label* is equal to the namespace of the
+> policy. Querdian cannot verify that label. It trusts the value that is stored in the telemetry.
 >
-> * The label named by `backends[].namespaceLabel` (for example `namespace` in Prometheus,
->   `k8s_namespace_name` in Loki, `resource.k8s.namespace.name` in Tempo) **must be set by your
->   collection pipeline** (Prometheus scrape/relabel configuration, OpenTelemetry Collector
->   `k8sattributes`, Alloy/Promtail), derived from where a pod really runs.
-> * It **must not be possible for a workload to choose or override that label**. A pod that can
->   emit metrics, logs or spans with `namespace="payments"` (for example through a push endpoint,
->   an OTLP exporter that is not overwritten by the collector, or `honor_labels: true`) makes its
->   data appear in another team's view. It cannot read more through this, but it can inject
->   misleading data into other teams' dashboards. Conversely, data without the label is invisible
->   to every `AccessPolicy`. The proxy cannot detect either case.
-> * Whoever can create or edit an `AccessPolicy` in namespace `X` decides who may read the data
->   labelled `X`. Whoever can edit the labels of a `Namespace` decides which backend tenant its
->   policies map to (`policy.querdian.dev/tenant`). Restrict Kubernetes RBAC for both
->   accordingly. Only platform administrators should be able to create `ClusterAccessPolicy`
->   objects, which can grant `unrestricted` access.
+> * Your **collection pipeline must set** the label that `backends[].namespaceLabel` names, for
+>   example `namespace` in Prometheus, `k8s_namespace_name` in Loki and `resource.k8s.namespace.name`
+>   in Tempo. The value must come from the namespace where the pod really runs. Examples of the
+>   pipeline: Prometheus scrape/relabel configuration, OpenTelemetry Collector `k8sattributes`,
+>   Alloy/Promtail.
+> * A **workload must not be able to choose or override** that label. Some pods can send metrics, logs
+>   or spans with `namespace="payments"`, for example through a push endpoint, through an OTLP
+>   exporter that the collector does not overwrite, or with `honor_labels: true`. The data of such a
+>   pod shows in the view of another team. The pod cannot read more data in this way, but it can put
+>   misleading data into the dashboards of other teams.
+> * Data without the label is not visible to any `AccessPolicy`. The proxy cannot detect this case or
+>   the case above.
+> * A person who can create or edit an `AccessPolicy` in namespace `X` decides who can read the data
+>   with the label `X`. A person who can edit the labels of a `Namespace` decides which backend tenant
+>   its policies use (`policy.querdian.dev/tenant`). Restrict the Kubernetes RBAC for both.
+> * Give only platform administrators the permission to create `ClusterAccessPolicy` objects, because
+>   these can grant `unrestricted` access.
 >
-> If you cannot guarantee the label integrity, use `ClusterAccessPolicy` with matchers on labels
-> you do control, or separate tenants on the backend.
+> If you cannot make sure of the label integrity, use a `ClusterAccessPolicy` with matchers on labels
+> that you control, or separate tenants on the backend. Also see the
+> [threat model](security/threat-model.md).
 
-## Overview
+## Examples that work
 
-* Policies only **grant**. There are no deny policies. The only narrowing mechanism is
-  `labels.deny` (see [Denied labels](#denied-labels)). A policy that is invalid grants nothing.
-* The access of a request is the **exact union** of all rules of all policies that match the
-  caller's username or any of the caller's groups for the requested backend. Nothing matched means
-  `403 no_grant`.
-* Policies are compiled in the background into an immutable snapshot (about 250 ms after a change)
-  and swapped atomically. Requests never see a half-applied change.
-
-## Resources
-
-### Subjects
-
-```yaml
-subjects:
-  groups: [order-service-team]   # matched against the groups claim of the token
-  users: [alice@example.com]     # matched against the username claim of the token
-```
-
-At least one group or user is required (enforced by the CRD). Users and groups are separate
-keyspaces: a user whose name equals a group name receives nothing from the group's policies.
-Matching is exact and case sensitive. Which token claims carry the username and groups is set in
-the [static configuration](operations.md#auth).
-
-### ClusterAccessPolicy (cluster scoped, short name `cap`)
-
-For platform administrators. A rule may use arbitrary matchers, name tenants and be `unrestricted`.
-
-| Field | Meaning |
-|---|---|
-| `backends` | Names of backends from the static configuration (at least one). |
-| `tenants` | Backend tenants the rule applies to. **Required for every backend that has a `tenantHeader`**, ignored for backends without one. |
-| `unrestricted` | `true` grants all data of the listed tenants. Must not be combined with `matchers` (and the CRD requires exactly one of `unrestricted: true` or a non-empty `matchers`). The compiler checks this too: a rule with `unrestricted: false` and no matchers is `InvalidMatcher`, also if it was stored without the CRD validation. |
-| `matchers` | Label constraints, ANDed. |
-| `allClusters` | Multi-cluster only: the rule applies to all clusters, including spokes added later. See [Multi-cluster](#multi-cluster). Without the `multicluster` configuration block it has no effect. Must not be combined with `unrestricted`. |
-| `labels.deny` | Labels hidden from this grant, see below. |
-
-### AccessPolicy (namespaced, short name `ap`)
-
-For teams. Compared to a cluster rule:
-
-* Every rule is implicitly ANDed with `<backend.namespaceLabel> = "<metadata.namespace>"`. This
-  matcher is placed first and cannot be removed or widened by the policy author. In a
-  [multi-cluster](#multi-cluster) setup a cluster matcher follows it.
-* There is no `unrestricted` and no `tenants`.
-* The backend tenant is read from the label `policy.querdian.dev/tenant` of the policy's
-  namespace, but only for backends that have a `tenantHeader`. A missing or blank label makes the
-  whole policy invalid with `TenantNotAssigned`.
-* `matchers` are optional; without them the rule grants everything in the namespace.
-
-### Matchers
-
-```yaml
-matchers:
-  - {name: service, op: NotEqual, value: ""}
-```
-
-| `op` | Meaning | PromQL / LogQL rendering |
-|---|---|---|
-| `Equal` | label equals value | `=` |
-| `NotEqual` | label differs from value | `!=` |
-| `RegexMatch` | label matches the regex | `=~` |
-| `RegexNoMatch` | label does not match the regex | `!~` |
-
-* Regexes use RE2 syntax and are **fully anchored** (`^(?:value)$`), as in Prometheus and Loki.
-  A regex that does not compile makes the policy invalid (`InvalidMatcher`).
-* Valid names depend on the backend type of each backend the rule lists. A rule that lists several
-  backends is validated against each of them, so a name that is invalid for one makes the whole
-  policy invalid.
-  * `prometheus` and `loki`: `[a-zA-Z_][a-zA-Z0-9_]*`. The reserved name `__tenant_id__` is rejected.
-    Loki labels with dots (such as `k8s.namespace.name`) must be referred to by their normalised
-    name (`k8s_namespace_name`).
-  * `tempo`: attributes with an explicit scope, `resource.<name>` or `span.<name>`, where the
-    name may contain letters, digits, `_`, `.`, `-` and `/` (for example
-    `resource.k8s.namespace.name`). Unscoped `.name` is not accepted in policies.
-* Absent labels behave like empty values in PromQL and LogQL (`service != ""` excludes series
-  without a `service` label). **Tempo differs**: see [Tempo semantics](#tempo-missing-attributes).
-
-### Size limits
-
-The CRDs limit the size of each policy, and the compiler and the receiver apply the same limits. A
-policy over a limit grants nothing and gets the status reason `PolicyTooLarge`. The compiler checks
-the limits also for objects that were stored before the CRD had them. Lengths count characters.
-
-| Field | Limit |
-|---|---|
-| `subjects.users`, `subjects.groups` | 256 items each, 1024 characters each item |
-| `rules` | 64 |
-| `rules[].backends` | 16 items, 256 characters each item |
-| `rules[].tenants` (`ClusterAccessPolicy`) | 64 items, 256 characters each item |
-| `rules[].matchers` | 64 |
-| `matchers[].name` | 256 characters |
-| `matchers[].value` | 16384 characters |
-| `labels.deny`, `labels.redact` | 64 items each, 256 characters each name |
-| a `RegexMatch` or `RegexNoMatch` value | 8 KiB and weight 16384 (see below); not checked by the CRD |
-| all regex values of one policy | weight 32768 together; not checked by the CRD |
-
-The weight of a regex comes from a parse with a work budget, before any compile: the number of instructions of its compiled program (`a{1000}` has 1000), plus the rune ranges of each character class, counted again for each repetition (`\pL` has about 700), plus the work of the parser divided by 32 (for example the case folding of a wide range in a `(?i)` class, rune by rune), plus, for regexes that the Prometheus matcher can get, the runes of each character class in the case-folding range of Unicode divided by 64 (`[^/]+` has a weight of about 1970, `\pL+` about 1820). The weight of an `Equal` or `NotEqual` value is its length plus one. A compile in Go and in the Prometheus matcher together takes at most about 256 KiB plus 2 KiB, and 2 ms plus 2 microseconds, for each unit of weight (measured: at most about 900 bytes and 0.9 microseconds for each unit, also for regexes whose branches the parser compares again at each level of nested groups; such regexes now measure at most about 0.3 microseconds for each unit). A regex with a small text and a large cost, for example many counted repetitions or many
-Unicode classes, can thus be over the limit. Normal regexes such as `[a-z]+`, `prod-.*`,
-`(?i)(warn|error)\s+\d+` or an alternation of 100 namespace names have a weight of some tens to some
-thousands. The compiler and the receiver measure the weight without a compile.
-
-The same limits apply to the policies of a spoke (`SpokePolicy`). For the limits of each request, see
-step 6 of [Union semantics](#union-semantics-in-plain-language).
-
-### Examples that work
-
-The three examples below are valid against the sample static configuration of
-[operations.md](operations.md#sample-configuration) (`metrics` = Prometheus without tenant header,
-`logs` = Loki with `X-Scope-OrgID`, `traces` = Tempo with `X-Scope-OrgID` and `traceByID: filter`).
-They were compiled and resolved against the real policy compiler while writing this guide.
+The three examples below are valid with the [sample configuration](operations.md#sample-configuration).
+It has three backends: `metrics` is Prometheus without a tenant header, `logs` is Loki with
+`X-Scope-OrgID`, and `traces` is Tempo with `X-Scope-OrgID` and `traceByID: filter`.
 
 ```yaml
 apiVersion: policy.querdian.dev/v1alpha1
@@ -187,8 +97,8 @@ spec:
     - backends: [traces]
 ```
 
-With `kubectl label namespace order-service policy.querdian.dev/tenant=tenant1`, a member of
-`order-service-team` receives on:
+After `kubectl label namespace order-service policy.querdian.dev/tenant=tenant1`, a member of
+`order-service-team` gets this access:
 
 | Backend | Effective policy |
 |---|---|
@@ -196,93 +106,176 @@ With `kubectl label namespace order-service policy.querdian.dev/tenant=tenant1`,
 | `logs` | tenant header `tenant1`, `k8s_namespace_name="order-service", service!=""` |
 | `traces` | tenant header `tenant1`, `resource.k8s.namespace.name = "order-service"` |
 
-A member of `platform-admins` is unrestricted on all three (tenant header `tenant1|tenant2` on
-`logs` and `traces`). A member of `sre` has access to `metrics` only; `logs` and `traces` answer
-`403 no_grant`. Without the tenant label on the namespace, `order-team` is marked
-`TenantNotAssigned` and, because a policy is accepted or rejected as a whole, **also loses its
-`metrics` rule**.
+* A member of `platform-admins` is unrestricted on the three backends. On `logs` and `traces`, the
+  tenant header is `tenant1|tenant2`.
+* A member of `sre` has access to `metrics` only. On `logs` and `traces`, the answer is `403 no_grant`.
+* If the namespace does not have the tenant label, `order-team` gets the reason `TenantNotAssigned`.
+  Querdian accepts or rejects a policy as a whole, thus `order-team` **also loses its `metrics`
+  rule**.
+
+## Policy resources
+
+### Subjects
+
+```yaml
+subjects:
+  groups: [order-service-team]   # matched against the groups claim of the token
+  users: [alice@example.com]     # matched against the username claim of the token
+```
+
+* A policy must have at least one group or user. The CRD enforces this.
+* Users and groups are separate keyspaces. A user whose name is equal to a group name gets nothing from
+  the policies of that group.
+* The match is exact and case sensitive.
+* The [static configuration](operations.md#auth) sets the token claims for the user name and the
+  groups.
+
+### ClusterAccessPolicy (cluster scoped, short name `cap`)
+
+For platform administrators. A rule can use matchers on any label, can name tenants and can be `unrestricted`.
+
+| Field | Meaning |
+|---|---|
+| `backends` | Names of backends from the static configuration. At least one. |
+| `tenants` | The backend tenants of the rule. **Necessary for each backend that has a `tenantHeader`**. Backends without a `tenantHeader` ignore it. |
+| `unrestricted` | `true` grants all data of the listed tenants. A rule must have `unrestricted: true` or a non-empty `matchers` list, not both. The CRD and the compiler check this. A rule with `unrestricted: false` and no matchers gets `InvalidMatcher`, also if it was stored without the CRD validation. |
+| `matchers` | Label constraints. All must be true (AND). |
+| `allClusters` | Multi-cluster only. The rule applies to all clusters, also to spokes that you add later. See [Multi-cluster](#multi-cluster). Without the `multicluster` configuration block, it has no effect. Do not use it together with `unrestricted`. |
+| `labels.deny` | Labels that the user cannot use in queries. Query results still show them. See [Denied labels](#denied-labels). |
+
+### AccessPolicy (namespaced, short name `ap`)
+
+For teams. The differences from a `ClusterAccessPolicy` rule:
+
+* Querdian adds the matcher `<backend.namespaceLabel> = "<metadata.namespace>"` to each rule (AND).
+  This matcher is first. The policy author cannot remove or widen it. In a
+  [multi-cluster](#multi-cluster) setup, a cluster matcher follows it.
+* There is no `unrestricted` field and no `tenants` field.
+* For backends that have a `tenantHeader`, the tenant comes from the label `policy.querdian.dev/tenant`
+  of the namespace. If this label is absent or blank, the full policy is not valid
+  (`TenantNotAssigned`).
+* `matchers` are optional. A rule without matchers grants all data in the namespace.
+
+### Matchers
+
+```yaml
+matchers:
+  - {name: service, op: NotEqual, value: ""}
+```
+
+| `op` | Meaning | PromQL / LogQL operator |
+|---|---|---|
+| `Equal` | label equals value | `=` |
+| `NotEqual` | label differs from value | `!=` |
+| `RegexMatch` | label matches the regex | `=~` |
+| `RegexNoMatch` | label does not match the regex | `!~` |
+
+* Regexes use RE2 syntax and are **fully anchored** (`^(?:value)$`), as in Prometheus and Loki. If a
+  regex does not compile, the policy is not valid (`InvalidMatcher`).
+* Querdian validates the names of a rule against each backend that the rule lists. A name that is not
+  valid for one backend makes the full policy not valid.
+* In PromQL and LogQL, an absent label has the same effect as an empty value: `service != ""` excludes
+  series without a `service` label. **Tempo is different**: see
+  [Tempo: missing attributes](#tempo-missing-attributes).
+
+| Backend type | Valid names |
+|---|---|
+| `prometheus`, `loki` | `[a-zA-Z_][a-zA-Z0-9_]*`. Querdian rejects the reserved name `__tenant_id__`. For Loki labels with dots (such as `k8s.namespace.name`), use the normalised name (`k8s_namespace_name`). |
+| `tempo` | Attributes with an explicit scope: `resource.<name>` or `span.<name>`. The name can contain letters, digits, `_`, `.`, `-` and `/` (for example `resource.k8s.namespace.name`). Policies do not accept the unscoped form `.name`. |
+
+### Tempo: missing attributes
+
+Policy matchers on Tempo behave as TraceQL does, not as Prometheus and Loki do. In TraceQL, a span
+that does not have an attribute satisfies **none** of `=`, `!=`, `=~`, `!~` (verified with Tempo
+2.9.0). An attribute that is not a string also never satisfies a string comparison.
+
+* For example, `resource.team != "x"` admits only spans that *have* a `team` attribute with a
+  different value. The same `NotEqual` matcher in Prometheus also admits series without the label.
+* Thus the Tempo form of a policy can only grant less, never more. Trace by ID uses the same rule in
+  the proxy.
+* If you need the semantics "label is absent" on Tempo, use an attribute that is always set.
+* Policies do not accept unscoped matchers, so that this behaviour stays predictable.
 
 ## Union semantics in plain language
 
-A user can match many rules at once (through several groups, a personal rule and group rules,
-several backends). Querdian combines them as follows.
+A user can match many rules at the same time: through several groups, through a personal rule and
+group rules, or on several backends. Querdian combines the rules as follows.
 
-1. Every rule becomes one *term*: a list of matchers that must all hold (AND), plus its tenant.
-2. The user's access is *any* term (OR). A series, log line or span is visible if at least one term
-   admits it. This is the **exact union**; Querdian never widens it (for example by dropping a
-   matcher) and never narrows it, except by the denied labels described below.
-3. The set of terms is simplified to an equivalent smaller one (disjunctive normal form, DNF), in
-   this order:
-   1. **Unrestricted absorbs, per tenant.** An unrestricted rule admits everything of its tenant, so
-      it makes that tenant's other terms redundant. The user is `Unrestricted` only if *every*
-      tenant involved has an unrestricted rule. Unrestricted on `tenant1` never widens a restricted
-      grant on `tenant2`.
-   2. **Duplicates** are removed.
-   3. **Subsumption.** If term A has a subset of the matchers of term B (same tenant), A is broader
-      and B is dropped.
-   4. **Single-label merge.** Terms of the same tenant that are identical except for one label, which
-      uses `Equal` or `RegexMatch` in all of them, merge into one regex alternation.
-      `namespace="a"` and `namespace="b"` become `namespace=~"(?:a)|(?:b)"`. This repeats until nothing
-      changes.
-   5. **Disjointness** is computed: all term pairs are disjoint if they have different tenants, or
-      both have an `Equal` matcher on the same label with different values. It decides whether summed
-      Loki statistics are exact (see [limitations](limitations.md#approximate-results)).
-   6. **Cap.** More than `limits.maxPolicyTerms` terms (default 16) after simplification is rejected
-      with `403 policy_too_complex`. Fixed limits also bound the work of each request: before the
-      simplification, the matched rules of a request must give at most 4096 terms, 32768 matchers and
-      1 MiB of matcher text, the simplification itself has a fixed budget of steps, and the simplified
-      policy can have a [weight](#size-limits) of at most 32768 (a merge joins many values into one
-      regex). A request over one of these limits also gets `403 policy_too_complex`. A rewritten query
-      can make the proxy compile a regex weight of at most 131072 ((2 x terms + 1) x client regex
-      weight + (2 x selectors + 1) x policy weight), and the regexes of a PromQL or LogQL client query
-      can have a weight of at most 32768; otherwise the request gets `403 query_too_complex`. Both
-      limits are in the static configuration (`limits.maxRequestRegexWeight`, `limits.maxQueryRegexWeight`).
-4. Each backend then applies the terms in the way it can express them: injecting one term into every
-   selector, or-lifting a query over several terms, expanding `match[]` selectors, injecting a
-   DNF filter (Tempo), or sending one request per term and merging (Loki).
+1. Each rule becomes one *term*: a list of matchers that must all be true (AND), and the tenant of the
+   rule.
+2. The access of the user is *any* term (OR). A series, log line or span is visible if at least one
+   term admits it. This is the **exact union**. Querdian never widens it, for example with a dropped
+   matcher. It never narrows it, except with the denied labels.
+3. Querdian simplifies the set of terms to an equivalent, smaller set (disjunctive normal form, DNF).
+   The numbers below do not give a sequence: Querdian repeats steps 2 to 4 until nothing changes, then
+   it does step 1, step 6 and step 5.
+   1. **Unrestricted absorbs, for each tenant.** An unrestricted rule admits all data of its tenant,
+      so the other terms of that tenant are redundant. The user is `Unrestricted` only if *each*
+      tenant of the request has an unrestricted rule. Unrestricted access on `tenant1` never widens a
+      restricted grant on `tenant2`.
+   2. **Duplicates.** Querdian removes them.
+   3. **Subsumption.** Term A and term B have the same tenant. If A has a subset of the matchers of B,
+      A is broader, and Querdian removes B.
+   4. **Single-label merge.** Some terms of the same tenant are identical except for one label. If
+      that label uses `Equal` or `RegexMatch` in all of them, the terms merge into one regex
+      alternation. `namespace="a"` and `namespace="b"` become `namespace=~"(?:a)|(?:b)"`.
+   5. **Disjointness.** Two terms are disjoint if they have different tenants, or if both have an
+      `Equal` matcher on the same label with different values. If all pairs of terms are disjoint,
+      summed Loki statistics are exact (see [limitations](limitations.md#approximate-results)).
+   6. **Limits.** If the simplified policy has more than `limits.maxPolicyTerms` terms (default 16),
+      the answer is `403 policy_too_complex`. Fixed limits bound the work of each request (also
+      `403 policy_too_complex`). `limits.maxQueryRegexWeight` limits the regexes of the client query,
+      and `limits.maxRequestRegexWeight` limits the regexes of the rewritten query
+      (`403 query_too_complex`). See the table in the
+      [operations reference](operations-reference.md#limits-and-what-happens-when-they-trip).
+4. Each backend applies the terms in the way that it can express them. It injects one term into each
+   selector, or-lifts a query over several terms, expands `match[]` selectors, injects a DNF filter
+   (Tempo), or sends one request for each term and merges the results (Loki). See
+   [Which strategy does what](policy-reference.md#which-strategy-does-what).
 
-Example: `alice@example.com` in groups `sre` and `order-service-team` has, on `metrics`, the terms
-`namespace="order-service", service!=""` and `namespace=~"kube-system|ingress-nginx|cert-manager"`.
-They are not mergeable (different shape), so two terms remain. A query `up` becomes
+Example: `alice@example.com` is in the groups `sre` and `order-service-team`. On `metrics`, she has the
+terms `namespace="order-service", service!=""` and
+`namespace=~"kube-system|ingress-nginx|cert-manager"`. The terms have a different shape, so they do not
+merge. A query `up` becomes
 `(up{namespace="order-service",service!=""} or up{namespace=~"kube-system|ingress-nginx|cert-manager"})`.
 
-Properties worth remembering:
+Properties to remember:
 
-* More rules never reduce access. The only things that *narrow* are `labels.deny` and an invalid
-  policy.
-* Denied labels of a matched rule apply to the whole request, see below.
-* A user without any matching rule for the backend is denied, even if they have rules on other
+* More rules never reduce access. Only `labels.deny` and a policy that is not valid *narrow* access.
+* The denied labels of a matched rule apply to the full request.
+* A user without a rule for the backend gets no access, also if the user has rules on other
   backends.
 * The result is deterministic: the same inputs in any order give the same terms.
 
 ## Tenants
 
 A backend with a `tenantHeader` (Loki, Tempo, Mimir) is multi-tenant. Querdian sets that header on
-every upstream request from the effective policy and strips any client-supplied value.
+each upstream request from the effective policy. It removes each value of this header that the client sends.
 
-* Rules name tenants (`ClusterAccessPolicy`) or inherit one from the namespace label
-  `policy.querdian.dev/tenant` (`AccessPolicy`).
-* One tenant: the header carries that tenant and terms need no tenant binding.
-* Several tenants: the header is `t1|t2|...` (the federation syntax of Loki, Tempo and Mimir) and
-  the backend itself must have federation enabled (Loki `multi_tenant_queries_enabled`, Mimir
-  `tenant_federation.enabled`, Tempo `multitenancy_enabled` plus
-  `query_frontend.multi_tenant_queries_enabled`).
+* A `ClusterAccessPolicy` rule names its tenants. An `AccessPolicy` gets its tenant from the namespace
+  label `policy.querdian.dev/tenant`.
+* One tenant: the header contains that tenant, and the terms need no tenant binding.
+* Several tenants: the header is `t1|t2|...` (the federation syntax of Loki, Tempo and Mimir). The
+  backend must have federation enabled: Loki `multi_tenant_queries_enabled`, Mimir
+  `tenant_federation.enabled`, Tempo `multitenancy_enabled` and
+  `query_frontend.multi_tenant_queries_enabled`.
 * Backends without a `tenantHeader` ignore `tenants` completely.
 
 ### Cross-tenant behaviour per backend
 
-When a user's rules span several tenants, three cases exist:
+If the rules of a user include several tenants, there are three cases:
 
-1. The user is unrestricted on every tenant: the federated header is set, nothing else changes.
-2. The terms are **identical in every tenant** (for example the same `AccessPolicy` shape in two
-   tenants): the federated header is set and the terms are used without tenant binding.
-3. The terms **differ per tenant**. This is only possible if the backend can filter by tenant.
-   With `tenantFederation: tenantIdLabel` each term gets an extra matcher
-   `__tenant_id__="<tenant>"`. With `tenantFederation: none` the request is rejected with
+1. The user is unrestricted on each tenant. Querdian sets the federated header and changes nothing
+   else.
+2. The terms are **identical in each tenant**, for example the same `AccessPolicy` shape in two
+   tenants. Querdian sets the federated header and uses the terms without tenant binding.
+3. The terms **are different for each tenant**. This is possible only if the backend can filter by
+   tenant. With `tenantFederation: tenantIdLabel`, each term gets the extra matcher
+   `__tenant_id__="<tenant>"`. With `tenantFederation: none`, Querdian rejects the request with
    `403 cross_tenant_union_unsupported`.
 
-What the research (`docs/research/tenant-federation.md`) found, which is also the recommended
-`tenantFederation` value:
+The support of each backend, and the recommended `tenantFederation` value (from
+`docs/research/tenant-federation.md`):
 
 | Backend | Federated queries | `__tenant_id__` filter | Use |
 |---|---|---|---|
@@ -291,27 +284,29 @@ What the research (`docs/research/tenant-federation.md`) found, which is also th
 | Tempo 2.8.1 | yes (search, trace by ID, tags) | **no**, a filter on it silently matches nothing | `none` |
 | Thanos / Prometheus | not applicable, no tenant header | n/a | `none` (leave `tenantHeader` empty) |
 
-Practical consequences:
+Consequences:
 
-* Under `tenantIdLabel`, `__tenant_id__` is only injected when the header carries several tenants.
-  Loki rejects a selector whose only matcher is `__tenant_id__`; Querdian therefore requires every
-  selector to keep at least one other matcher and otherwise answers `400 unsupported`. A user query
-  always has one (Loki requires it); the case can arise for label or statistics endpoints without
-  a `query` when a restricted tenant-bound term has no other matcher.
-* On Tempo, give users with grants in several tenants the *same* rule shape in each tenant, or
-  accept `403 cross_tenant_union_unsupported`. Tempo does not fan out per tenant.
-* The `CrossTenantUnionUnsupported` status (below) warns you at policy level which backends are
-  affected.
-* Behaviour with duplicate tenants (`t1|t1`) and unusual tenant IDs has not been tested.
+* With `tenantIdLabel`, Querdian injects `__tenant_id__` only when the header contains several
+  tenants.
+* Loki rejects a selector whose only matcher is `__tenant_id__`. Thus Querdian requires that each
+  selector keeps at least one other matcher, and otherwise answers `400 unsupported`. A user query
+  always has one, because Loki requires it. The case can occur for label or statistics endpoints
+  without a `query`, if a restricted, tenant-bound term has no other matcher.
+* On Tempo, give users with grants in several tenants the *same* rule shape in each tenant. If not,
+  they get `403 cross_tenant_union_unsupported`. Tempo does not fan out for each tenant.
+* The status `CrossTenantUnionUnsupported` shows at policy level which backends have this problem.
+* The behaviour with duplicate tenants (`t1|t1`) and unusual tenant IDs is not tested.
 
 ## Multi-cluster
 
-With the `multicluster` block in the static configuration, one Querdian on a central hub enforces
-the policies of the hub and of several spoke clusters. The setup, the trust model and the
-operations are in [multicluster.md](multicluster.md). For policy authors, three rules change.
+With the `multicluster` block in the static configuration, one Querdian on a central hub enforces the
+policies of the hub and of several spoke clusters. For the setup, the trust model and the operations,
+see [multicluster.md](multicluster.md). For policy authors, three rules change.
 
-**The implicit cluster matcher.** Querdian takes the cluster of a policy from where the policy comes
-from, never from its text, in the same way as the namespace of an `AccessPolicy`:
+### The implicit cluster matcher
+
+Querdian takes the cluster of a policy from the origin of the policy, never from its text. This is the
+same as for the namespace of an `AccessPolicy`.
 
 | Policy | Implicit matchers |
 |---|---|
@@ -320,29 +315,37 @@ from, never from its text, in the same way as the namespace of an `AccessPolicy`
 | Spoke `ClusterAccessPolicy` | `<clusterLabel>="<spoke>"` (first) |
 | Hub `ClusterAccessPolicy` | none; the rule states its own scope (below) |
 
-`<clusterLabel>` is the `clusterLabel` of the backend, `<hubCluster>` is `multicluster.hubCluster`
-and `<spoke>` is the name of the `SpokeCluster`. A policy author cannot remove or widen these
-matchers. A spoke matcher on the cluster label is ANDed with the implicit one, so it can only
-narrow. A spoke rule with `unrestricted: true` grants the whole spoke (`<clusterLabel>="<spoke>"`)
-and is never unrestricted, so its users' queries are always rewritten. A spoke rule with
-`allClusters: true` is `InvalidClusterScope`.
+* `<clusterLabel>` is the `clusterLabel` of the backend. `<hubCluster>` is `multicluster.hubCluster`.
+  `<spoke>` is the name of the `SpokeCluster`.
+* A policy author cannot remove or widen these matchers. A spoke matcher on the cluster label is ANDed
+  with the implicit matcher, so it can only narrow.
+* A spoke rule with `unrestricted: true` grants the full spoke (`<clusterLabel>="<spoke>"`). It is never
+  unrestricted, so Querdian always rewrites the queries of its users.
+* A spoke rule with `allClusters: true` gets `InvalidClusterScope`.
+* Hub data without the cluster label is not visible to the users of hub `AccessPolicy` objects. Thus
+  hub telemetry must have `<clusterLabel>="<hubCluster>"`.
 
-Hub data without the cluster label is invisible to hub `AccessPolicy` users, and hub telemetry must
-therefore carry `<clusterLabel>="<hubCluster>"`.
+### The cluster scope of a hub ClusterAccessPolicy
 
-**The cluster scope of a hub `ClusterAccessPolicy`.** A new spoke must not silently widen a hub
-grant. Each rule must therefore state its cluster scope **for each of its backends**, with one of:
+A new spoke must not silently widen a hub grant. Thus each rule must state its cluster scope **for
+each of its backends**, with one of these:
 
-* a matcher on that backend's `clusterLabel` that names a **fixed set of non-empty cluster names**:
-  `Equal`, or `RegexMatch` with a finite alternation such as `mla|cluster-a` or `cluster-(a|b)`;
-* `allClusters: true`, with no matcher on that backend's `clusterLabel`;
-* `unrestricted: true` (all clusters, also future ones).
+* A matcher on the `clusterLabel` of that backend that names a **fixed set of non-empty cluster
+  names**: `Equal`, or `RegexMatch` with a finite alternation such as `mla|cluster-a` or
+  `cluster-(a|b)`.
+* `allClusters: true`, without a matcher on the `clusterLabel` of that backend.
+* `unrestricted: true` (all clusters, also clusters that you add later).
 
-`NotEqual`, `RegexNoMatch` and open regexes such as `.+` or `cluster-.*` do not count, because they
-also match each new spoke. An empty value does not count, because it matches data without a cluster
-label. Case-insensitive regexes and regexes that name more than 1024 clusters do not count either.
-Otherwise the policy is `InvalidClusterScope` and grants nothing. `allClusters` exists because
-`cluster=~".+"` is an open regex, and Tempo tag lookups reject open regexes with `400`.
+These matchers do not state a scope:
+
+* `NotEqual`, `RegexNoMatch` and open regexes such as `.+` or `cluster-.*`, because they also match
+  each new spoke.
+* An empty value, because it matches data without a cluster label.
+* Case-insensitive regexes, and regexes that name more than 1024 clusters.
+
+If a rule does not state its scope, the policy gets `InvalidClusterScope` and grants nothing.
+`allClusters` exists because `cluster=~".+"` is an open regex, and Tempo tag lookups reject open
+regexes with `400`.
 
 ```yaml
 rules:
@@ -357,73 +360,60 @@ rules:
       - {name: k8s_namespace_name, op: Equal, value: kube-system}
 ```
 
-A rule that lists several backends needs the scope on each of them: a cluster matcher names one
-label, so it states the scope only of the backends whose `clusterLabel` has that name.
+A rule that lists several backends needs the scope on each of them. A cluster matcher names one
+label, thus it states the scope only for the backends whose `clusterLabel` has that name.
 
-**Spoke tenants.** A spoke policy may use only the tenants in `SpokeCluster.spec.tenants`
-(`TenantNotAllowed` otherwise). The tenant of a spoke `AccessPolicy` comes from the namespace label in
-the spoke, then from `spec.defaultTenant`. See
-[multicluster.md](multicluster.md#tenant-setups).
+### Spoke tenants
+
+A spoke policy can use only the tenants in `SpokeCluster.spec.tenants`. Other tenants give
+`TenantNotAllowed`. The tenant of a spoke `AccessPolicy` comes from the namespace label in the spoke,
+or else from `spec.defaultTenant`. See [multicluster.md](multicluster.md#tenant-setups).
 
 ## Denied labels
 
 `labels.deny` lists label names (Prometheus, Loki) or scoped attributes (Tempo, for example
-`span.http.url`). The union rule for them is conservative: **a label denied by any rule that
-matches the request is denied for the whole request, for all terms**, even if another matching rule
-does not deny it. Names are validated like matcher names, so an invalid name makes the policy
-invalid (`InvalidMatcher`).
+`span.http.url`).
+
+* The union rule is conservative: **if one matched rule denies a label, the label is denied for the
+  full request, for all terms**. This is also true if another matched rule does not deny it.
+* Querdian validates the names as matcher names. A name that is not valid makes the policy not valid
+  (`InvalidMatcher`).
 
 ### What it does
 
-* **Queries are rejected with `403 denied_label`** if they reference a denied label:
-  * PromQL (AST based): in any selector matcher, `by`/`without`, `on`/`ignoring`,
-    `group_left`/`group_right`, and the label-name arguments of `label_replace`, `label_join` and
-    `count_values`. This applies to unrestricted users too.
-  * LogQL (token based, conservative): any identifier or keyword token with that spelling outside
-    string literals, anywhere in the query (selector, pipeline, grouping, `unwrap`); the `dst` and
-    `src` string arguments of `label_replace`; and any `line_format` or `label_format` template that
-    does not parse, that reads the denied label as a field (`{{ .customer_id }}`), or that uses a
-    template node or function outside an allow-list, for example `{{ . }}`, `$` variables,
-    `{{ .a.b }}`, `range`, `with`, `template`, `block`, `define` or `index`
-    ([limitations](limitations.md#denied-label-scan-false-positives)).
-  * TraceQL: any attribute or intrinsic token naming it. A scoped denied name (`span.x`) denies
-    `span.x` and the unscoped `.x`; an unscoped query token `.x` is denied by `span.x` and by
-    `resource.x`.
-* **Endpoints that list labels no longer list them**, and endpoints that ask for the values of a
-  denied label answer 403:
-  * Prometheus `labels`: names removed from the response. `series`: the labels are removed from
-    every returned label set (sets that become identical are collapsed). `label/<denied>/values`:
-    403. A denied label in `match[]`: 403.
-  * Loki `labels`, `detected_labels`, `detected_fields`: names removed; `label/<denied>/values`
-    and `detected_field/<denied>/values`: 403; `index/volume*`: denied labels removed from the
-    reported label sets, `targetLabels` naming a denied label: 403.
-  * Tempo `api/v2/search/tags`: denied tags removed; `api/v2/search/tag/<denied>/values`: 403.
-* **Trace by ID strips them**: with `traceByID: filter`, denied attributes are removed from the
-  span, event, link, scope and resource attributes of every span that is returned.
+* Querdian rejects a query that uses a denied label with `403 denied_label`. This also applies to
+  unrestricted users, in PromQL, LogQL and TraceQL.
+* Endpoints that list labels do not list denied labels. Endpoints that ask for the values of a denied
+  label answer `403`.
+* With `traceByID: filter`, trace by ID removes denied attributes from each returned span.
+
+For the rules of each query language and each endpoint, see
+[Denied labels in queries and endpoints](policy-reference.md#denied-labels-in-queries-and-endpoints).
 
 ### What it does NOT do
 
-* **Query results keep their labels.** `up`, `{app="x"}` or a Tempo search return the complete
-  label set / attributes of every series, stream or span. A denied label hides the *ability to
-  filter, group or join on it*, not the data. If `customer_id` is denied, `up` still shows
-  `customer_id="42"` on the series it returns. Query results and Tempo search results are not
-  filtered. To hide the values as well, use [`labels.redact`](#redacting-values); otherwise do not
-  put the value in a label the user can read, or constrain what they can read with matchers.
-* It does not hide a label from the policy itself: a rule's own matchers may use a label that the
-  same rule denies.
-* A LogQL log line that *contains* the value is returned as is. Parsers such as `| json` can turn
-  line content into labels, but referring to the denied name is rejected.
-* Prometheus `metadata`, `rules`, `targets` and the other endpoints that cannot be restricted by
-  label are denied altogether, independent of `labels.deny`.
-* The LogQL scan is intentionally broad and has false positives, see
+* **Query results keep their labels.** `up`, `{app="x"}` or a Tempo search return the full label set
+  or all attributes of each series, stream or span. A denied label hides only the ability to filter,
+  group or join on it, not the data. If `customer_id` is denied, `up` still shows
+  `customer_id="42"` on the series that it returns. Querdian does not filter query results and Tempo
+  search results. To hide the values also, use [`labels.redact`](#redacted-values). If you do not use
+  it, do not put the value in a label that the user can read, or limit what the user can read with
+  matchers.
+* It does not hide a label from the policy itself. The matchers of a rule can use a label that the same
+  rule denies.
+* Querdian returns a LogQL log line that *contains* the value without a change. Parsers such as
+  `| json` can make labels from line content, but Querdian rejects a query that uses the denied name.
+* Querdian denies Prometheus `metadata`, `rules`, `targets` and the other endpoints that it cannot
+  restrict by label. This is independent of `labels.deny`.
+* The LogQL scan is intentionally broad and has false positives. See
   [limitations](limitations.md#denied-label-scan-false-positives).
 
-### Redacting values
+### Redacted values
 
-`labels.redact` is the opt-in that closes the gap above: it rewrites the values of a label in
-query results. Every redacted name is **also denied**, so everything in [What it does](#what-it-does)
-applies to it as well: without that, a user could filter on `customer_id="42"` and learn the value
-from whether data comes back.
+`labels.redact` is the opt-in that closes the gap above: it changes the values of a label in query
+results. Each redacted name is **also denied**, so all of [What it does](#what-it-does) applies to it.
+Without this, a user could filter on `customer_id="42"` and learn the value from the result: data or no
+data.
 
 ```yaml
 labels:
@@ -436,97 +426,97 @@ labels:
 | Strategy | `customer_id="42"`, `client_ip="10.1.2.3"` becomes | What the user can still learn |
 |---|---|---|
 | `Remove` | the label is dropped | how many series/streams were returned (duplicates are kept) |
-| `Placeholder` | `redacted-1`, `redacted-2`, ... per distinct value, numbered per response in random order | which entries of one response share a value |
-| `Hash` | `redacted-` + 16 hex digits, HMAC under a key that is random per request | as `Placeholder`; never comparable across requests |
+| `Placeholder` | `redacted-1`, `redacted-2`, ... for each distinct value, numbered for each response in random order | which entries of one response have the same value |
+| `Hash` | `redacted-` and 16 hex digits, an HMAC with a key that is random for each request | the same as `Placeholder`; never comparable across requests |
 | `IPv4Prefix` (`octets`: 1–3) | `10.1.x.x`; a value that is not an IPv4 address becomes `redacted` | the kept octets |
 
-* **Where it applies**: Prometheus `query`, `query_range`, `query_exemplars`; Loki `query`,
+* **Where it applies**: Prometheus `query`, `query_range`, `query_exemplars`. Loki `query`,
   `query_range` (stream labels and the `structuredMetadata` / `parsed` entry metadata of the
-  categorize-labels encoding) and `tail`; Tempo `search`, `metrics/query`, `metrics/query_range`
-  (their `promLabels` string is dropped) and trace by ID (`traceByID: filter`). The `series`,
-  label and index endpoints remove redacted names exactly like denied ones.
-* **Several rules**: like `deny`, a redaction from any matched rule applies to the whole request.
-  If rules disagree on the strategy for a label, the strictest one wins: `Remove`, then
-  `Placeholder`/`Hash`, then `IPv4Prefix` with fewer octets. A rule that only denies a label does
-  not weaken another rule's redaction of it.
-* **Fail closed**: a response that cannot be decoded, or that is larger than
-  `limits.maxMergeBytes`, is answered with `502` and never passed on. The upstream is asked for
-  JSON.
-* **Cost**: redacted responses are buffered in full before they are sent, instead of streamed.
-  Very large range queries can hit `limits.maxMergeBytes` (`502 merge_too_large`).
-* **What it does not redact**: Loki log *lines* (`| json` can make line content into labels, and
-  nested keys get other names, such as `ctx_customer_id`), values copied into other labels at
-  ingestion, the number and order of returned series, and the Tempo trace-level fields covered in
-  the [threat model](security/threat-model.md).
-
-### Tempo: missing attributes
-
-Policy matchers on Tempo behave like TraceQL does, which differs from Prometheus and Loki. In
-TraceQL a span that lacks an attribute satisfies **none** of `=`, `!=`, `=~`, `!~` (verified against
-Tempo 2.9.0; an attribute of non-string type never satisfies a string comparison either). So
-`resource.team != "x"` admits only spans that *have* a `team` attribute with another value, whereas
-the same `NotEqual` matcher in Prometheus also admits series without the label. The Tempo
-rendering can therefore only under-grant. Trace by ID uses exactly the same rule in-process. If
-you want "label absent" semantics on Tempo, express them on an attribute that is always set.
-Unscoped matchers are not accepted in policies precisely so that this stays predictable.
+  categorize-labels encoding) and `tail`. Tempo `search`, `metrics/query`, `metrics/query_range`
+  (Querdian drops their `promLabels` string) and trace by ID (`traceByID: filter`). The `series`,
+  label and index endpoints remove redacted names in the same way as denied names.
+* **Several rules**: as with `deny`, a redaction from any matched rule applies to the full request. If
+  rules have different strategies for a label, the strictest strategy applies: `Remove`, then
+  `Placeholder` or `Hash`, then `IPv4Prefix` with fewer octets. A rule that only denies a label does
+  not weaken the redaction of that label by another rule.
+* **Fail closed**: if Querdian cannot decode a response, or if the response is larger than
+  `limits.maxMergeBytes`, Querdian answers `502`. It never sends that response to the client.
+  Querdian asks the upstream for JSON.
+* **Cost**: Querdian buffers a redacted response fully before it sends it, and does not stream it. Very
+  large range queries can reach `limits.maxMergeBytes` (`502 merge_too_large`).
+* **What it does not redact**: Loki log *lines* (`| json` can make labels from line content, and
+  nested keys get other names, such as `ctx_customer_id`), values that the ingestion copied into other
+  labels, the number and the order of the returned series, and the Tempo trace-level fields that the
+  [threat model](security/threat-model.md) describes.
 
 ## Status conditions
 
-Every policy gets one condition `type: Ready` (shown by `kubectl get cap,ap`) written by the
-leader replica. `status.observedGeneration` is the generation that was compiled; a status for an
-older generation is never written over a newer spec.
+Querdian compiles the policies in the background into a snapshot that does not change, about 250 ms
+after a change. Then it replaces the old snapshot in one step. Thus a request never sees a change that
+is only partly applied.
+
+Each policy gets one condition `type: Ready`, which the leader replica writes.
+
+* `kubectl get cap` and `kubectl get ap` show `Ready` and the reason. The metric
+  `querdian_policies{kind,ready}` gives the same counts.
+* `status.observedGeneration` is the generation that Querdian compiled. Querdian never writes a status
+  for an older generation over a newer spec.
+* **All reasons except `Compiled` and `CrossTenantUnionUnsupported` mean that the policy grants
+  nothing, on all its backends.** One rule that is not valid disables the full policy.
 
 | Reason | `Ready` | Meaning and fix |
 |---|---|---|
 | `Compiled` | `True` | The policy is active. |
-| `InvalidMatcher` | `False` | A regex does not compile, a matcher or denied-label name is invalid for the backend type (for example `__tenant_id__`, a name with dots on Prometheus/Loki, an unscoped name on Tempo), an operator is unknown, an `unrestricted` rule also lists matchers, or a `ClusterAccessPolicy` rule has `unrestricted: false` and no matchers (the CRD rejects this too; the compiler does not rely on it). Also raised if the backend's `namespaceLabel` is not a valid name for its type. The message names the rule and field. Fix the matcher. |
-| `UnknownBackend` | `False` | A rule lists a backend that is not in the static configuration. Fix the name or the configuration (changing the configuration needs a restart). |
-| `TenantRequired` | `False` | A `ClusterAccessPolicy` rule targets a backend with a `tenantHeader` but lists no `tenants`. Add `tenants`. |
-| `TenantNotAssigned` | `False` | An `AccessPolicy` targets a backend with a `tenantHeader`, but its namespace lacks a non-blank label `policy.querdian.dev/tenant`. Label the namespace; the snapshot is rebuilt on label changes. For a spoke `AccessPolicy`: the spoke namespace has no tenant label and the `SpokeCluster` has no `defaultTenant`. |
-| `CrossTenantUnionUnsupported` | `True` | The policy is active, but it contributes to a user whose grants span several tenants with differing rules on a backend with `tenantFederation: none`. Those users' requests are answered `403 cross_tenant_union_unsupported`. The message lists the affected backends. Informational. |
-| `InvalidClusterScope` | `False` | Multi-cluster only. A hub `ClusterAccessPolicy` rule does not state its cluster scope for one of its backends (no `Equal` or finite `RegexMatch` on the `clusterLabel`, no `allClusters`, not `unrestricted`), uses `allClusters` together with a cluster matcher or with `unrestricted`, or a spoke rule sets `allClusters`. See [Multi-cluster](#multi-cluster). |
-| `TenantNotAllowed` | `False` | Multi-cluster only. A spoke policy uses a tenant that is not in `SpokeCluster.spec.tenants`. Add the tenant to the allow-list on the hub, or change the spoke policy or namespace label. |
+| `InvalidMatcher` | `False` | A regex does not compile, a matcher or denied-label name is not valid for the backend type (for example `__tenant_id__`, a name with dots on Prometheus/Loki, an unscoped name on Tempo), an operator is unknown, an `unrestricted` rule also lists matchers, or a `ClusterAccessPolicy` rule has `unrestricted: false` and no matchers. The CRD also rejects the last case, but the compiler does not rely on it. This reason also occurs if the `namespaceLabel` of the backend is not a valid name for its type. The message names the rule and the field. Fix the matcher. |
+| `UnknownBackend` | `False` | A rule lists a backend that is not in the static configuration. Fix the name or the configuration. A change of the configuration needs a restart. |
+| `TenantRequired` | `False` | A `ClusterAccessPolicy` rule uses a backend with a `tenantHeader`, but lists no `tenants`. Add `tenants`. |
+| `TenantNotAssigned` | `False` | An `AccessPolicy` uses a backend with a `tenantHeader`, but its namespace does not have a non-blank label `policy.querdian.dev/tenant`. Label the namespace. Querdian makes the snapshot again when labels change. For a spoke `AccessPolicy`: the spoke namespace has no tenant label, and the `SpokeCluster` has no `defaultTenant`. |
+| `CrossTenantUnionUnsupported` | `True` | The policy is active. But a user who has this policy has grants in several tenants with different rules, on a backend with `tenantFederation: none`. The requests of such users get `403 cross_tenant_union_unsupported`. The message lists the backends. For information only. |
+| `InvalidClusterScope` | `False` | Multi-cluster only. A hub `ClusterAccessPolicy` rule does not state its cluster scope for one of its backends (no `Equal` or finite `RegexMatch` on the `clusterLabel`, no `allClusters`, not `unrestricted`). Or the rule uses `allClusters` together with a cluster matcher or with `unrestricted`. Or a spoke rule sets `allClusters`. See [Multi-cluster](#multi-cluster). |
+| `TenantNotAllowed` | `False` | Multi-cluster only. A spoke policy uses a tenant that is not in `SpokeCluster.spec.tenants`. Add the tenant to the allow-list on the hub, or change the spoke policy or the namespace label. |
 | `MulticlusterDisabled` | `False` | A `SpokePolicy` exists, but the static configuration has no `multicluster` block. Spoke policies grant nothing without it. |
-| `SpokeClusterNotFound` | `False` | No `SpokeCluster` has the name in `SpokePolicy.spec.cluster`. Normally transient after the deletion of a `SpokeCluster`, until garbage collection removes its objects. |
-| `SpokeClusterInvalid` | `False` | The `SpokeCluster` cannot be trusted: its name is equal to `multicluster.hubCluster`, the last path segment of `spec.identity` is not its name, or the name occurs more than once. Fix the `SpokeCluster` on the hub. |
-| `PolicyTooLarge` | `False` | A list or a string of the spec is over a [size limit](#size-limits), for example more than 64 rules a matcher value of more than 16384 characters, or a regex whose compiled program is too large. The message names the field. The CRD rejects such objects, but an object stored before the CRD had the limits can still exist. Make the policy smaller, or split it into several policies. |
-| `InvalidSpokePolicy` | `False` | The `SpokePolicy` object itself is malformed: kind, namespace and spec do not agree, a name is invalid, or the object name is not the one the receiver gives (`sp-` and a hash). Such an object was not written by the receiver; delete it. |
-
-All reasons except `Compiled` and `CrossTenantUnionUnsupported` mean the policy grants nothing, on
-all its backends: one invalid rule disables the whole policy. `kubectl get cap` and `kubectl get ap`
-show `Ready` and the reason. The same counts are exported as `querdian_policies{kind,ready}`.
+| `SpokeClusterNotFound` | `False` | No `SpokeCluster` has the name in `SpokePolicy.spec.cluster`. This is usually temporary after the deletion of a `SpokeCluster`, until garbage collection removes its objects. |
+| `SpokeClusterInvalid` | `False` | Querdian cannot trust the `SpokeCluster`: its name is equal to `multicluster.hubCluster`, the last path segment of `spec.identity` is not its name, or the name occurs more than one time. Fix the `SpokeCluster` on the hub. |
+| `PolicyTooLarge` | `False` | A list or a string of the spec is over a [size limit](#size-limits), for example more than 64 rules, a matcher value of more than 16384 characters, or a regex whose compiled program is too large. The message names the field. The CRD rejects such objects, but an object that was stored before the CRD had the limits can still exist. Make the policy smaller, or split it into several policies. |
+| `InvalidSpokePolicy` | `False` | The `SpokePolicy` object itself is not correct: the kind, the namespace and the spec do not agree, a name is not valid, or the object name is not the name that the receiver gives (`sp-` and a hash). The receiver did not write such an object. Delete it. |
 
 With the `multicluster` block, the leader also writes the `Ready` condition of each `SpokePolicy` on
-the hub (`kubectl get sp`). The `querdian agent` copies the conditions of its spoke's policies back to
-the spoke objects at the next heartbeat, so spoke teams use `kubectl get cap,ap` as usual. The copy
-omits the message of `CrossTenantUnionUnsupported`, because it can reveal the grants of a shared
-subject in other tenants: such a policy shows `Compiled` in the spoke. A policy of an expired spoke
-stays `Compiled`; expiry is checked per request, not at compile time.
+the hub (`kubectl get sp`).
 
-If the leader replica is not available, statuses are not updated, but all replicas keep enforcing
-their own snapshot.
+* At the next heartbeat, the `querdian agent` copies the conditions of the policies of its spoke back
+  to the spoke objects. Thus spoke teams use `kubectl get cap,ap` as usual.
+* The copy does not include the message of `CrossTenantUnionUnsupported`, because the message can show
+  the grants of a shared subject in other tenants. Such a policy shows `Compiled` in the spoke.
+* A policy of an expired spoke stays `Compiled`. Querdian checks the expiry for each request, not at
+  compile time.
 
-## Which strategy does what
+If the leader replica is not available, Querdian does not update the statuses. All replicas continue to
+enforce their own snapshot.
 
-For an overview of how the effective terms are applied (details in
-[promql-enforcement.md](promql-enforcement.md), [limitations](limitations.md) and
-[endpoints.md](endpoints.md)):
+## Size limits
 
-| Backend | Single term | Several terms |
-|---|---|---|
-| Prometheus: `query`, `query_range`, `query_exemplars` | matchers appended to every selector (`inject`) | or-lifting: `(v{t1} or v{t2})` per selector or per function over a range vector (`or_lift`); one upstream request |
-| Prometheus: `series`, `labels`, `label/<n>/values` | one `match[]` per user selector (`match_expand`) | one `match[]` per (user selector x term); one request, the API returns the union |
-| Loki: log queries | matchers injected into the selector (`inject`) | **one upstream request per term**, results merged, deduplicated and cut to `limit` (`fanout`) |
-| Loki: metric queries | `inject` | or-lifting per range aggregation (`or_lift`); one request |
-| Loki: `labels`, label values, `detected_*` | inject into the optional `query` | one request per term, union of names (`fanout`) |
-| Loki: `series` | `match_expand` | `match_expand` (one request) |
-| Loki: `index/stats`, `index/volume*`, `patterns` | inject | one request per term, counters summed; an estimate unless the terms are disjoint |
-| Loki: `tail` | one upstream WebSocket | one WebSocket per term, frames merged and deduplicated |
-| Tempo: `search`, `metrics/*` | the policy is injected into every spanset filter | same: a parenthesised DNF `(a && b) \|\| (c && d)` is injected; no fan-out |
-| Tempo: tags, tag values | one filter `{ a = "x" && b = "y" }`; `!=`, `!~` and open regexes are `400` | one request per term (regexes with a fixed value set expanded), union of names or values (`fanout`); see [limitations](limitations.md#traceql-and-tempo) |
-| Tempo: trace by ID | response filter | response filter |
+The CRDs limit the size of each policy. The compiler and the receiver apply the same limits. The
+compiler applies them also to objects that were stored before the CRD had them. A policy over a limit grants nothing and gets the
+status reason `PolicyTooLarge`. Lengths count characters. The same limits apply to the policies of a
+spoke (`SpokePolicy`). For the limits of each request, see
+[operations](operations-reference.md#limits-and-what-happens-when-they-trip).
 
-An unrestricted user (or a user with a term without matchers) with no denied labels is forwarded
-without query rewriting or parsing; only the tenant header and the parameter allow-list apply.
-Omitting the enforcement parameter (`query`, `q`, `match[]`) never means pass-through for a
-restricted user: a policy-only selector is sent instead.
+| Field | Limit |
+|---|---|
+| `subjects.users`, `subjects.groups` | 256 items each, 1024 characters each item |
+| `rules` | 64 |
+| `rules[].backends` | 16 items, 256 characters each item |
+| `rules[].tenants` (`ClusterAccessPolicy`) | 64 items, 256 characters each item |
+| `rules[].matchers` | 64 |
+| `matchers[].name` | 256 characters |
+| `matchers[].value` | 16384 characters |
+| `labels.deny`, `labels.redact` | 64 items each, 256 characters each name |
+| a `RegexMatch` or `RegexNoMatch` value | 8 KiB and weight 16384 (see below); not checked by the CRD |
+| all regex values of one policy | weight 32768 together; not checked by the CRD |
+
+The **weight** of a regex measures the cost of its compile. It counts the instructions of the compiled
+program, the ranges of its character classes and other parts of the cost. The compiler and the
+receiver measure it without a compile. Normal regexes such as `[a-z]+`, `prod-.*` or an alternation of
+100 namespace names have a weight of some tens to some thousands. A short regex with many counted
+repetitions or many Unicode classes can be over the limit. The weight of an `Equal` or `NotEqual` value
+is its length plus one. For the full calculation, see [Regex weight](policy-reference.md#regex-weight).

@@ -191,6 +191,17 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
   release. The files stay in the repository.
 * The new page [docs/architecture.md](docs/architecture.md) explains how Querdian works, with drawings
   of the path of a query and of hub and spoke.
+* The policy guide, the operations page, the multi-cluster guide, the multi-cluster quickstart, the
+  troubleshooting page and the dashboards page have a summary at the top and use shorter sentences.
+  Reference material moved to four new pages: [docs/policy-reference.md](docs/policy-reference.md),
+  [docs/operations-reference.md](docs/operations-reference.md),
+  [docs/multicluster-reference.md](docs/multicluster-reference.md) and
+  [docs/quickstart-multicluster-details.md](docs/quickstart-multicluster-details.md).
+* Corrections of the documentation: a client `traceparent` header is the parent of the request span
+  only with `--tracing.trust-inbound-context`. The chart installs the dashboard ConfigMap
+  (`dashboards.enabled`). The alert example `QuerdianSnapshotDiverged` is removed, because
+  `querdian_snapshot_generation` is not comparable between replicas. A denied label is rejected for
+  unrestricted users in PromQL, LogQL and TraceQL.
 
 ## [0.1.2] - 2026-10-28
 

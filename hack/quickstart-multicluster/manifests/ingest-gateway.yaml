@@ -17,7 +17,7 @@
 #    pipelines also delete the resource attribute k8s.cluster.name after the upsert: Prometheus copies
 #    the resource attributes to the series target_info, which then has only the label cluster.
 #
-# Limits of this demo (see docs/quickstart-multicluster.md):
+# Limits of this demo (see docs/quickstart-multicluster-details.md):
 #  * The gateway checks the CA only, not the URI SAN of the client cert. This is correct only because
 #    each spoke has its own CA and the hub keeps the CA keys. In the demo all keys are on the laptop.
 #  * No certificate revocation. One port for each spoke does not scale to many spokes.
