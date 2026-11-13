@@ -89,7 +89,7 @@ release-check:
 
 # Landing page and documentation. The Hugo version is pinned here only (module-proxy run, stays out
 # of go.mod); .github/workflows/pages.yml runs this target. A broken internal link fails the build.
-HUGO ?= go run github.com/gohugoio/hugo@v0.169.0
+HUGO ?= go run github.com/gohugoio/hugo@v0.170.0
 site:
 	site/build-content.sh
 	$(HUGO) --source site --minify --gc --cleanDestinationDir
