@@ -63,7 +63,8 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 ### Changed
 
 * Multi-cluster quickstart: `up.sh` pulls the images of the demo stack one time on the host, while the
-  clusters start, and loads them into the kind nodes. Before, each node pulled its images itself, one at
+  clusters start, and loads them into the kind nodes. It shows each image, its position in the list and
+  the progress of the pull. Before, each node pulled its images itself, one at
   a time, and on a slow connection the rollout of the hub stopped with a timeout. The images stay on the
   host after `down.sh`.
 * **Upgrade notes for the security fixes** (see "Security"):

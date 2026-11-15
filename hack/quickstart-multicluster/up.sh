@@ -26,15 +26,15 @@ CLEANUP_ON_FAILURE="${CLEANUP_ON_FAILURE:-0}"
 WORK="$(mktemp -d)"
 T0=$SECONDS
 BUILD_PID=""
-PULL_PID=""
+CLUSTERS_PID=""
 
 on_exit() {
   local rc=$? c
   set +e
   pf_stop
-  # kill stops the background subshell only; a running docker build or docker pull ends by itself.
+  # kill stops the background subshell only; a running docker build or kind create ends by itself.
   [ -z "$BUILD_PID" ] || kill "$BUILD_PID" 2>/dev/null
-  [ -z "$PULL_PID" ] || kill "$PULL_PID" 2>/dev/null
+  [ -z "$CLUSTERS_PID" ] || kill "$CLUSTERS_PID" 2>/dev/null
   rm -rf "$WORK"
   if [ $rc -ne 0 ]; then
     echo "--- up.sh failed (exit $rc) ---" >&2
@@ -75,22 +75,20 @@ nodeport() { k -n "$1" get svc "$2" -o jsonpath="{.spec.ports[?(@.name==\"$3\")]
 # agent_rejected: the agent of the spoke logged the rejection of a sync because the spoke is suspended.
 agent_rejected() { ks "$1" -n querdian logs deploy/querdian-agent 2>/dev/null | grep -q 'the SpokeCluster is suspended'; }
 
-# --- 1. images (built and pulled in the background while the clusters start) -------------------------------
+# --- 1. Querdian image (built in the background) --------------------------------------------------------------
 if [ "$SKIP_BUILD" != 1 ]; then
   step "building $IMAGE_REPO:$IMAGE_TAG (background)"
   (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") >"$WORK/build.log" 2>&1 &
   BUILD_PID=$!
 fi
-step "pulling the images of the demo stack (background, see lib.sh)"
-# shellcheck disable=SC2046 # image names have no spaces
-pull_images $(hub_images) >"$WORK/pull.log" 2>&1 &
-PULL_PID=$!
 
-# --- 2. kind clusters -------------------------------------------------------------------------------------------
+# --- 2. kind clusters (in the background) -----------------------------------------------------------------------
 # Each cluster has its own pod and Service ranges, so that addresses in logs and traces are unique. The
 # clusters share the Docker network "kind"; the spokes reach the NodePorts of the hub node on it.
-step "kind cluster $CLUSTER (hub)"
-cat >"$WORK/kind-hub.yaml" <<YAML
+create_clusters() {
+  local s i
+  echo "=== kind cluster $CLUSTER (hub)"
+  cat >"$WORK/kind-hub.yaml" <<YAML
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking: {podSubnet: 10.244.0.0/16, serviceSubnet: 10.96.0.0/16}
@@ -104,20 +102,34 @@ nodes:
       # Grafana
       - {containerPort: 30030, hostPort: $GRAFANA_PORT, listenAddress: "127.0.0.1", protocol: TCP}
 YAML
-T_CLUSTER=$SECONDS
-kind create cluster --name "$CLUSTER" --config "$WORK/kind-hub.yaml" --wait 120s
-for s in "${SPOKES[@]}"; do
-  i=$(spoke_index "$s")
-  step "kind cluster $(spoke_cluster "$s") (spoke $s)"
-  cat >"$WORK/kind-$s.yaml" <<YAML
+  kind create cluster --name "$CLUSTER" --config "$WORK/kind-hub.yaml" --wait 120s
+  for s in "${SPOKES[@]}"; do
+    i=$(spoke_index "$s")
+    echo "=== kind cluster $(spoke_cluster "$s") (spoke $s)"
+    cat >"$WORK/kind-$s.yaml" <<YAML
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking: {podSubnet: 10.$((244 + i)).0.0/16, serviceSubnet: 10.$((96 + i)).0.0/16}
 nodes:
   - role: control-plane
 YAML
-  kind create cluster --name "$(spoke_cluster "$s")" --config "$WORK/kind-$s.yaml" --wait 120s
-done
+    kind create cluster --name "$(spoke_cluster "$s")" --config "$WORK/kind-$s.yaml" --wait 120s
+  done
+}
+step "kind clusters $(all_clusters | paste -sd, - | sed 's/,/, /g') (background)"
+T_CLUSTER=$SECONDS
+create_clusters >"$WORK/clusters.log" 2>&1 &
+CLUSTERS_PID=$!
+
+# --- 3. demo images (pulled in the foreground, so that docker pull shows its progress) ------------------------
+# The images only make the start faster: if a pull fails, the kind nodes pull that image themselves.
+step "pulling the images of the demo stack (only the images that are not local yet)"
+# shellcheck disable=SC2046 # image names have no spaces
+pull_images $(hub_images)
+
+step "waiting for the kind clusters"
+if ! wait "$CLUSTERS_PID"; then CLUSTERS_PID=""; tail -30 "$WORK/clusters.log" >&2; die "kind create cluster failed"; fi
+CLUSTERS_PID=""
 info "clusters created in $((SECONDS - T_CLUSTER))s"
 kubectl config use-context "$KCTX" >/dev/null
 
@@ -128,22 +140,18 @@ HUB_IP="$(hub_ip)"
 [ -n "$HUB_IP" ] || die "cannot find the address of the hub node"
 info "hub node address on the Docker network kind: $HUB_IP"
 
-# --- 3. certs ------------------------------------------------------------------------------------------------------
+# --- 4. certs ------------------------------------------------------------------------------------------------------
 step "certs (openssl) in $CERT_DIR"
 rm -rf "$CERT_DIR" # in the work directory that claim_work_dir marked
 "$MC_DIR/certs.sh" "$CERT_DIR" "$HUB_IP" "$TRUST_DOMAIN" "${SPOKES[@]}" | sed 's/^/    /'
 
-# --- 4. image into the clusters --------------------------------------------------------------------------------
+# --- 5. images into the clusters --------------------------------------------------------------------------------
 if [ -n "$BUILD_PID" ]; then
   step "waiting for the image build"
   if ! wait "$BUILD_PID"; then BUILD_PID=""; tail -30 "$WORK/build.log" >&2; die "image build failed"; fi
   BUILD_PID=""
 fi
 docker image inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 || die "image $IMAGE_REPO:$IMAGE_TAG not found"
-step "waiting for the image pulls (slow on the first run only)"
-wait "$PULL_PID" || true # pull_images does not fail; a missing image is reported below
-PULL_PID=""
-grep '^WARNING' "$WORK/pull.log" | sed 's/^/    /' || true
 step "loading the images into the three clusters"
 # One archive for each image: podman save needs --multi-image-archive for more than one image, and
 # docker save does not know that flag.
@@ -174,7 +182,7 @@ for img in $(hub_images); do
 done
 rm -f "$WORK/image.tar"
 
-# --- 5. hub: the stack of the single-cluster quickstart --------------------------------------------------------
+# --- 6. hub: the stack of the single-cluster quickstart --------------------------------------------------------
 step "hub: namespaces, Keycloak, backends, collector, Grafana, sample workloads"
 render "$QS_DIR/manifests/00-base.yaml" | k apply -f - >/dev/null
 # The realm of the single-cluster quickstart with the users and groups of this demo.
@@ -195,7 +203,7 @@ subst "$MC_DIR/manifests/hub-otel-collector.yaml" HUB_NAME="$HUB_NAME" TENANT="$
 for d in prometheus loki tempo; do k -n observability rollout status "deploy/$d" --timeout=300s; done
 k -n observability rollout status ds/otel-collector --timeout=300s
 
-# --- 6. migration step 2: hub telemetry carries cluster="hub" -------------------------------------------------
+# --- 7. migration step 2: hub telemetry carries cluster="hub" -------------------------------------------------
 # Before the first spoke sends data, the direct queries of docs/multicluster.md (step 2) must find no
 # data without the hub cluster label.
 step "migration step 2: hub telemetry carries cluster=\"$HUB_NAME\" (direct backend queries)"
@@ -233,7 +241,7 @@ none "traces: spans with resource.k8s.cluster.name other than $HUB_NAME" "$(n_te
 pf_stop
 ok "metrics, logs and traces of the hub carry the hub cluster label"
 
-# --- 7. the ingest gateway (before a spoke connects) -----------------------------------------------------------
+# --- 8. the ingest gateway (before a spoke connects) -----------------------------------------------------------
 step "hub: demo ingest gateway (one mTLS OTLP port and one ingest CA for each spoke)"
 gw_args=(--from-file=tls.crt="$CERT_DIR/gateway.crt" --from-file=tls.key="$CERT_DIR/gateway.key")
 for s in "${SPOKES[@]}"; do gw_args+=(--from-file="ca-$s.crt=$CERT_DIR/ingest-ca-$s.crt"); done
@@ -246,7 +254,7 @@ k -n keycloak rollout status deploy/keycloak --timeout=480s
 k -n observability rollout status deploy/grafana --timeout=300s
 for ns in order-service payment-service; do k -n "$ns" rollout status "deploy/$ns" --timeout=300s; done
 
-# --- 8. Querdian on the hub: migration steps 0, 1, 3 and 4 ------------------------------------------------------
+# --- 9. Querdian on the hub: migration steps 0, 1, 3 and 4 ------------------------------------------------------
 # This hub is new: it has no old policies and no old data, so the chart installs the CRDs and the
 # multicluster block at once. The hub ClusterAccessPolicy objects state their cluster scope (step 1).
 step "hub: helm install querdian (multicluster block, receiver)"
@@ -274,7 +282,7 @@ for s in "${SPOKES[@]}"; do
   subst "$MC_DIR/manifests/spokecluster.yaml" SPOKE="$s" IDENTITY="$(agent_identity "$s")" TENANT="$TENANT" | k apply -f -
 done
 
-# --- 9. spokes: agent, policy, workloads, collector --------------------------------------------------------------
+# --- 10. spokes: agent, policy, workloads, collector -------------------------------------------------------------
 for s in "${SPOKES[@]}"; do
   step "spoke $s: agent (chart mode spoke), AccessPolicy for $(team_of "$s"), workloads, collector"
   for ns in observability querdian order-service payment-service; do ks "$s" create ns "$ns" >/dev/null; done
@@ -308,13 +316,13 @@ for s in "${SPOKES[@]}"; do
   info "$s: suspended, the receiver rejects its syncs (no lastSyncTime)"
 done
 
-# --- 10. migration step 5: the forged-label test, while the spokes are suspended ---------------------------------
+# --- 11. migration step 5: the forged-label test, while the spokes are suspended ---------------------------------
 for s in "${SPOKES[@]}"; do
   step "migration step 5: forged-label test of the gateway for $s (suspended)"
   "$MC_DIR/forged-label-test.sh" "$s" || die "the forged-label test of $s failed; $s stays suspended"
 done
 
-# --- 11. migration step 6: unsuspend each tested spoke -----------------------------------------------------------
+# --- 12. migration step 6: unsuspend each tested spoke -----------------------------------------------------------
 synced() { # spoke: a valid sync of the current generation
   [ -n "$(k get spokecluster "$1" -o jsonpath='{.status.lastSyncTime}')" ] &&
     [ "$(k get spokecluster "$1" -o jsonpath='{.status.observedGeneration}')" = "$(k get spokecluster "$1" -o jsonpath='{.metadata.generation}')" ]

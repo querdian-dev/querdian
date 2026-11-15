@@ -105,15 +105,24 @@ demo_images() {
 hub_images() { demo_images "$QS_DIR"/manifests/*.yaml "$MC_DIR"/manifests/*.yaml; }
 spoke_images() { demo_images "$QS_DIR/manifests/workloads.yaml" "$MC_DIR/manifests/spoke-collector.yaml"; }
 
-# pull_images IMAGE...: pulls each image that is not local yet. A failed pull gives a WARNING line and
-# no error: the kind nodes then pull that image themselves.
+# pull_images IMAGE...: pulls each image that is not local yet. Before each image it shows the position
+# in the list, and after a pull the time. docker pull (or podman pull) shows the progress of each layer
+# on a terminal. A failed pull gives a WARNING line and no error: the kind nodes then pull that image
+# themselves.
 pull_images() {
-  local img
+  local img i=0 n=$# t
   for img in "$@"; do
+    i=$((i + 1))
     if docker image inspect "$img" >/dev/null 2>&1; then
-      echo "$img: local"
-    elif ! docker pull "$img"; then
-      echo "WARNING: cannot pull $img; the kind nodes pull it themselves"
+      info "[$i/$n] $img: local"
+      continue
+    fi
+    info "[$i/$n] $img: pulling"
+    t=$SECONDS
+    if docker pull "$img"; then
+      info "[$i/$n] $img: pulled in $((SECONDS - t))s"
+    else
+      info "[$i/$n] WARNING: cannot pull $img; the kind nodes pull it themselves"
     fi
   done
 }

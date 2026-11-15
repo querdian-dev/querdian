@@ -38,7 +38,7 @@ single-cluster quickstart and from the size of a kind node.
 | Memory of each spoke | about 0.7 to 0.9 GiB: a kind control plane, one collector, the agent and two busybox workloads |
 | Container VM | **8 GiB** of memory and 4 CPUs or more |
 | Disk | about 6 GiB for the three node containers with their images, and more for the demo images that `up.sh` keeps on the host. |
-| `up.sh` | about 8 to 12 minutes with a warm image cache; 15 to 20 minutes on a first run (Go build, node image and image pulls). The first pull of the demo images and Keycloak are the slowest parts. `up.sh` pulls the images on the host while the clusters start, and later runs use the local images. |
+| `up.sh` | about 8 to 12 minutes with a warm image cache; 15 to 20 minutes on a first run (Go build, node image and image pulls). The first pull of the demo images and Keycloak are the slowest parts. `up.sh` pulls the images on the host while the clusters start, and shows the progress of each pull. Later runs use the local images. |
 | `verify.sh` | about 1 to 2 minutes. Most of the time is the wait for the access of the suspended spoke to return. |
 
 ## Topology

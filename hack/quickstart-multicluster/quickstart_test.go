@@ -308,6 +308,35 @@ func TestDemoImages(t *testing.T) {
 	}
 }
 
+// pull_images shows the position of each image and the time of each pull, pulls only the images that are
+// not local, and does not fail when a pull fails: the kind nodes then pull that image themselves.
+func TestPullImagesShowsProgress(t *testing.T) {
+	stub := t.TempDir()
+	docker := `#!/usr/bin/env bash
+case "$1 $2" in
+  "image inspect") [ "$3" = local:1 ] ;;
+  "pull bad:1") echo "toomanyrequests" >&2; exit 1 ;;
+  "pull "*) echo "Downloading $2" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stub, "docker"), []byte(docker), 0o700); err != nil { //nolint:gosec // test stub
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stub+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got := regexp.MustCompile(`in \d+s`).ReplaceAllString(shell(t, "pull_images local:1 new:1 bad:1"), "in Ns")
+	want := strings.Join([]string{
+		"    [1/3] local:1: local",
+		"    [2/3] new:1: pulling",
+		"Downloading new:1",
+		"    [2/3] new:1: pulled in Ns",
+		"    [3/3] bad:1: pulling",
+		"    [3/3] WARNING: cannot pull bad:1; the kind nodes pull it themselves",
+	}, "\n") + "\n"
+	if got != want {
+		t.Errorf("pull_images output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestSubstStopsOnALeftPlaceholder(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not installed")
