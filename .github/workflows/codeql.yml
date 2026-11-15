@@ -26,15 +26,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          filter: blob:none
+      # See ci.yml. A push to main and the weekly run always analyze the code, so that each commit of main
+      # has an analysis for the comparison with a pull request.
       - id: changes
-        # A push to main and the weekly run always analyze the code, so that each commit of main has an
-        # analysis for the comparison with a pull request.
         if: github.event_name == 'pull_request'
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: hack/ci/changes.sh "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+        uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

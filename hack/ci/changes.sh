@@ -13,7 +13,8 @@
 # missing base commit (a new branch), a diff that fails (for example after a force push), or a diff
 # with no files. Running a step too often is safe; skipping a needed step is not.
 #
-#   hack/ci/changes.sh <event> <base> <head>   compare base...head (pull_request and push)
+#   hack/ci/changes.sh <event> <base> <head>   compare base...head (pull_request and push);
+#                                              .github/actions/changes runs this form
 #   hack/ci/changes.sh classify                read the changed paths from stdin
 set -uo pipefail
 

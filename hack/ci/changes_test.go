@@ -74,6 +74,7 @@ func TestClassify(t *testing.T) {
 		{"go code and docs", "docs/operations.md\ninternal/proxy/proxy.go\n", all},
 		{"workflow", ".github/workflows/ci.yml\n", all},
 		{"script", "hack/ci/changes.sh\n", all},
+		{"local action", ".github/actions/changes/action.yml\n", all},
 		{"go.mod", "go.mod\n", all},
 		{"root file without extension", "Makefile\n", all},
 		{"quoted path", "\"docs/\\303\\244.md\"\n", all},
