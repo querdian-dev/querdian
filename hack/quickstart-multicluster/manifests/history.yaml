@@ -1,0 +1,32 @@
+# The log and trace history of one cluster (hack/quickstart/demogen with -cluster), as in
+# hack/quickstart/manifests/backfill.yaml. The metrics history is in hub-prometheus.yaml.
+#
+# The Job pushes OTLP/JSON straight to Loki and Tempo of the hub as the tenant of the demo, with the
+# resource attributes that the hub collector or the ingest gateway sets: k8s.cluster.name and cluster.
+# It does not go through the gateway, so it does not test the gateway. The history of a spoke stands
+# for the data that the spoke sent before. Each cluster has its own pod names
+# (<service>-history-<cluster>), so the history and the live data are different streams in Loki, and
+# verify.sh accepts these pods as pods of their cluster. The history ends at @@HISTORY_END@@, before
+# the live data of the cluster starts.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: history-@@CLUSTER@@, namespace: observability}
+spec:
+  backoffLimit: 3
+  template:
+    metadata: {labels: {app: demo-history}}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: history
+          image: @@DEMOGEN_IMAGE@@
+          imagePullPolicy: Never # built by up.sh and loaded into kind
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              demogen loki -hours @@DEMO_HISTORY_HOURS@@ -end @@HISTORY_END@@ -seed @@SEED@@ -cluster @@CLUSTER@@ -tenant @@TENANT@@ -url http://loki.observability:3100
+              demogen tempo -hours @@DEMO_HISTORY_HOURS@@ -end @@HISTORY_END@@ -seed @@SEED@@ -cluster @@CLUSTER@@ -tenant @@TENANT@@ -url http://tempo.observability:4318
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}

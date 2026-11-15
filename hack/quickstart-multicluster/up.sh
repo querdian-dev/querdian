@@ -12,9 +12,14 @@
 # suspended: true (step 4), the forged-label test of the gateway while suspended (step 5), and only then
 # suspended: false (step 6).
 #
+# Each cluster gets DEMO_HISTORY_HOURS (default 24) of demo history (hack/quickstart/demogen -cluster),
+# so that the dashboards are not empty: the hub before its collector starts, each spoke in the background
+# after the check of step 2 (see manifests/hub-prometheus.yaml and manifests/history.yaml).
+#
 #   hack/quickstart-multicluster/up.sh
 #   SKIP_BUILD=1 hack/quickstart-multicluster/up.sh          # reuse an already built image (IMAGE_TAG)
 #   CLEANUP_ON_FAILURE=1 hack/quickstart-multicluster/up.sh  # delete the clusters if the script fails
+#   DEMO_HISTORY_HOURS=6 hack/quickstart-multicluster/up.sh  # 6 hours of history instead of 24
 #
 # Requires: kind, kubectl, helm, docker (or podman with a docker shim), make, curl, jq, openssl.
 set -Eeuo pipefail
@@ -27,6 +32,7 @@ WORK="$(mktemp -d)"
 T0=$SECONDS
 BUILD_PID=""
 CLUSTERS_PID=""
+HISTORY_PID=""
 
 on_exit() {
   local rc=$? c
@@ -40,6 +46,10 @@ on_exit() {
     pkill -TERM -P "$CLUSTERS_PID" 2>/dev/null
     kill "$CLUSTERS_PID" 2>/dev/null
     wait "$CLUSTERS_PID" 2>/dev/null
+  fi
+  if [ -n "$HISTORY_PID" ]; then
+    pkill -TERM -P "$HISTORY_PID" 2>/dev/null
+    kill "$HISTORY_PID" 2>/dev/null
   fi
   rm -rf "$WORK"
   if [ $rc -ne 0 ]; then
@@ -81,10 +91,43 @@ nodeport() { k -n "$1" get svc "$2" -o jsonpath="{.spec.ports[?(@.name==\"$3\")]
 # agent_rejected: the agent of the spoke logged the rejection of a sync because the spoke is suspended.
 agent_rejected() { ks "$1" -n querdian logs deploy/querdian-agent 2>/dev/null | grep -q 'the SpokeCluster is suspended'; }
 
-# --- 1. Querdian image (built in the background) --------------------------------------------------------------
-if [ "$SKIP_BUILD" != 1 ]; then
-  step "building $IMAGE_REPO:$IMAGE_TAG (background)"
-  (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") >"$WORK/build.log" 2>&1 &
+# --- demo history (see manifests/history.yaml) ------------------------------------------------------------------
+# history_job CLUSTER END SEED: starts the Job that pushes the log and trace history of CLUSTER.
+history_job() {
+  subst "$MC_DIR/manifests/history.yaml" CLUSTER="$1" HISTORY_END="$2" SEED="$3" TENANT="$TENANT" | k apply -f - >/dev/null
+}
+# history_wait CLUSTER: waits for the Job of CLUSTER and shows its output.
+history_wait() {
+  if ! k -n observability wait --for=condition=complete "job/history-$1" --timeout=300s >/dev/null; then
+    k -n observability logs "job/history-$1" --tail=30 >&2 || true
+    return 1
+  fi
+  k -n observability logs "job/history-$1" | sed 's/^/    /'
+}
+# spoke_history SPOKE END: the history of a spoke. The sidecar `history` of Prometheus writes the metric
+# blocks into the running Prometheus (it loads them within a minute), and a Job pushes the logs and
+# traces. Each spoke gets its own seed, so the clusters do not show the same data. Each command checks its
+# own status: the caller runs this function in the background, where set -e does not apply.
+spoke_history() {
+  local s="$1" end="$2" seed om
+  seed=$((1 + $(spoke_index "$s"))) || return 1
+  om="/work/history-$s.om"
+  echo "=== history of $s (seed $seed, end $end)"
+  k -n observability exec deploy/prometheus -c history -- sh -c "set -e
+    demogen metrics -hours $DEMO_HISTORY_HOURS -step 30s -end $end -seed $seed -cluster $s > $om
+    promtool tsdb create-blocks-from openmetrics $om /prometheus
+    rm -f $om" | tail -2 | sed 's/^/    /' || return 1
+  history_job "$s" "$end" "$seed" || return 1
+  history_wait "$s" || return 1
+}
+
+# --- 1. Querdian image and the demo data generator (built in the background) -----------------------------------
+if [ "$SKIP_BUILD" != 1 ] || ! docker image inspect "$DEMOGEN_IMAGE" >/dev/null 2>&1; then
+  step "building $IMAGE_REPO:$IMAGE_TAG and $DEMOGEN_IMAGE (background)"
+  (
+    if [ "$SKIP_BUILD" != 1 ]; then (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") || exit 1; fi
+    build_demogen "$WORK"
+  ) >"$WORK/build.log" 2>&1 &
   BUILD_PID=$!
 fi
 
@@ -159,12 +202,17 @@ if [ -n "$BUILD_PID" ]; then
   if ! wait "$BUILD_PID"; then BUILD_PID=""; tail -30 "$WORK/build.log" >&2; die "image build failed"; fi
   BUILD_PID=""
 fi
-docker image inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 || die "image $IMAGE_REPO:$IMAGE_TAG not found"
+for img in "$IMAGE_REPO:$IMAGE_TAG" "$DEMOGEN_IMAGE"; do
+  docker image inspect "$img" >/dev/null 2>&1 || die "image $img not found"
+done
 step "loading the images into the three clusters"
 # One archive for each image: podman save needs --multi-image-archive for more than one image, and
 # docker save does not know that flag.
 docker save -o "$WORK/image.tar" "$IMAGE_REPO:$IMAGE_TAG"
 for c in $(all_clusters); do kind load image-archive "$WORK/image.tar" --name "$c"; done
+# The generator writes the history into the backends of the hub, so only the hub needs it.
+docker save -o "$WORK/image.tar" "$DEMOGEN_IMAGE"
+kind load image-archive "$WORK/image.tar" --name "$CLUSTER"
 # The demo images only make the start faster. If an image cannot be pulled, saved or loaded, the kind
 # nodes pull it themselves, as before. Example: with the containerd image store of Docker Desktop, the
 # save or the import of a multi-platform image can fail (kind issue 3795).
@@ -192,6 +240,8 @@ rm -f "$WORK/image.tar"
 
 # --- 6. hub: the stack of the single-cluster quickstart --------------------------------------------------------
 step "hub: namespaces, Keycloak, backends, collector, Grafana, sample workloads"
+# The history of the hub ends before its live data starts, so no time is counted twice.
+HUB_HISTORY_END=$(date +%s)
 render "$QS_DIR/manifests/00-base.yaml" | k apply -f - >/dev/null
 # The realm of the single-cluster quickstart with the users and groups of this demo.
 jq --slurpfile u "$MC_DIR/realm-users.json" '.groups = $u[0].groups | .users = $u[0].users' \
@@ -206,9 +256,13 @@ k -n observability create cm grafana-dashboards "${dash_args[@]}"
 for f in keycloak loki tempo grafana workloads; do
   render "$QS_DIR/manifests/$f.yaml" | k apply -f - >/dev/null
 done
-subst "$MC_DIR/manifests/hub-prometheus.yaml" HUB_NAME="$HUB_NAME" | k apply -f - >/dev/null
+subst "$MC_DIR/manifests/hub-prometheus.yaml" HUB_NAME="$HUB_NAME" HISTORY_END="$HUB_HISTORY_END" | k apply -f - >/dev/null
 subst "$MC_DIR/manifests/hub-otel-collector.yaml" HUB_NAME="$HUB_NAME" TENANT="$TENANT" | k apply -f - >/dev/null
+# The init container of Prometheus writes the metrics history of the hub; as soon as Loki and Tempo are
+# ready, a Job pushes its log and trace history while Keycloak is still starting.
 for d in prometheus loki tempo; do k -n observability rollout status "deploy/$d" --timeout=300s; done
+T_HUB_HISTORY=$SECONDS
+history_job "$HUB_NAME" "$HUB_HISTORY_END" 1
 k -n observability rollout status ds/otel-collector --timeout=300s
 
 # --- 7. migration step 2: hub telemetry carries cluster="hub" -------------------------------------------------
@@ -261,6 +315,8 @@ step "waiting for Keycloak (the slowest part), Grafana and the sample workloads"
 k -n keycloak rollout status deploy/keycloak --timeout=480s
 k -n observability rollout status deploy/grafana --timeout=300s
 for ns in order-service payment-service; do k -n "$ns" rollout status "deploy/$ns" --timeout=300s; done
+history_wait "$HUB_NAME" || die "the history Job of $HUB_NAME did not complete"
+info "history of $HUB_NAME: logs and traces finished $((SECONDS - T_HUB_HISTORY))s after the start of the Job"
 
 # --- 9. Querdian on the hub: migration steps 0, 1, 3 and 4 ------------------------------------------------------
 # This hub is new: it has no old policies and no old data, so the chart installs the CRDs and the
@@ -291,6 +347,7 @@ for s in "${SPOKES[@]}"; do
 done
 
 # --- 10. spokes: agent, policy, workloads, collector -------------------------------------------------------------
+SPOKE_HISTORY_ENDS=()
 for s in "${SPOKES[@]}"; do
   step "spoke $s: agent (chart mode spoke), AccessPolicy for $(team_of "$s"), workloads, collector"
   for ns in observability querdian order-service payment-service; do ks "$s" create ns "$ns" >/dev/null; done
@@ -311,9 +368,23 @@ for s in "${SPOKES[@]}"; do
     --from-file=ca.crt="$CERT_DIR/hub-server-ca.crt" >/dev/null
   gw_port="$(nodeport observability ingest-gateway "$s")"
   [ -n "$gw_port" ] || die "the ingest gateway Service has no port for $s"
+  # The history of the spoke ends before its collector sends the first live data.
+  SPOKE_HISTORY_ENDS+=("$(date +%s)")
   subst "$MC_DIR/manifests/spoke-collector.yaml" CLAIM="$(claim_of "$s")" GATEWAY_URL="https://$HUB_IP:$gw_port" |
     ks "$s" apply -f - >/dev/null
 done
+# The history of the spokes: after the check of migration step 2 (it allows only hub data), one spoke
+# after the other (the same peak load for Loki and Tempo as one cluster), in the background during the
+# steps 5 and 6. up.sh waits for it before the end.
+step "history of the spokes: $DEMO_HISTORY_HOURS h of each spoke into the backends of the hub (background)"
+(
+  i=0
+  for s in "${SPOKES[@]}"; do
+    spoke_history "$s" "${SPOKE_HISTORY_ENDS[$i]}" || exit 1
+    i=$((i + 1))
+  done
+) >"$WORK/history.log" 2>&1 &
+HISTORY_PID=$!
 for s in "${SPOKES[@]}"; do
   ks "$s" -n observability rollout status ds/otel-collector --timeout=300s
   for ns in order-service payment-service; do ks "$s" -n "$ns" rollout status "deploy/$ns" --timeout=300s; done
@@ -346,6 +417,15 @@ for s in "${SPOKES[@]}"; do
 done
 k get spokeclusters
 k get spokepolicies
+
+step "waiting for the history of the spokes"
+if ! wait "$HISTORY_PID"; then
+  HISTORY_PID=""
+  tail -30 "$WORK/history.log" >&2
+  die "the history of the spokes failed"
+fi
+HISTORY_PID=""
+cat "$WORK/history.log"
 
 step "waiting for the data of all clusters through Querdian"
 wait_for "telemetry of the hub and the spokes" 300 "$MC_DIR/verify.sh" --smoke

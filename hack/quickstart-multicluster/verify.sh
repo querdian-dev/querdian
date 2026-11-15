@@ -13,7 +13,9 @@
 #    and not the hub; carol sees all clusters.
 # 3. Checks the SpokeCluster and SpokePolicy objects on the hub, the Ready condition that the agent
 #    writes in each spoke, and the origin of each policy in the policy dashboard API.
-# 4. Suspends spoke-a: alice gets 403 (policy source expired) on all three backends, the dashboard shows
+# 4. Checks the demo history of each cluster near its start: it exists in all three signals, and the
+#    grants apply to it as to the live data. Give verify.sh the same DEMO_HISTORY_HOURS as up.sh.
+# 5. Suspends spoke-a: alice gets 403 (policy source expired) on all three backends, the dashboard shows
 #    the expired state, bob and sam keep their access. Then unsuspends spoke-a and waits for the access
 #    of alice to return. The script unsuspends spoke-a also if it stops early.
 #
@@ -129,7 +131,14 @@ pods_of() { # cluster-name namespace...
     else ks "$c" -n "$ns" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'; fi
   done
 }
-for c in "$HUB_NAME" "${SPOKES[@]}"; do pods_of "$c" order-service payment-service >"$WORK/pods-$c"; done
+# The pods of the demo history (history_pod in lib.sh) count as pods of their cluster: no real pod has
+# these names, and each name contains its cluster.
+for c in "$HUB_NAME" "${SPOKES[@]}"; do
+  {
+    pods_of "$c" order-service payment-service
+    for svc in $HISTORY_SERVICES; do history_pod "$svc" "$c"; echo; done
+  } >"$WORK/pods-$c"
+done
 # only_pods_of CLUSTER "pod,pod,...": every pod is a pod of CLUSTER, and none is a pod of another cluster.
 only_pods_of() {
   local c="$1" p o bad=""
@@ -250,6 +259,40 @@ for c in "$HUB_NAME" "${SPOKES[@]}"; do
   if [ $want = 1 ]; then expect_ge "sam (sre): traces of $c" 1 "$(tempo_n)"; else expect "sam (sre): no traces of $c" 0 "$(tempo_n)"; fi
   call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5
   expect_ge "carol (unrestricted): traces of $c" 1 "$(tempo_n)"
+done
+
+# --- history ----------------------------------------------------------------------------------------------------
+# up.sh writes DEMO_HISTORY_HOURS of history for each cluster (hack/quickstart/demogen -cluster). The checks
+# use a time 10 minutes after the start of the history. If verify.sh runs much later than up.sh, that time
+# has live data, and the checks still apply.
+OLD=$(($(date +%s) - DEMO_HISTORY_HOURS * 3600 + 600))
+section "history: data of each cluster $DEMO_HISTORY_HOURS h ago, and the grants apply to it"
+call "$CAROL" /prom/api/v1/query --data-urlencode 'query=count by (cluster) (demo_requests_total)' --data-urlencode "time=$OLD"
+expect "carol: metrics history -> clusters" "$ALL" "$(prom_vals cluster)"
+for c in "$HUB_NAME" "${SPOKES[@]}"; do
+  call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (pod) (demo_requests_total{cluster=\"$c\"})" --data-urlencode "time=$OLD"
+  expect "carol: the metrics history of $c comes from pods of $c" ok "$(only_pods_of "$c" "$(prom_vals pod)")"
+done
+LOGS_OLD='sum by (k8s_cluster_name, k8s_namespace_name) (count_over_time({k8s_namespace_name=~".+"}[10m]))'
+call "$CAROL" /loki/loki/api/v1/query --data-urlencode "query=$LOGS_OLD" --data-urlencode "time=$OLD"
+expect "carol: log history -> clusters" "$ALL" "$(prom_vals k8s_cluster_name)"
+for c in "$HUB_NAME" "${SPOKES[@]}"; do
+  call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5 \
+    --data-urlencode "start=$((OLD - 600))" --data-urlencode "end=$((OLD + 600))"
+  expect_ge "carol: trace history of $c" 1 "$(tempo_n)"
+done
+for u in "${TEAMS[@]}"; do
+  IFS=: read -r name tok own <<<"$u"
+  call "$tok" /prom/api/v1/query --data-urlencode 'query=count by (cluster, namespace) (demo_requests_total)' --data-urlencode "time=$OLD"
+  expect "$name: metrics history -> clusters" "$own" "$(prom_vals cluster)"
+  expect "$name: metrics history -> namespaces" order-service "$(prom_vals namespace)"
+  call "$tok" /loki/loki/api/v1/query --data-urlencode "query=$LOGS_OLD" --data-urlencode "time=$OLD"
+  expect "$name: log history -> clusters" "$own" "$(prom_vals k8s_cluster_name)"
+  expect "$name: log history -> namespaces" order-service "$(prom_vals k8s_namespace_name)"
+  call "$tok" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=20 \
+    --data-urlencode "start=$((OLD - 600))" --data-urlencode "end=$((OLD + 600))"
+  expect_ge "$name: trace history" 1 "$(tempo_n)"
+  expect "$name: trace history -> clusters" "$own" "$(tempo_vals k8s.cluster.name)"
 done
 
 # --- spoke state ------------------------------------------------------------------------------------------------

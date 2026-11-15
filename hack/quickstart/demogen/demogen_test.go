@@ -171,3 +171,71 @@ func TestTracesBody(t *testing.T) {
 		t.Fatalf("logs body: %v", err)
 	}
 }
+
+// The multi-cluster quickstart: each series has the cluster label, each pod name is a pod of that
+// cluster, and the log and trace resources carry the attributes of the hub collector and the gateway.
+func TestCluster(t *testing.T) {
+	const step = 60 * time.Second
+	o := &options{cluster: "spoke-a"}
+	svcs := o.services()
+	var per [][]*family
+	for _, s := range svcs {
+		if want := s.Name + "-history-spoke-a"; s.Pod != want {
+			t.Errorf("%s: pod %q, want %q", s.Name, s.Pod, want)
+		}
+		per = append(per, genMetrics(s, 1, 1, step))
+	}
+	var buf bytes.Buffer
+	if err := writeOpenMetrics(&buf, per, testEnd, 1, step); err != nil {
+		t.Fatal(err)
+	}
+	samples := 0
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		samples++
+		if !strings.Contains(line, `,cluster="spoke-a"`) || !strings.Contains(line, `-history-spoke-a"`) {
+			t.Fatalf("sample without the cluster label or the pod of the cluster: %s", line)
+		}
+	}
+	if samples == 0 {
+		t.Fatal("no samples")
+	}
+	for _, logs := range []bool{false, true} {
+		got := map[string]string{}
+		for _, a := range resourceAttrs(svcs[0], logs) {
+			got[a.k] = a.v.(string)
+		}
+		if got["k8s.cluster.name"] != "spoke-a" || got["cluster"] != "spoke-a" || got["k8s.pod.name"] != "order-service-history-spoke-a" {
+			t.Errorf("resource attributes (logs %v): %v", logs, got)
+		}
+	}
+}
+
+// Without -cluster, the data is that of the single-cluster quickstart: no cluster label.
+func TestNoCluster(t *testing.T) {
+	o := &options{}
+	s := o.services()[0]
+	if s.Pod != services()[0].Pod || s.Cluster != "" {
+		t.Fatalf("pod %q, cluster %q", s.Pod, s.Cluster)
+	}
+	if strings.Contains(s.baseLabels(), "cluster") {
+		t.Errorf("labels %s", s.baseLabels())
+	}
+	for _, a := range resourceAttrs(s, true) {
+		if a.k == "cluster" || a.k == "k8s.cluster.name" {
+			t.Errorf("attribute %s without -cluster", a.k)
+		}
+	}
+	for _, c := range []string{"hub", "spoke-a", "a1"} {
+		if !clusterName.MatchString(c) {
+			t.Errorf("cluster name %q rejected", c)
+		}
+	}
+	for _, c := range []string{"Hub", "-a", "a-", "a_b", "a.b", "a b", ""} {
+		if clusterName.MatchString(c) {
+			t.Errorf("cluster name %q accepted", c)
+		}
+	}
+}

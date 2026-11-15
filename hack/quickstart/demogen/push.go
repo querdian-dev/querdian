@@ -36,12 +36,19 @@ func otlpAttrs(attrs []attr) []object {
 func ns(t time.Time) string { return strconv.FormatInt(t.UnixNano(), 10) }
 
 // resourceAttrs are what the collection pipeline of the quickstart would attach to the pod.
+// In the multi-cluster quickstart, the hub collector and the ingest gateway also set k8s.cluster.name
+// (Loki label k8s_cluster_name, Tempo resource.k8s.cluster.name) and cluster.
 func resourceAttrs(s *service, logs bool) []attr {
 	a := []attr{{"service.name", s.Name}, {"k8s.namespace.name", s.Namespace}, {"k8s.pod.name", s.Pod}}
 	if logs {
-		return append(a, attr{"k8s.container.name", "app"})
+		a = append(a, attr{"k8s.container.name", "app"})
+	} else {
+		a = append(a, attr{"service.version", "1.4.2"}, attr{"deployment.environment.name", "demo"})
 	}
-	return append(a, attr{"service.version", "1.4.2"}, attr{"deployment.environment.name", "demo"})
+	if s.Cluster != "" {
+		a = append(a, attr{"k8s.cluster.name", s.Cluster}, attr{"cluster", s.Cluster})
+	}
+	return a
 }
 
 // tracesBody renders traces of one service as an OTLP/JSON export request.

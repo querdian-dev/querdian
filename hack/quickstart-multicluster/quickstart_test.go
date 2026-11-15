@@ -22,6 +22,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -176,6 +177,8 @@ func strictObject(t *testing.T, file string, d []byte) any {
 		obj = &appsv1.Deployment{}
 	case "DaemonSet":
 		obj = &appsv1.DaemonSet{}
+	case "Job":
+		obj = &batchv1.Job{}
 	case "ClusterRole":
 		obj = &rbacv1.ClusterRole{}
 	case "ClusterRoleBinding":
@@ -197,7 +200,8 @@ func strictObject(t *testing.T, file string, d []byte) any {
 
 // manifestArgs are the placeholder values for each manifest of this quickstart, as up.sh gives them to subst.
 var manifestArgs = map[string][]string{
-	"manifests/hub-prometheus.yaml":     {"HUB_NAME=hub"},
+	"manifests/hub-prometheus.yaml":     {"HUB_NAME=hub", "HISTORY_END=1792442000"},
+	"manifests/history.yaml":            {"CLUSTER=spoke-a", "HISTORY_END=1792442000", "SEED=2", "TENANT=demo"},
 	"manifests/hub-otel-collector.yaml": {"HUB_NAME=hub", "TENANT=demo"},
 	"manifests/ingest-gateway.yaml":     {"TENANT=demo"},
 	"manifests/spoke-collector.yaml":    {"CLAIM=hub", "GATEWAY_URL=https://" + hubIP + ":31001"},
@@ -220,7 +224,7 @@ func rendered(t *testing.T) map[string][]any {
 
 func TestManifestsDecodeStrictly(t *testing.T) {
 	objs := rendered(t)
-	if len(objs) != 7 {
+	if len(objs) != 8 {
 		t.Fatalf("rendered %d files", len(objs))
 	}
 	// The single-cluster manifests that up.sh reuses must also render without a placeholder left.
@@ -734,6 +738,59 @@ func TestNoBraceListInCommandSubstitution(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The demo history: the hub Prometheus writes the blocks of the hub before it starts and has a sidecar
+// for the blocks of the spokes; the Job pushes logs and traces of one cluster. All use the generator image
+// that up.sh builds, the cluster flag, and the end time.
+func TestHistoryManifests(t *testing.T) {
+	objs := rendered(t)
+	image := libVar(t, "$DEMOGEN_IMAGE")
+	retention := libVar(t, "${DEMO_RETENTION_HOURS}h")
+	var dep *appsv1.Deployment
+	for _, o := range objs["manifests/hub-prometheus.yaml"] {
+		if d, ok := o.(*appsv1.Deployment); ok {
+			dep = d
+		}
+	}
+	if dep == nil {
+		t.Fatal("no Prometheus Deployment")
+	}
+	pod := dep.Spec.Template.Spec
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Image != image ||
+		!strings.Contains(pod.InitContainers[0].Args[0], "-end 1792442000 -seed 1 -cluster "+hubName(t)+" ") {
+		t.Errorf("init container: %+v", pod.InitContainers)
+	}
+	names := map[string]corev1.Container{}
+	for _, c := range pod.Containers {
+		names[c.Name] = c
+	}
+	if h, ok := names["history"]; !ok || h.Image != image || h.ImagePullPolicy != corev1.PullNever {
+		t.Errorf("sidecar history: %+v", h)
+	}
+	if !slices.Contains(names["prometheus"].Args, "--storage.tsdb.retention.time="+retention) {
+		t.Errorf("Prometheus args %v lack the retention %s (history + 24 h)", names["prometheus"].Args, retention)
+	}
+	job, ok := objs["manifests/history.yaml"][0].(*batchv1.Job)
+	if !ok || job.Name != "history-spoke-a" {
+		t.Fatalf("history Job: %+v", objs["manifests/history.yaml"])
+	}
+	c := job.Spec.Template.Spec.Containers[0]
+	for _, want := range []string{"demogen loki ", "demogen tempo ", "-end 1792442000 -seed 2 -cluster spoke-a -tenant demo"} {
+		if c.Image != image || !strings.Contains(c.Args[0], want) {
+			t.Errorf("history Job: image %s, args %q lack %q", c.Image, c.Args[0], want)
+		}
+	}
+}
+
+// demogen -cluster names the pods of the history <service>-history-<cluster> (historyPod in
+// hack/quickstart/demogen/model.go, tested there with the same names). verify.sh accepts these names
+// as pods of their cluster through history_pod.
+func TestHistoryPodNames(t *testing.T) {
+	if got := shell(t, `for s in $HISTORY_SERVICES; do history_pod "$s" spoke-a; echo; done`); got !=
+		"order-service-history-spoke-a\npayment-service-history-spoke-a\n" {
+		t.Errorf("history pods: %q", got)
 	}
 }
 

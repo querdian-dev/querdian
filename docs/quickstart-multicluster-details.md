@@ -21,6 +21,7 @@ Environment variables:
 | `CLUSTER_PREFIX` | `querdian` | Prefix of the cluster names: `querdian-hub`, `querdian-spoke-a`, `querdian-spoke-b`. |
 | `MC_WORK_DIR` | `$XDG_CACHE_HOME/querdian-quickstart-multicluster`, or `~/.cache/querdian-quickstart-multicluster` if `XDG_CACHE_HOME` is not set | Work directory for the certs. Use a new or empty directory, because `down.sh` deletes it. `up.sh` refuses a directory with other files. `down.sh` deletes only a directory that `up.sh` marked (file `.querdian-quickstart-multicluster`). It never deletes `/` or `$HOME`. |
 | `KEYCLOAK_PORT` | `8080` | Host port of Keycloak. |
+| `DEMO_HISTORY_HOURS` | `24` | Hours of demo history for each cluster, 1 to 720. Give the same value to `verify.sh`. |
 | `IMAGE_TAG` | `quickstart` | Tag of the Querdian image. |
 | `SKIP_BUILD=1` | off | `up.sh` does not build the Querdian image. It uses the image with `IMAGE_TAG`. |
 | `CLEANUP_ON_FAILURE=1` | off | `up.sh` deletes the clusters if it fails. |
@@ -34,7 +35,8 @@ single-cluster quickstart and from the size of a kind node.
 | Item | Estimate |
 |---|---|
 | Memory in use | about 4 to 4.5 GiB in total |
-| Memory of the hub | about 2.5 GiB: the single-cluster stack without the history, the gateway and the receiver |
+| Memory of the hub | about 2.5 GiB: the single-cluster stack with the history of the three clusters, the gateway and the receiver |
+| Time for the history | Hub: no added time, because it runs while Keycloak starts. Spokes: about 1 minute for each spoke, in the background during steps 5 and 6. |
 | Memory of each spoke | about 0.7 to 0.9 GiB: a kind control plane, one collector, the agent and two busybox workloads |
 | Container VM | **8 GiB** of memory and 4 CPUs or more |
 | Disk | about 6 GiB for the three node containers with their images, and more for the demo images that `up.sh` keeps on the host. |
@@ -193,6 +195,48 @@ The script also checks that the TLS handshake fails in these cases:
 
 You can run the script again at any time.
 
+## The demo history
+
+Each cluster gets `DEMO_HISTORY_HOURS` (default 24) of demo data, so that the dashboards are not empty.
+The generator is the generator of the single-cluster quickstart (`hack/quickstart/demogen`, see
+[Backfill](quickstart-details.md#backfill)). With `-cluster <name>`, it adds:
+
+* the label `cluster="<name>"` on each metric series;
+* the resource attributes `k8s.cluster.name` and `cluster` on each log line and span, as the hub
+  collector and the gateway set them;
+* pod names of that cluster: `<service>-history-<name>`, for example `order-service-history-spoke-a`.
+
+Each cluster has its own seed, so the clusters do not show the same values. The incidents of the
+generator are at the same times in all clusters.
+
+| Cluster | Metrics | Logs and traces | When |
+|---|---|---|---|
+| Hub | The init container `backfill` of Prometheus writes the blocks before Prometheus starts. | The Job `history-hub`. | Before the hub collector sends data, while Keycloak starts. |
+| Each spoke | The sidecar `history` of Prometheus writes the blocks into the running Prometheus. Prometheus loads new blocks each minute, and it does not change its head for them. | The Job `history-<spoke>`. | After the check of step 2, in the background during steps 5 and 6, one spoke after the other. `up.sh` waits for it before the end. |
+
+The design follows these rules:
+
+* **Step 2.** The check of migration step 2 accepts only data with `cluster="hub"`. Thus the history of
+  the spokes goes in only after that check.
+* **No double count.** The history of each cluster ends (`-end`) before the live data of that cluster
+  starts. The dashboards add the series of a namespace, so an overlap would count the same time two
+  times.
+* **Separate streams.** No real pod has a history pod name. Thus the history and the live logs are in
+  different Loki streams, and Loki accepts the old entries. Loki rejects an entry that is more than about
+  one hour older than the newest entry of its stream. `verify.sh` adds the history pods of each cluster to
+  the pods of that cluster (`history_pod` in `lib.sh`). A history pod of one cluster in the result of
+  another team still fails the check.
+* **Not through the gateway.** The Jobs and the sidecar write directly to the backends of the hub. The
+  history of a spoke stands for data that the spoke sent before. It does not test the gateway.
+
+Limits:
+
+* If the Prometheus container restarts, Prometheus truncates its head to the end of the newest block.
+  The live data between the start of the hub and the end of the last spoke history (a few minutes) is
+  then lost.
+* A new Prometheus pod (for example after `kubectl delete pod`) has only the history of the hub, because
+  the data volume is an `emptyDir`.
+
 ## Policies
 
 | User | Group | Policy | Sees |
@@ -229,6 +273,7 @@ with a non-zero status on any failure.
 | SRE and admin | sam sees both spokes and not the hub. carol sees all three clusters. For each cluster, the data with its cluster label comes from pods of that cluster. |
 | State | Each `SpokeCluster` has a recent `lastSyncTime` and an `observedGeneration` equal to its generation. Each spoke has one `SpokePolicy` that is `Ready`. The agent wrote `Ready` on the spoke `AccessPolicy`. No proxy runs in a spoke. The dashboard API shows the origin of each policy. |
 | Suspend and unsuspend | With spoke-a suspended, alice gets `403` on all three backends. The dashboard API reports `policy_source_expired` and the expired state. bob and sam keep their access. The metric `querdian_cluster_policy_expired` is 1 for spoke-a. After the unsuspend, the access of alice returns. If the script stops early, it unsuspends spoke-a. |
+| History | At a time 10 minutes after the start of the history, carol finds metrics, logs and traces of all three clusters, and the metrics of each cluster come from pods of that cluster. alice, bob and hana see only `order-service` of their own cluster in the history too. |
 | Grafana | Health and the three data sources. |
 
 `verify.sh --smoke` only checks that the data of all three clusters arrives and that the spoke grants are
@@ -255,7 +300,8 @@ checks them without Docker:
 
 ## Differences from the single-cluster quickstart
 
-* No backfilled history: the data starts when the clusters start.
+* The history of each cluster has the cluster label and pod names of that cluster (see
+  [The demo history](#the-demo-history)). The history of the spokes goes in after migration step 2.
 * The hub Prometheus accepts OTLP writes (`--web.enable-otlp-receiver`) for the metrics of the spokes.
   The spoke collectors scrape the workloads with the `prometheus` receiver. The metric names are the
   same.

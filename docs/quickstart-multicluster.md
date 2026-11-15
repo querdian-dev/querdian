@@ -79,7 +79,9 @@ policies. See [Policies](quickstart-multicluster-details.md#policies).
 5. Log in as bob, hana and sam in private windows, and compare.
 
 The four dashboards of the single-cluster quickstart are also available. They have no cluster variable.
-Thus a user with grants in several clusters sees the sum of those clusters.
+Thus a user with grants in several clusters sees the sum of those clusters. Each cluster has 24 hours of
+demo history (`DEMO_HISTORY_HOURS`), so the dashboards show data immediately. The pods of the history
+have the names `<service>-history-<cluster>`.
 
 ### See the origin of the policies
 
