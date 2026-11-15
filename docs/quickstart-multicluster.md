@@ -51,7 +51,8 @@ hack/quickstart-multicluster/down.sh     # removes the clusters, the certs and t
 * Internet access. `up.sh` pulls the images from Docker Hub and quay.io one time on the host, and
   loads them into the kind nodes. The images stay on the host after `down.sh`, so the next run does not
   download them again. To remove them, run
-  `bash -c 'source hack/quickstart-multicluster/lib.sh; docker rmi $(hub_images)'`.
+  `bash -c 'source hack/quickstart-multicluster/lib.sh; docker rmi $(hub_images)'`. This command also removes
+  common images such as `busybox`, which other projects on the host can use.
 
 ## Users
 
