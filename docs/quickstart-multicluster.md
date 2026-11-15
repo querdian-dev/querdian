@@ -48,7 +48,11 @@ hack/quickstart-multicluster/down.sh     # removes the clusters, the certs and t
   quickstart uses the same three ports, so remove it first (`hack/quickstart/down.sh`).
   `KEYCLOAK_PORT` changes only the port of Keycloak.
 * Free local ports `18080`, `19090`, `13100` and `13200` for the port-forwards of the scripts.
-* Internet access. Each kind node pulls its images from Docker Hub and quay.io.
+* Internet access. `up.sh` pulls the images from Docker Hub and quay.io one time on the host, and
+  loads them into the kind nodes. The images stay on the host after `down.sh`, so the next run does not
+  download them again. To remove them, run
+  `bash -c 'source hack/quickstart-multicluster/lib.sh; docker rmi $(hub_images)'`. This command also removes
+  common images such as `busybox`, which other projects on the host can use.
 
 ## Users
 
@@ -123,6 +127,7 @@ list.
 
 | Symptom | Cause and correction |
 |---|---|
+| `up.sh` shows a WARNING for an image ("cannot pull", "cannot save" or "cannot load") | The host could not pull the image, or could not load it into kind. An example is a multi-platform image with the containerd image store of Docker Desktop. The kind nodes pull that image themselves, one at a time, which is slower. The script continues. |
 | `up.sh` fails | The script keeps the clusters and prints the pods that do not run in each cluster. `CLEANUP_ON_FAILURE=1` deletes the clusters after a failure. |
 | A collector or a kubelet fails with "too many open files" (Linux) | Three kind clusters can reach the inotify limits of the host. Increase `fs.inotify.max_user_instances` and `fs.inotify.max_user_watches` as the kind [known issues](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files) describe. |
 | A spoke does not sync | Examine the agent log (`kubectl --context kind-querdian-spoke-a -n querdian logs deploy/querdian-agent`) and the receiver log on the hub. `403` while the spoke is suspended is correct. See [receiver HTTP statuses](troubleshooting.md#receiver-http-statuses). |

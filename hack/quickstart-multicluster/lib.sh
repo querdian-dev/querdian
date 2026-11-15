@@ -88,6 +88,45 @@ all_clusters() {
   for s in "${SPOKES[@]}"; do spoke_cluster "$s"; echo; done
 }
 
+# --- images of the demo stack -------------------------------------------------------------------------
+# The kubelet pulls one image at a time, so on a slow connection the pulls of the hub take longer than the
+# rollout timeouts of up.sh. Also, each spoke and each new run pull the same images again. Thus up.sh
+# pulls each image one time on the host and loads it into the kind nodes. The local images stay after
+# down.sh, so the next run does not download them again.
+
+# demo_images FILE...: the registry images of the manifests, one per line, sorted. An image with a
+# placeholder is built by up.sh and is not in the list.
+demo_images() {
+  sed -n 's/^[[:space:]-]*image:[[:space:]]*//p' "$@" |
+    sed -e 's/[[:space:]]*#.*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' | grep -v '@@' | sort -u
+}
+# The hub gets the images of all manifests of both quickstarts. A spoke gets only its workloads and its
+# collector.
+hub_images() { demo_images "$QS_DIR"/manifests/*.yaml "$MC_DIR"/manifests/*.yaml; }
+spoke_images() { demo_images "$QS_DIR/manifests/workloads.yaml" "$MC_DIR/manifests/spoke-collector.yaml"; }
+
+# pull_images IMAGE...: pulls each image that is not local yet. Before each image it shows the position
+# in the list, and after a pull the time. docker pull (or podman pull) shows the progress of each layer
+# on a terminal. A failed pull gives a WARNING line and no error: the kind nodes then pull that image
+# themselves.
+pull_images() {
+  local img i=0 n=$# t
+  for img in "$@"; do
+    i=$((i + 1))
+    if docker image inspect "$img" >/dev/null 2>&1; then
+      info "[$i/$n] $img: local"
+      continue
+    fi
+    info "[$i/$n] $img: pulling"
+    t=$SECONDS
+    if docker pull "$img"; then
+      info "[$i/$n] $img: pulled in $((SECONDS - t))s"
+    else
+      info "[$i/$n] WARNING: cannot pull $img; the kind nodes pull it themselves"
+    fi
+  done
+}
+
 # The identity of the agent of a spoke: one URI SAN, the last path segment is the SpokeCluster name.
 # The middle segment is the cert generation (docs/multicluster.md, "the agent certificate").
 agent_identity() { printf 'spiffe://%s/agent/1/%s' "$TRUST_DOMAIN" "$1"; }
