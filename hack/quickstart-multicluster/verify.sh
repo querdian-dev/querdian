@@ -14,7 +14,8 @@
 # 3. Checks the SpokeCluster and SpokePolicy objects on the hub, the Ready condition that the agent
 #    writes in each spoke, and the origin of each policy in the policy dashboard API.
 # 4. Checks the demo history of each cluster near its start: it exists in all three signals, and the
-#    grants apply to it as to the live data. Give verify.sh the same DEMO_HISTORY_HOURS as up.sh.
+#    grants apply to it as to the live data. The checks of 2 and --smoke count only live data: they
+#    exclude the history pods (HISTORY_POD_RE), because the history alone must not satisfy them.
 # 5. Suspends spoke-a: alice gets 403 (policy source expired) on all three backends, the dashboard shows
 #    the expired state, bob and sam keep their access. Then unsuspends spoke-a and waits for the access
 #    of alice to return. The script unsuspends spoke-a also if it stops early.
@@ -103,20 +104,24 @@ for t in "$ALICE" "$BOB" "$HANA" "$SAM" "$CAROL"; do
 done
 ALL="$(joined "$HUB_NAME" "${SPOKES[@]}")"
 BOTH_SPOKES="$(joined "${SPOKES[@]}")"
-LOGS_Q='{k8s_namespace_name=~".+"}'
+# Live data only: the series, streams and spans of real pods, not of the history pods.
+M_LIVE="demo_requests_total{pod!~\"$HISTORY_POD_RE\"}"
+LOGS_Q="{k8s_namespace_name=~\".+\", k8s_pod_name!~\"$HISTORY_POD_RE\"}"
+T_LIVE="resource.k8s.pod.name !~ \"$HISTORY_POD_RE\""
 
 if [ $SMOKE = 1 ]; then
   # Data of all three clusters arrived (carol is unrestricted), and the spoke grants are active.
-  call "$CAROL" /prom/api/v1/query --data-urlencode 'query=count by (cluster) (demo_requests_total)'
+  # Live data only: the history of a spoke goes in before this check.
+  call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (cluster) ($M_LIVE)"
   [ "$(prom_vals cluster)" = "$ALL" ] || exit 1
-  call "$CAROL" /loki/loki/api/v1/label/k8s_cluster_name/values
+  call "$CAROL" /loki/loki/api/v1/label/k8s_cluster_name/values --data-urlencode "query=$LOGS_Q"
   [ "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")" = "$ALL" ] || exit 1
   for c in "$HUB_NAME" "${SPOKES[@]}"; do
-    call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5
+    call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
     [ "$(tempo_n)" -ge 1 ] 2>/dev/null || exit 1
   done
   for u in "$ALICE:$S1" "$BOB:$S2"; do
-    call "${u%%:*}" /prom/api/v1/query --data-urlencode 'query=demo_requests_total'
+    call "${u%%:*}" /prom/api/v1/query --data-urlencode "query=$M_LIVE"
     [ "$(prom_vals cluster)" = "${u##*:}" ] || exit 1
   done
   exit 0
@@ -169,7 +174,7 @@ TEAMS=("alice:$ALICE:$S1" "bob:$BOB:$S2" "hana:$HANA:$HUB_NAME")
 section "metrics: one namespace name in three clusters"
 for u in "${TEAMS[@]}"; do
   IFS=: read -r name tok own <<<"$u"
-  call "$tok" /prom/api/v1/query --data-urlencode 'query=demo_requests_total'
+  call "$tok" /prom/api/v1/query --data-urlencode "query=$M_LIVE"
   expect "$name: demo_requests_total -> clusters" "$own" "$(prom_vals cluster)"
   expect "$name: demo_requests_total -> namespaces" order-service "$(prom_vals namespace)"
   expect_ge "$name: demo_requests_total series" 3 "$(prom_n)"
@@ -184,17 +189,17 @@ for u in "${TEAMS[@]}"; do
 done
 call "$ALICE" /prom/api/v1/query --data-urlencode 'query=demo_requests_total{namespace="payment-service"}'
 expect "alice: other namespace of her own cluster returns nothing" 0 "$(prom_n)"
-call "$SAM" /prom/api/v1/query --data-urlencode 'query=count by (cluster, namespace) (demo_requests_total)'
+call "$SAM" /prom/api/v1/query --data-urlencode "query=count by (cluster, namespace) ($M_LIVE)"
 expect "sam (sre): clusters" "$BOTH_SPOKES" "$(prom_vals cluster)"
 expect "sam (sre): namespaces" "order-service,payment-service" "$(prom_vals namespace)"
 call "$SAM" /prom/api/v1/query --data-urlencode "query=demo_requests_total{cluster=\"$HUB_NAME\"}"
 expect "sam (sre): the hub is not in his fixed cluster set" 0 "$(prom_n)"
-call "$CAROL" /prom/api/v1/query --data-urlencode 'query=count by (cluster) (demo_requests_total)'
+call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (cluster) ($M_LIVE)"
 expect "carol (unrestricted): clusters" "$ALL" "$(prom_vals cluster)"
 
 section "metrics: cluster-label integrity (each spoke collector claims a false cluster)"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do
-  call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (pod) (demo_requests_total{cluster=\"$c\"})"
+  call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (pod) (demo_requests_total{cluster=\"$c\", pod!~\"$HISTORY_POD_RE\"})"
   expect "carol: the series with cluster=\"$c\" come from pods of $c" ok "$(only_pods_of "$c" "$(prom_vals pod)")"
 done
 call "$CAROL" /prom/api/v1/query --data-urlencode 'query=count({k8s_cluster_name!=""})'
@@ -216,12 +221,12 @@ for u in "${TEAMS[@]}"; do
   call "$tok" /loki/loki/api/v1/label/k8s_cluster_name/values
   expect "$name: label values of k8s_cluster_name" "$own" "$(jq -r '.data // [] | join(",")' <<<"$BODY")"
 done
-call "$SAM" /loki/loki/api/v1/label/k8s_cluster_name/values
+call "$SAM" /loki/loki/api/v1/label/k8s_cluster_name/values --data-urlencode "query=$LOGS_Q"
 expect "sam (sre): log clusters" "$BOTH_SPOKES" "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")"
-call "$CAROL" /loki/loki/api/v1/label/k8s_cluster_name/values
+call "$CAROL" /loki/loki/api/v1/label/k8s_cluster_name/values --data-urlencode "query=$LOGS_Q"
 expect "carol (unrestricted): log clusters" "$ALL" "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do
-  call "$CAROL" /loki/loki/api/v1/label/k8s_pod_name/values --data-urlencode "query={k8s_cluster_name=\"$c\", k8s_namespace_name=~\"order-service|payment-service\"}"
+  call "$CAROL" /loki/loki/api/v1/label/k8s_pod_name/values --data-urlencode "query={k8s_cluster_name=\"$c\", k8s_namespace_name=~\"order-service|payment-service\", k8s_pod_name!~\"$HISTORY_POD_RE\"}"
   expect "carol: the log streams with k8s_cluster_name=\"$c\" come from pods of $c" ok \
     "$(only_pods_of "$c" "$(jq -r '.data // [] | join(",")' <<<"$BODY")")"
 done
@@ -230,7 +235,7 @@ done
 section "traces: one namespace name in three clusters"
 for u in "${TEAMS[@]}"; do
   IFS=: read -r name tok own <<<"$u"
-  call "$tok" /tempo/api/search --data-urlencode 'q={}' --data-urlencode limit=50
+  call "$tok" /tempo/api/search --data-urlencode "q={ $T_LIVE }" --data-urlencode limit=50
   expect_ge "$name: traces" 1 "$(tempo_n)"
   expect "$name: clusters of the found spans" "$own" "$(tempo_vals k8s.cluster.name)"
   expect "$name: namespaces of the found spans" order-service "$(tempo_vals k8s.namespace.name)"
@@ -255,9 +260,9 @@ expect "sam (sre): the trace of alice by ID" 200 "$STATUS"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do
   want=1
   [ "$c" = "$HUB_NAME" ] && want=0
-  call "$SAM" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5
+  call "$SAM" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
   if [ $want = 1 ]; then expect_ge "sam (sre): traces of $c" 1 "$(tempo_n)"; else expect "sam (sre): no traces of $c" 0 "$(tempo_n)"; fi
-  call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5
+  call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
   expect_ge "carol (unrestricted): traces of $c" 1 "$(tempo_n)"
 done
 
@@ -265,8 +270,13 @@ done
 # up.sh writes DEMO_HISTORY_HOURS of history for each cluster (hack/quickstart/demogen -cluster). The checks
 # use a time 10 minutes after the start of the history. If verify.sh runs much later than up.sh, that time
 # has live data, and the checks still apply.
-OLD=$(($(date +%s) - DEMO_HISTORY_HOURS * 3600 + 600))
-section "history: data of each cluster $DEMO_HISTORY_HOURS h ago, and the grants apply to it"
+# The hours of history come from the retention of the hub Prometheus (history + 24 h, see up.sh), so that
+# verify.sh needs no DEMO_HISTORY_HOURS.
+HOURS=$(k -n observability get deploy prometheus -o jsonpath='{.spec.template.spec.containers[?(@.name=="prometheus")].args}' |
+  grep -o 'retention.time=[0-9]*h' | tr -dc '0-9')
+HOURS=$((${HOURS:-$((DEMO_HISTORY_HOURS + 24))} - 24))
+OLD=$(($(date +%s) - HOURS * 3600 + 600))
+section "history: data of each cluster $HOURS h ago, and the grants apply to it"
 call "$CAROL" /prom/api/v1/query --data-urlencode 'query=count by (cluster) (demo_requests_total)' --data-urlencode "time=$OLD"
 expect "carol: metrics history -> clusters" "$ALL" "$(prom_vals cluster)"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do

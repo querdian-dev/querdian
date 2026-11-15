@@ -21,7 +21,7 @@ Environment variables:
 | `CLUSTER_PREFIX` | `querdian` | Prefix of the cluster names: `querdian-hub`, `querdian-spoke-a`, `querdian-spoke-b`. |
 | `MC_WORK_DIR` | `$XDG_CACHE_HOME/querdian-quickstart-multicluster`, or `~/.cache/querdian-quickstart-multicluster` if `XDG_CACHE_HOME` is not set | Work directory for the certs. Use a new or empty directory, because `down.sh` deletes it. `up.sh` refuses a directory with other files. `down.sh` deletes only a directory that `up.sh` marked (file `.querdian-quickstart-multicluster`). It never deletes `/` or `$HOME`. |
 | `KEYCLOAK_PORT` | `8080` | Host port of Keycloak. |
-| `DEMO_HISTORY_HOURS` | `24` | Hours of demo history for each cluster, 1 to 720. Give the same value to `verify.sh`. |
+| `DEMO_HISTORY_HOURS` | `24` | Hours of demo history for each cluster, 1 to 720. `verify.sh` gets the value from the retention of the hub Prometheus. |
 | `IMAGE_TAG` | `quickstart` | Tag of the Querdian image. |
 | `SKIP_BUILD=1` | off | `up.sh` does not build the Querdian image. It uses the image with `IMAGE_TAG`. |
 | `CLEANUP_ON_FAILURE=1` | off | `up.sh` deletes the clusters if it fails. |
@@ -35,7 +35,7 @@ single-cluster quickstart and from the size of a kind node.
 | Item | Estimate |
 |---|---|
 | Memory in use | about 4 to 4.5 GiB in total |
-| Memory of the hub | about 2.5 GiB: the single-cluster stack with the history of the three clusters, the gateway and the receiver |
+| Memory of the hub | about 2.5 to 3 GiB: the single-cluster stack with the history of the three clusters, the gateway and the receiver. This value is not measured with the history. |
 | Time for the history | Hub: no added time, because it runs while Keycloak starts. Spokes: about 1 minute for each spoke, in the background during steps 5 and 6. |
 | Memory of each spoke | about 0.7 to 0.9 GiB: a kind control plane, one collector, the agent and two busybox workloads |
 | Container VM | **8 GiB** of memory and 4 CPUs or more |
@@ -228,6 +228,10 @@ The design follows these rules:
   another team still fails the check.
 * **Not through the gateway.** The Jobs and the sidecar write directly to the backends of the hub. The
   history of a spoke stands for data that the spoke sent before. It does not test the gateway.
+* **Live checks.** The history has the correct cluster labels, so it can satisfy a check that waits for
+  live data. Thus the positive checks of step 2, `verify.sh --smoke` and the live sections of
+  `verify.sh` exclude the history pods (`HISTORY_POD_RE` in `lib.sh`). The forged-label test is not
+  affected, because it uses test IDs.
 
 Limits:
 
@@ -273,6 +277,7 @@ with a non-zero status on any failure.
 | SRE and admin | sam sees both spokes and not the hub. carol sees all three clusters. For each cluster, the data with its cluster label comes from pods of that cluster. |
 | State | Each `SpokeCluster` has a recent `lastSyncTime` and an `observedGeneration` equal to its generation. Each spoke has one `SpokePolicy` that is `Ready`. The agent wrote `Ready` on the spoke `AccessPolicy`. No proxy runs in a spoke. The dashboard API shows the origin of each policy. |
 | Suspend and unsuspend | With spoke-a suspended, alice gets `403` on all three backends. The dashboard API reports `policy_source_expired` and the expired state. bob and sam keep their access. The metric `querdian_cluster_policy_expired` is 1 for spoke-a. After the unsuspend, the access of alice returns. If the script stops early, it unsuspends spoke-a. |
+| Live data | The checks above count only the data of real pods. They exclude the history pods, so the history alone cannot pass them. |
 | History | At a time 10 minutes after the start of the history, carol finds metrics, logs and traces of all three clusters, and the metrics of each cluster come from pods of that cluster. alice, bob and hana see only `order-service` of their own cluster in the history too. |
 | Grafana | Health and the three data sources. |
 

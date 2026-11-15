@@ -59,12 +59,13 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * Multi-cluster quickstart on kind (`hack/quickstart-multicluster/up.sh`): one hub and two spokes on a
   laptop, with a demo ingest gateway, the ordered migration steps, a forged-label test of the gateway
   and checks through the proxy. See [docs/quickstart-multicluster.md](docs/quickstart-multicluster.md).
+* Multi-cluster quickstart: each cluster gets 24 hours of demo history (`DEMO_HISTORY_HOURS`), so that
+  the dashboards are not empty. The generator `demogen` has the new flag `-cluster`. `verify.sh` checks
+  that the history of each cluster exists and that the grants apply to it. Its live checks exclude the
+  history pods.
 
 ### Changed
 
-* Multi-cluster quickstart: each cluster gets 24 hours of demo history (`DEMO_HISTORY_HOURS`), so that
-  the dashboards are not empty. The generator `demogen` has the new flag `-cluster`. `verify.sh` checks
-  that the history of each cluster exists and that the grants apply to it.
 * Multi-cluster quickstart: `up.sh` pulls the images of the demo stack one time on the host, while the
   clusters start, and loads them into the kind nodes. It shows each image, its position in the list and
   the progress of the pull. Before, each node pulled its images itself, one at a time, and on a slow

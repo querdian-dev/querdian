@@ -50,6 +50,7 @@ on_exit() {
   if [ -n "$HISTORY_PID" ]; then
     pkill -TERM -P "$HISTORY_PID" 2>/dev/null
     kill "$HISTORY_PID" 2>/dev/null
+    wait "$HISTORY_PID" 2>/dev/null
   fi
   rm -rf "$WORK"
   if [ $rc -ne 0 ]; then
@@ -107,16 +108,19 @@ history_wait() {
 # spoke_history SPOKE END: the history of a spoke. The sidecar `history` of Prometheus writes the metric
 # blocks into the running Prometheus (it loads them within a minute), and a Job pushes the logs and
 # traces. Each spoke gets its own seed, so the clusters do not show the same data. Each command checks its
-# own status: the caller runs this function in the background, where set -e does not apply.
+# own status: the caller calls this function on the left of ||, where set -e does not apply.
+# promtool --quiet: without it, promtool opens the data directory after each block, and Prometheus can
+# compact and delete the blocks of the previous spoke at that time.
 spoke_history() {
   local s="$1" end="$2" seed om
-  seed=$((1 + $(spoke_index "$s"))) || return 1
+  seed=$((1 + $(spoke_index "$s")))
   om="/work/history-$s.om"
   echo "=== history of $s (seed $seed, end $end)"
   k -n observability exec deploy/prometheus -c history -- sh -c "set -e
     demogen metrics -hours $DEMO_HISTORY_HOURS -step 30s -end $end -seed $seed -cluster $s > $om
-    promtool tsdb create-blocks-from openmetrics $om /prometheus
-    rm -f $om" | tail -2 | sed 's/^/    /' || return 1
+    promtool tsdb create-blocks-from openmetrics --quiet $om /prometheus
+    rm -f $om" || return 1
+  echo "    metric blocks of $s written; Prometheus loads them within a minute"
   history_job "$s" "$end" "$seed" || return 1
   history_wait "$s" || return 1
 }
@@ -282,9 +286,11 @@ none() { # description count
     *) die "$1: $2 results, expected none" ;;
   esac
 }
-wait_for "hub metrics with cluster=$HUB_NAME" 180 gt0 n_prom "count(demo_requests_total{cluster=\"$HUB_NAME\"})"
-wait_for "hub logs with k8s_cluster_name=$HUB_NAME" 180 gt0 n_loki "sum(count_over_time({k8s_namespace_name=~\".+\", k8s_cluster_name=\"$HUB_NAME\"}[10m]))"
-wait_for "hub traces with resource.k8s.cluster.name=$HUB_NAME" 180 gt0 n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" }"
+# The positive checks exclude the history pods: the history of the hub has the hub label too, and it must
+# not satisfy a check that waits for live data.
+wait_for "live hub metrics with cluster=$HUB_NAME" 180 gt0 n_prom "count(demo_requests_total{cluster=\"$HUB_NAME\", pod!~\"$HISTORY_POD_RE\"})"
+wait_for "live hub logs with k8s_cluster_name=$HUB_NAME" 180 gt0 n_loki "sum(count_over_time({k8s_namespace_name=~\".+\", k8s_cluster_name=\"$HUB_NAME\", k8s_pod_name!~\"$HISTORY_POD_RE\"}[10m]))"
+wait_for "live hub traces with resource.k8s.cluster.name=$HUB_NAME" 180 gt0 n_tempo "{ resource.k8s.cluster.name = \"$HUB_NAME\" && resource.k8s.pod.name !~ \"$HISTORY_POD_RE\" }"
 # Each query goes into a variable first. bash 3.2 (macOS) does brace expansion on {a,b} inside "$(...)",
 # also inside quotes, so the matcher list of a query becomes two commands. An assignment gets no brace
 # expansion. TestNoBraceListInCommandSubstitution finds this form.

@@ -792,6 +792,21 @@ func TestHistoryPodNames(t *testing.T) {
 		"order-service-history-spoke-a\npayment-service-history-spoke-a\n" {
 		t.Errorf("history pods: %q", got)
 	}
+	// HISTORY_POD_RE excludes the history from the live checks. PromQL and LogQL anchor a regex, so the
+	// test anchors it too.
+	re := regexp.MustCompile("^(?:" + libVar(t, "$HISTORY_POD_RE") + ")$")
+	for _, c := range append([]string{hubName(t)}, spokes(t)...) {
+		for _, svc := range strings.Fields(libVar(t, "$HISTORY_SERVICES")) {
+			if p := shell(t, `history_pod "$1" "$2"`, svc, c); !re.MatchString(p) {
+				t.Errorf("HISTORY_POD_RE does not match the history pod %q", p)
+			}
+		}
+	}
+	for _, p := range []string{"order-service-6d9c8b7f5-k4x2p", "payment-service-7b5d9c6f8-q9m7w", "querdian-agent-5f7d8c9b6-x2k4p"} {
+		if re.MatchString(p) {
+			t.Errorf("HISTORY_POD_RE matches the real pod name %q", p)
+		}
+	}
 }
 
 func TestHubRelease(t *testing.T) {
