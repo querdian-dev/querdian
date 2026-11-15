@@ -195,20 +195,22 @@ func strictObject(t *testing.T, file string, d []byte) any {
 	return obj
 }
 
+// manifestArgs are the placeholder values for each manifest of this quickstart, as up.sh gives them to subst.
+var manifestArgs = map[string][]string{
+	"manifests/hub-prometheus.yaml":     {"HUB_NAME=hub"},
+	"manifests/hub-otel-collector.yaml": {"HUB_NAME=hub", "TENANT=demo"},
+	"manifests/ingest-gateway.yaml":     {"TENANT=demo"},
+	"manifests/spoke-collector.yaml":    {"CLAIM=hub", "GATEWAY_URL=https://" + hubIP + ":31001"},
+	"manifests/hub-policies.yaml":       nil,
+	"manifests/spoke-policies.yaml":     {"TEAM=team-a", "SPOKE=spoke-a"},
+	"manifests/spokecluster.yaml":       {"SPOKE=spoke-a", "IDENTITY=spiffe://quickstart.local/agent/1/spoke-a", "TENANT=demo"},
+}
+
 // rendered returns the typed objects of each manifest of this quickstart, rendered as up.sh renders them.
 func rendered(t *testing.T) map[string][]any {
 	t.Helper()
-	files := map[string][]string{
-		"manifests/hub-prometheus.yaml":     {"HUB_NAME=hub"},
-		"manifests/hub-otel-collector.yaml": {"HUB_NAME=hub", "TENANT=demo"},
-		"manifests/ingest-gateway.yaml":     {"TENANT=demo"},
-		"manifests/spoke-collector.yaml":    {"CLAIM=hub", "GATEWAY_URL=https://" + hubIP + ":31001"},
-		"manifests/hub-policies.yaml":       nil,
-		"manifests/spoke-policies.yaml":     {"TEAM=team-a", "SPOKE=spoke-a"},
-		"manifests/spokecluster.yaml":       {"SPOKE=spoke-a", "IDENTITY=spiffe://quickstart.local/agent/1/spoke-a", "TENANT=demo"},
-	}
 	out := map[string][]any{}
-	for f, kv := range files {
+	for f, kv := range manifestArgs {
 		for _, d := range docs(t, subst(t, f, kv...)) {
 			out[f] = append(out[f], strictObject(t, f, d))
 		}
@@ -225,6 +227,83 @@ func TestManifestsDecodeStrictly(t *testing.T) {
 	for _, f := range []string{"00-base", "keycloak", "loki", "tempo", "grafana", "workloads"} {
 		if raw := subst(t, "../quickstart/manifests/"+f+".yaml"); !strings.Contains(raw, "kind:") {
 			t.Errorf("%s: empty render", f)
+		}
+	}
+}
+
+// registryImages returns the images of the rendered manifest docs that a kind node pulls from a registry:
+// each "image" field, except where imagePullPolicy is Never (an image that up.sh builds).
+func registryImages(t *testing.T, file, raw string, into map[string]bool) {
+	t.Helper()
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if img, ok := v["image"].(string); ok && v["imagePullPolicy"] != "Never" {
+				into[img] = true
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	for _, d := range docs(t, raw) {
+		var obj any
+		if err := yaml.Unmarshal(d, &obj); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		walk(obj)
+	}
+}
+
+// up.sh pulls the images of hub_images and spoke_images on the host and loads them into the kind nodes.
+// An image that the lists do not have is still pulled by the node, slowly, so the lists must have all
+// images of the manifests.
+func TestDemoImages(t *testing.T) {
+	hub := map[string]bool{}
+	for f, kv := range manifestArgs {
+		registryImages(t, f, subst(t, f, kv...), hub)
+	}
+	single, err := filepath.Glob("../quickstart/manifests/*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range single {
+		registryImages(t, f, subst(t, f), hub)
+	}
+	spoke := map[string]bool{}
+	for _, f := range []string{"../quickstart/manifests/workloads.yaml", "manifests/spoke-collector.yaml"} {
+		kv := manifestArgs[f]
+		registryImages(t, f, subst(t, f, kv...), spoke)
+	}
+	sorted := func(m map[string]bool) []string {
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if got, want := strings.Fields(shell(t, "hub_images")), sorted(hub); !slices.Equal(got, want) {
+		t.Errorf("hub_images = %v, want %v", got, want)
+	}
+	gotSpoke := strings.Fields(shell(t, "spoke_images"))
+	if want := sorted(spoke); !slices.Equal(gotSpoke, want) {
+		t.Errorf("spoke_images = %v, want %v", gotSpoke, want)
+	}
+	// up.sh loads an image into the spokes only while it loads it into the hub.
+	for _, img := range gotSpoke {
+		if !hub[img] {
+			t.Errorf("spoke image %s is not a hub image", img)
+		}
+	}
+	for _, img := range []string{"quay.io/keycloak/keycloak", "docker.io/library/busybox", "docker.io/otel/opentelemetry-collector-contrib"} {
+		if !slices.ContainsFunc(sorted(hub), func(s string) bool { return strings.HasPrefix(s, img+":") }) {
+			t.Errorf("no image %s in the manifests; the walk of registryImages is broken", img)
 		}
 	}
 }

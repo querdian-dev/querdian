@@ -88,6 +88,35 @@ all_clusters() {
   for s in "${SPOKES[@]}"; do spoke_cluster "$s"; echo; done
 }
 
+# --- images of the demo stack -------------------------------------------------------------------------
+# The kubelet pulls one image at a time, so on a slow connection the pulls of the hub take longer than the
+# rollout timeouts of up.sh. Also, each spoke and each new run pull the same images again. Thus up.sh
+# pulls each image one time on the host and loads it into the kind nodes. The local images stay after
+# down.sh, so the next run does not download them again.
+
+# demo_images FILE...: the registry images of the manifests, one per line, sorted. An image with a
+# placeholder is built by up.sh and is not in the list.
+demo_images() {
+  sed -n 's/^[[:space:]-]*image:[[:space:]]*//p' "$@" |
+    sed -e 's/[[:space:]]*#.*$//' -e 's/^["'\'']//' -e 's/["'\'']$//' | grep -v '@@' | sort -u
+}
+# The hub gets the images of all manifests of both quickstarts. A spoke gets only its workloads and its
+# collector.
+hub_images() { demo_images "$QS_DIR"/manifests/*.yaml "$MC_DIR"/manifests/*.yaml; }
+spoke_images() { demo_images "$QS_DIR/manifests/workloads.yaml" "$MC_DIR/manifests/spoke-collector.yaml"; }
+
+# pull_images IMAGE...: pulls each image that is not local yet.
+pull_images() {
+  local img
+  for img in "$@"; do
+    if docker image inspect "$img" >/dev/null 2>&1; then
+      echo "$img: local"
+      continue
+    fi
+    docker pull "$img" || return 1
+  done
+}
+
 # The identity of the agent of a spoke: one URI SAN, the last path segment is the SpokeCluster name.
 # The middle segment is the cert generation (docs/multicluster.md, "the agent certificate").
 agent_identity() { printf 'spiffe://%s/agent/1/%s' "$TRUST_DOMAIN" "$1"; }

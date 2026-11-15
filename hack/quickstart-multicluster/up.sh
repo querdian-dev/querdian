@@ -26,12 +26,14 @@ CLEANUP_ON_FAILURE="${CLEANUP_ON_FAILURE:-0}"
 WORK="$(mktemp -d)"
 T0=$SECONDS
 BUILD_PID=""
+PULL_PID=""
 
 on_exit() {
   local rc=$? c
   set +e
   pf_stop
   [ -z "$BUILD_PID" ] || kill "$BUILD_PID" 2>/dev/null
+  [ -z "$PULL_PID" ] || kill "$PULL_PID" 2>/dev/null
   rm -rf "$WORK"
   if [ $rc -ne 0 ]; then
     echo "--- up.sh failed (exit $rc) ---" >&2
@@ -72,12 +74,16 @@ nodeport() { k -n "$1" get svc "$2" -o jsonpath="{.spec.ports[?(@.name==\"$3\")]
 # agent_rejected: the agent of the spoke logged the rejection of a sync because the spoke is suspended.
 agent_rejected() { ks "$1" -n querdian logs deploy/querdian-agent 2>/dev/null | grep -q 'the SpokeCluster is suspended'; }
 
-# --- 1. image (built in the background while the clusters start) ------------------------------------------
+# --- 1. images (built and pulled in the background while the clusters start) -------------------------------
 if [ "$SKIP_BUILD" != 1 ]; then
   step "building $IMAGE_REPO:$IMAGE_TAG (background)"
   (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") >"$WORK/build.log" 2>&1 &
   BUILD_PID=$!
 fi
+step "pulling the images of the demo stack (background, see lib.sh)"
+# shellcheck disable=SC2046 # image names have no spaces
+pull_images $(hub_images) >"$WORK/pull.log" 2>&1 &
+PULL_PID=$!
 
 # --- 2. kind clusters -------------------------------------------------------------------------------------------
 # Each cluster has its own pod and Service ranges, so that addresses in logs and traces are unique. The
@@ -133,9 +139,27 @@ if [ -n "$BUILD_PID" ]; then
   BUILD_PID=""
 fi
 docker image inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 || die "image $IMAGE_REPO:$IMAGE_TAG not found"
-step "loading $IMAGE_REPO:$IMAGE_TAG into the three clusters"
+step "waiting for the image pulls (slow on the first run only)"
+if ! wait "$PULL_PID"; then PULL_PID=""; tail -30 "$WORK/pull.log" >&2; die "image pull failed"; fi
+PULL_PID=""
+step "loading the images into the three clusters"
+# One archive for each image: podman save needs --multi-image-archive for more than one image, and
+# docker save does not know that flag.
 docker save -o "$WORK/image.tar" "$IMAGE_REPO:$IMAGE_TAG"
 for c in $(all_clusters); do kind load image-archive "$WORK/image.tar" --name "$c"; done
+SPOKE_IMAGES=" $(spoke_images | tr '\n' ' ')"
+for img in $(hub_images); do
+  # docker save fails for some multi-platform images (for example with the containerd image store of
+  # Docker Desktop). The kind nodes then pull that image themselves, as before.
+  if ! docker save -o "$WORK/image.tar" "$img" 2>"$WORK/save.err"; then
+    info "WARNING: cannot save $img ($(tail -1 "$WORK/save.err")); the kind nodes pull it themselves"
+    continue
+  fi
+  kind load image-archive "$WORK/image.tar" --name "$CLUSTER"
+  case "$SPOKE_IMAGES" in
+    *" $img "*) for s in "${SPOKES[@]}"; do kind load image-archive "$WORK/image.tar" --name "$(spoke_cluster "$s")"; done ;;
+  esac
+done
 rm -f "$WORK/image.tar"
 
 # --- 5. hub: the stack of the single-cluster quickstart --------------------------------------------------------
