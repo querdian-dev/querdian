@@ -1,7 +1,9 @@
 name: changes
 description: >-
   Runs hack/ci/changes.sh for the push or the pull request. The outputs tell the later steps of the job
-  whether the change can affect them. Run actions/checkout with fetch-depth 0 before this action.
+  whether the change can affect them. Run actions/checkout with fetch-depth 0 before this action, so that
+  the diff can find the base commit; filter blob:none is safe, because the diff reads no file contents.
+  A shallow clone does not skip a needed step: the diff fails, and the script gives go=true.
 outputs:
   go:
     description: "\"false\" if only documentation changed: the job can skip its steps"
