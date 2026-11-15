@@ -32,9 +32,15 @@ on_exit() {
   local rc=$? c
   set +e
   pf_stop
-  # kill stops the background subshell only; a running docker build or kind create ends by itself.
+  # kill stops the background subshell only; a running docker build ends by itself. A background job
+  # ignores Ctrl-C, so up.sh also stops a running kind create and waits for it. Otherwise down.sh
+  # (CLEANUP_ON_FAILURE=1) can run while kind creates a cluster, and that cluster stays.
   [ -z "$BUILD_PID" ] || kill "$BUILD_PID" 2>/dev/null
-  [ -z "$CLUSTERS_PID" ] || kill "$CLUSTERS_PID" 2>/dev/null
+  if [ -n "$CLUSTERS_PID" ]; then
+    pkill -TERM -P "$CLUSTERS_PID" 2>/dev/null
+    kill "$CLUSTERS_PID" 2>/dev/null
+    wait "$CLUSTERS_PID" 2>/dev/null
+  fi
   rm -rf "$WORK"
   if [ $rc -ne 0 ]; then
     echo "--- up.sh failed (exit $rc) ---" >&2
@@ -117,6 +123,8 @@ YAML
   done
 }
 step "kind clusters $(all_clusters | paste -sd, - | sed 's/,/, /g') (background)"
+info "The output of kind goes to a log. If kind fails, up.sh shows the log after the image pulls."
+info "On a first run, kind also downloads its node image, at the same time as the demo images."
 T_CLUSTER=$SECONDS
 create_clusters >"$WORK/clusters.log" 2>&1 &
 CLUSTERS_PID=$!
@@ -130,7 +138,7 @@ pull_images $(hub_images)
 step "waiting for the kind clusters"
 if ! wait "$CLUSTERS_PID"; then CLUSTERS_PID=""; tail -30 "$WORK/clusters.log" >&2; die "kind create cluster failed"; fi
 CLUSTERS_PID=""
-info "clusters created in $((SECONDS - T_CLUSTER))s"
+info "clusters ready, $((SECONDS - T_CLUSTER))s after the start of kind"
 kubectl config use-context "$KCTX" >/dev/null
 
 step "CoreDNS rewrite $KC_HOST -> keycloak.keycloak.svc (hub)"
