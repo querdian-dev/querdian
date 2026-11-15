@@ -11,32 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  # See the changes job in ci.yml. The weekly run always analyzes the code.
-  changes:
-    name: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      go: ${{ steps.classify.outputs.go }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - id: classify
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: hack/ci/changes.sh "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
-
   analyze:
     name: codeql (go)
-    needs: changes
     # Code scanning on a private repository needs GitHub Advanced Security; skipped until public.
-    if: >-
-      ${{ !cancelled() && github.event.repository.private == false &&
-      (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -47,13 +25,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          fetch-depth: 0
+      - id: changes
+        # A push to main and the weekly run always analyze the code, so that each commit of main has an
+        # analysis for the comparison with a pull request.
+        if: github.event_name == 'pull_request'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: hack/ci/changes.sh "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+      - if: steps.changes.outputs.go != 'false'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - if: steps.changes.outputs.go != 'false'
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: go
           build-mode: autobuild
-      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - if: steps.changes.outputs.go != 'false'
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: "/language:go"
