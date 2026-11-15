@@ -32,6 +32,7 @@ on_exit() {
   local rc=$? c
   set +e
   pf_stop
+  # kill stops the background subshell only; a running docker build or docker pull ends by itself.
   [ -z "$BUILD_PID" ] || kill "$BUILD_PID" 2>/dev/null
   [ -z "$PULL_PID" ] || kill "$PULL_PID" 2>/dev/null
   rm -rf "$WORK"
@@ -140,25 +141,36 @@ if [ -n "$BUILD_PID" ]; then
 fi
 docker image inspect "$IMAGE_REPO:$IMAGE_TAG" >/dev/null 2>&1 || die "image $IMAGE_REPO:$IMAGE_TAG not found"
 step "waiting for the image pulls (slow on the first run only)"
-if ! wait "$PULL_PID"; then PULL_PID=""; tail -30 "$WORK/pull.log" >&2; die "image pull failed"; fi
+wait "$PULL_PID" || true # pull_images does not fail; a missing image is reported below
 PULL_PID=""
+grep '^WARNING' "$WORK/pull.log" | sed 's/^/    /' || true
 step "loading the images into the three clusters"
 # One archive for each image: podman save needs --multi-image-archive for more than one image, and
 # docker save does not know that flag.
 docker save -o "$WORK/image.tar" "$IMAGE_REPO:$IMAGE_TAG"
 for c in $(all_clusters); do kind load image-archive "$WORK/image.tar" --name "$c"; done
+# The demo images only make the start faster. If an image cannot be pulled, saved or loaded, the kind
+# nodes pull it themselves, as before. Example: with the containerd image store of Docker Desktop, the
+# save or the import of a multi-platform image can fail (kind issue 3795).
 SPOKE_IMAGES=" $(spoke_images | tr '\n' ' ')"
 for img in $(hub_images); do
-  # docker save fails for some multi-platform images (for example with the containerd image store of
-  # Docker Desktop). The kind nodes then pull that image themselves, as before.
-  if ! docker save -o "$WORK/image.tar" "$img" 2>"$WORK/save.err"; then
-    info "WARNING: cannot save $img ($(tail -1 "$WORK/save.err")); the kind nodes pull it themselves"
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    info "WARNING: $img was not pulled (see the pull above); the kind nodes pull it themselves"
     continue
   fi
-  kind load image-archive "$WORK/image.tar" --name "$CLUSTER"
-  case "$SPOKE_IMAGES" in
-    *" $img "*) for s in "${SPOKES[@]}"; do kind load image-archive "$WORK/image.tar" --name "$(spoke_cluster "$s")"; done ;;
-  esac
+  if ! docker save -o "$WORK/image.tar" "$img" 2>"$WORK/load.err"; then
+    info "WARNING: cannot save $img ($(tail -1 "$WORK/load.err")); the kind nodes pull it themselves"
+    continue
+  fi
+  targets="$CLUSTER"
+  case "$SPOKE_IMAGES" in *" $img "*) targets="$(all_clusters)" ;; esac
+  for c in $targets; do
+    if kind load image-archive "$WORK/image.tar" --name "$c" >"$WORK/load.err" 2>&1; then
+      info "$img -> $c"
+    else
+      info "WARNING: cannot load $img into $c ($(tail -1 "$WORK/load.err")); the node pulls it itself"
+    fi
+  done
 done
 rm -f "$WORK/image.tar"
 
