@@ -277,7 +277,7 @@ with a non-zero status on any failure.
 | SRE and admin | sam sees both spokes and not the hub. carol sees all three clusters. For each cluster, the data with its cluster label comes from pods of that cluster. |
 | State | Each `SpokeCluster` has a recent `lastSyncTime` and an `observedGeneration` equal to its generation. Each spoke has one `SpokePolicy` that is `Ready`. The agent wrote `Ready` on the spoke `AccessPolicy`. No proxy runs in a spoke. The dashboard API shows the origin of each policy. |
 | Suspend and unsuspend | With spoke-a suspended, alice gets `403` on all three backends. The dashboard API reports `policy_source_expired` and the expired state. bob and sam keep their access. The metric `querdian_cluster_policy_expired` is 1 for spoke-a. After the unsuspend, the access of alice returns. If the script stops early, it unsuspends spoke-a. |
-| Live data | The checks above count only the data of real pods. They exclude the history pods, so the history alone cannot pass them. |
+| Live data | The checks that prove that data arrives count only the data of real pods. They exclude the history pods, so the history alone cannot pass them. The isolation checks also cover the history. |
 | History | At a time 10 minutes after the start of the history, carol finds metrics, logs and traces of all three clusters, and the metrics of each cluster come from pods of that cluster. alice, bob and hana see only `order-service` of their own cluster in the history too. |
 | Grafana | Health and the three data sources. |
 

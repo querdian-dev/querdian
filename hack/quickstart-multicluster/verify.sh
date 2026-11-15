@@ -223,6 +223,9 @@ for u in "${TEAMS[@]}"; do
 done
 call "$SAM" /loki/loki/api/v1/label/k8s_cluster_name/values --data-urlencode "query=$LOGS_Q"
 expect "sam (sre): log clusters" "$BOTH_SPOKES" "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")"
+# The same without the filter on live data: an isolation check must also cover the history.
+call "$SAM" /loki/loki/api/v1/label/k8s_cluster_name/values
+expect "sam (sre): log clusters, history included" "$BOTH_SPOKES" "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")"
 call "$CAROL" /loki/loki/api/v1/label/k8s_cluster_name/values --data-urlencode "query=$LOGS_Q"
 expect "carol (unrestricted): log clusters" "$ALL" "$(jq -r '.data // [] | sort | join(",")' <<<"$BODY")"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do
@@ -260,8 +263,14 @@ expect "sam (sre): the trace of alice by ID" 200 "$STATUS"
 for c in "$HUB_NAME" "${SPOKES[@]}"; do
   want=1
   [ "$c" = "$HUB_NAME" ] && want=0
-  call "$SAM" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
-  if [ $want = 1 ]; then expect_ge "sam (sre): traces of $c" 1 "$(tempo_n)"; else expect "sam (sre): no traces of $c" 0 "$(tempo_n)"; fi
+  # A positive check counts live spans only; the negative check (the hub) also covers the history.
+  if [ $want = 1 ]; then
+    call "$SAM" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
+    expect_ge "sam (sre): traces of $c" 1 "$(tempo_n)"
+  else
+    call "$SAM" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" }" --data-urlencode limit=5
+    expect "sam (sre): no traces of $c" 0 "$(tempo_n)"
+  fi
   call "$CAROL" /tempo/api/search --data-urlencode "q={ resource.k8s.cluster.name = \"$c\" && $T_LIVE }" --data-urlencode limit=5
   expect_ge "carol (unrestricted): traces of $c" 1 "$(tempo_n)"
 done
@@ -283,6 +292,8 @@ for c in "$HUB_NAME" "${SPOKES[@]}"; do
   call "$CAROL" /prom/api/v1/query --data-urlencode "query=count by (pod) (demo_requests_total{cluster=\"$c\"})" --data-urlencode "time=$OLD"
   expect "carol: the metrics history of $c comes from pods of $c" ok "$(only_pods_of "$c" "$(prom_vals pod)")"
 done
+# Loki answers a query at OLD from its store only (OLD is older than query_ingesters_within, 3 h). The
+# history chunks span more than max_chunk_age, so Loki flushes them within about 30 s after the push.
 LOGS_OLD='sum by (k8s_cluster_name, k8s_namespace_name) (count_over_time({k8s_namespace_name=~".+"}[10m]))'
 call "$CAROL" /loki/loki/api/v1/query --data-urlencode "query=$LOGS_OLD" --data-urlencode "time=$OLD"
 expect "carol: log history -> clusters" "$ALL" "$(prom_vals k8s_cluster_name)"
