@@ -1,0 +1,22 @@
+name: changes
+description: >-
+  Runs hack/ci/changes.sh for the push or the pull request. The outputs tell the later steps of the job
+  whether the change can affect them. Run actions/checkout with fetch-depth 0 before this action.
+outputs:
+  go:
+    description: "\"false\" if only documentation changed: the job can skip its steps"
+    value: ${{ steps.classify.outputs.go }}
+  site:
+    description: "\"false\" if no code and nothing in site/ or docs/img/ changed: lint and test-race can skip their steps"
+    value: ${{ steps.classify.outputs.site }}
+runs:
+  using: composite
+  steps:
+    - id: classify
+      # bash runs with -eo pipefail here, so a failure of the script fails the job.
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: '"$GITHUB_WORKSPACE/hack/ci/changes.sh" "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"'
