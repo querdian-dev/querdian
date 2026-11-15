@@ -13,8 +13,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Finds the kind of files that the push or the pull request changes (hack/ci/changes.sh). The other jobs
+  # skip when the change cannot affect them: a skipped job counts as passed for the required checks, but a
+  # workflow that does not start (paths-ignore) does not. If this job fails, all jobs run.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.classify.outputs.go }}
+      site: ${{ steps.classify.outputs.site }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: hack/ci/changes.sh "$EVENT" "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   lint:
     name: lint
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true' || needs.changes.outputs.site == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,6 +52,8 @@ jobs:
 
   test-race:
     name: test-race
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true' || needs.changes.outputs.site == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,6 +67,8 @@ jobs:
 
   envtest:
     name: envtest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,6 +82,8 @@ jobs:
 
   fuzz:
     name: fuzz
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -68,6 +98,8 @@ jobs:
 
   govulncheck:
     name: govulncheck
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -83,6 +115,8 @@ jobs:
 
   licenses:
     name: licenses
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -96,6 +130,8 @@ jobs:
 
   generate:
     name: generate
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -117,6 +153,8 @@ jobs:
 
   chart:
     name: chart
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -132,6 +170,8 @@ jobs:
 
   e2e:
     name: e2e
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.go == 'true') }}
     # Differential and equivalence suites against real Prometheus, Loki and Tempo containers (docker is
     # available on GitHub-hosted runners). Not a required check at first: the suites are new and depend
     # on image pulls; promote it in the ruleset once it has been stable.
