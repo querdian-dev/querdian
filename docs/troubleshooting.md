@@ -70,6 +70,18 @@ The table gives each reason that the server can set.
 | `issuer` | Wrong issuer. |
 | `missing_username` | No username claim. |
 
+**Grafana stays logged in, but all queries get `401` with reason `expired`.** Grafana forwards the access
+token of the user (data source option *Forward OAuth Identity*, `oauthPassThru`). The access token
+expires earlier than the Grafana session. For generic OAuth, `use_refresh_token` is `false` by default
+(examined with Grafana 13.3.0). Grafana then does not check the expiry of the token, and it forwards the
+expired token. Set `use_refresh_token = true` in the OAuth section of Grafana (for generic OAuth:
+`GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN=true`). Grafana then gets a new access token with the refresh
+token. When the session at the identity provider ends, the refresh fails and Grafana logs the user out.
+The identity provider must issue a refresh token to the Grafana client. Some providers need a client
+setting or an extra scope for this. Do not use an offline token (scope `offline_access`) for this purpose:
+it is not bound to the session at the identity provider, and it stays valid after a logout. The quickstart
+has this setting.
+
 ### Policy status reasons
 
 These reasons are on the policy objects, not on requests: `Compiled`, `InvalidMatcher`, `UnknownBackend`,
