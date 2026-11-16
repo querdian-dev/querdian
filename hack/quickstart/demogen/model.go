@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"regexp"
 	"time"
 )
 
@@ -81,6 +82,7 @@ func (i *incident) applies(r *route) bool {
 
 type service struct {
 	Name, Namespace, Pod, Instance string
+	Cluster                        string // cluster label value; empty in the single-cluster quickstart
 	Format                         string // "json" or "logfmt"
 	Routes                         []route
 	Incidents                      []incident
@@ -168,6 +170,27 @@ func services() []*service {
 		},
 	}
 	return []*service{order, pay}
+}
+
+// clusterName is the form of a cluster name: a DNS label, so that it is valid in a pod name too.
+var clusterName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// historyPod is the pod name of the history of a service in a cluster of the multi-cluster quickstart.
+// hack/quickstart-multicluster/lib.sh (history_pod) uses the same form, because verify.sh accepts these
+// pods as pods of their cluster.
+func historyPod(service, cluster string) string { return service + "-history-" + cluster }
+
+// inCluster sets the cluster of each service. Each cluster gets pod names of its own, so that the
+// history of a cluster never has the pod name of another cluster. An empty cluster changes nothing.
+func inCluster(svcs []*service, cluster string) []*service {
+	if cluster == "" {
+		return svcs
+	}
+	for _, s := range svcs {
+		s.Cluster = cluster
+		s.Pod = historyPod(s.Name, cluster)
+	}
+	return svcs
 }
 
 func kv(pairs ...string) [][2]string {

@@ -7,6 +7,9 @@
 //	demogen loki  -url http://loki:3100  -tenant demo -hours 24
 //	demogen tempo -url http://tempo:4318 -tenant demo -hours 24
 //	demogen stats -hours 24
+//
+// The multi-cluster quickstart adds -cluster NAME: the cluster label on each series, the resource
+// attributes k8s.cluster.name and cluster, and pod names of that cluster (<service>-history-NAME).
 package main
 
 import (
@@ -20,14 +23,18 @@ import (
 const usage = "usage: demogen metrics|loki|tempo|stats [flags]"
 
 type options struct {
-	hours  int
-	end    int64
-	seed   uint64
-	step   time.Duration
-	url    string
-	tenant string
-	batch  int
+	hours   int
+	end     int64
+	seed    uint64
+	step    time.Duration
+	url     string
+	tenant  string
+	batch   int
+	cluster string
 }
+
+// services returns the services of the demo, in the cluster of -cluster.
+func (o *options) services() []*service { return inCluster(services(), o.cluster) }
 
 func main() {
 	if len(os.Args) < 2 {
@@ -44,9 +51,14 @@ func main() {
 	fs.StringVar(&o.url, "url", "", "push URL (loki: base URL, tempo: OTLP/HTTP base URL)")
 	fs.StringVar(&o.tenant, "tenant", "demo", "tenant (X-Scope-OrgID)")
 	fs.IntVar(&o.batch, "batch", 0, "records or traces per request (default 1500 logs, 100 traces)")
+	fs.StringVar(&o.cluster, "cluster", "", "cluster label value (multi-cluster quickstart; default: no cluster label)")
 	_ = fs.Parse(os.Args[2:])
 	if o.hours < 1 || o.hours > 24*30 {
 		fmt.Fprintln(os.Stderr, "demogen: -hours must be between 1 and 720")
+		os.Exit(2)
+	}
+	if o.cluster != "" && !clusterName.MatchString(o.cluster) {
+		fmt.Fprintln(os.Stderr, "demogen: -cluster must be a DNS label (lower case letters, digits and -)")
 		os.Exit(2)
 	}
 	end := time.Now()
@@ -61,7 +73,7 @@ func main() {
 
 func allEvents(o *options, end time.Time) []*events {
 	var evs []*events
-	for _, s := range services() {
+	for _, s := range o.services() {
 		evs = append(evs, genEvents(s, o.seed, end, o.hours))
 	}
 	return evs
@@ -72,7 +84,7 @@ func run(ctx context.Context, cmd string, o *options, end time.Time) error {
 	case "metrics":
 		end = end.Truncate(o.step)
 		var per [][]*family
-		for _, s := range services() {
+		for _, s := range o.services() {
 			per = append(per, genMetrics(s, o.seed, o.hours, o.step))
 		}
 		return writeOpenMetrics(os.Stdout, per, end, o.hours, o.step)
@@ -94,7 +106,7 @@ func run(ctx context.Context, cmd string, o *options, end time.Time) error {
 		return err
 	case "stats":
 		end = end.Truncate(o.step)
-		for _, s := range services() {
+		for _, s := range o.services() {
 			fams := genMetrics(s, o.seed, o.hours, o.step)
 			nSeries, nSamples := 0, 0
 			for _, f := range fams {

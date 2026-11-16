@@ -31,6 +31,17 @@ ISSUER="http://$KC_HOST:$KEYCLOAK_PORT/realms/observability"
 # podman behind a docker shim needs kind's podman provider.
 if docker --version 2>/dev/null | grep -qi podman; then export KIND_EXPERIMENTAL_PROVIDER=podman; fi
 
+# build_demogen DIR: builds the image of the demo data generator (hack/quickstart/demogen). The image is
+# also the Prometheus image, so that a backfill container can run promtool. DIR is a scratch directory.
+build_demogen() {
+  local ctx="$1/demogen-ctx"
+  mkdir -p "$ctx"
+  cp "$ROOT/go.mod" "$ctx/"
+  cp -R "$QS_DIR/demogen" "$ctx/demogen"
+  cp "$QS_DIR/demogen/Dockerfile" "$ctx/Dockerfile"
+  docker build -t "$DEMOGEN_IMAGE" "$ctx"
+}
+
 step() { printf '\n=== %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 ok() { printf 'PASS: %s\n' "$*"; }

@@ -127,6 +127,15 @@ pull_images() {
   done
 }
 
+# history_pod SERVICE CLUSTER: the pod name of the demo history of SERVICE in CLUSTER. demogen -cluster
+# uses the same form (historyPod in hack/quickstart/demogen/model.go). No real pod has this name, so
+# verify.sh adds these names to the pods of their cluster.
+history_pod() { printf '%s-history-%s' "$1" "$2"; }
+HISTORY_SERVICES="order-service payment-service" # the services of demogen
+# HISTORY_POD_RE matches the history pods (PromQL, LogQL and TraceQL). A check that must prove that live
+# data arrives excludes these pods, because the history alone must not satisfy it.
+HISTORY_POD_RE='.*-history-.*'
+
 # The identity of the agent of a spoke: one URI SAN, the last path segment is the SpokeCluster name.
 # The middle segment is the cert generation (docs/multicluster.md, "the agent certificate").
 agent_identity() { printf 'spiffe://%s/agent/1/%s' "$TRUST_DOMAIN" "$1"; }

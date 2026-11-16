@@ -1,8 +1,14 @@
-# Prometheus of the hub. It is hack/quickstart/manifests/prometheus.yaml with three changes:
+# Prometheus of the hub. It is hack/quickstart/manifests/prometheus.yaml with these changes:
 #  * the scrape config writes the target label cluster="hub" (multicluster.hubCluster), so hub
 #    telemetry carries the hub cluster label (docs/multicluster.md, step 2);
 #  * --web.enable-otlp-receiver: the ingest gateway writes the metrics of the spokes over OTLP;
-#  * no backfill init container (this demo has no history).
+#  * the history of each cluster (hack/quickstart/demogen with -cluster): the init container writes the
+#    blocks of the hub before Prometheus starts. The spokes connect later, after the check of migration
+#    step 2, so up.sh writes their blocks with the sidecar `history` into the running Prometheus.
+#    Prometheus loads new blocks every minute (reloadBlocks) and does not change its head for them.
+#    Each history ends before the live data of its cluster starts (-end), so no time is counted twice.
+#    LIMIT: after a restart of the container, Prometheus truncates its head to the end of the newest
+#    block, so the first minutes of live data are lost. A new pod has only the history of the hub.
 #
 # CLUSTER-LABEL INTEGRITY: a scraped series that has its own cluster="..." label keeps the value of the
 # target label, and Prometheus renames the series label to exported_cluster (honor_labels: false).
@@ -87,13 +93,44 @@ spec:
       annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9090", prometheus.io/path: /metrics}
     spec:
       serviceAccountName: prometheus
+      initContainers:
+        # The history of the hub (as in hack/quickstart/manifests/prometheus.yaml, with the hub cluster).
+        - name: backfill
+          image: @@DEMOGEN_IMAGE@@
+          imagePullPolicy: Never # built by up.sh and loaded into kind
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              if ls /prometheus/01* >/dev/null 2>&1; then echo "history already in place"; exit 0; fi
+              demogen metrics -hours @@DEMO_HISTORY_HOURS@@ -step 30s -end @@HISTORY_END@@ -seed 1 -cluster @@HUB_NAME@@ > /work/history.om
+              promtool tsdb create-blocks-from openmetrics /work/history.om /prometheus
+              rm -f /work/history.om
+          resources:
+            requests: {cpu: 50m, memory: 100Mi}
+            limits: {memory: 400Mi}
+          volumeMounts:
+            - {name: data, mountPath: /prometheus}
+            - {name: work, mountPath: /work}
       containers:
+        # The history of the spokes: up.sh runs demogen and promtool in this container (kubectl exec).
+        # It only waits; its own memory limit keeps promtool away from the limit of Prometheus.
+        - name: history
+          image: @@DEMOGEN_IMAGE@@
+          imagePullPolicy: Never
+          command: [sh, -c, 'trap "exit 0" TERM; while :; do sleep 3600 & wait $!; done']
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 400Mi}
+          volumeMounts:
+            - {name: data, mountPath: /prometheus}
+            - {name: work, mountPath: /work}
         - name: prometheus
           image: docker.io/prom/prometheus:v3.15.1
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=24h
+            - --storage.tsdb.retention.time=@@RETENTION_HOURS@@h
             - --web.enable-otlp-receiver
           ports: [{containerPort: 9090}]
           readinessProbe: {httpGet: {path: /-/ready, port: 9090}, periodSeconds: 5}
@@ -107,4 +144,6 @@ spec:
         - name: config
           configMap: {name: prometheus}
         - name: data
+          emptyDir: {}
+        - name: work
           emptyDir: {}

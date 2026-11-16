@@ -54,21 +54,12 @@ if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
 fi
 
 # --- 1. images (built in the background while the cluster starts) ------------------------
-# Querdian itself, and the small demo data generator (hack/quickstart/demogen; the image is also
-# the Prometheus image, so that the backfill init container can run promtool).
-build_demogen() {
-  local ctx="$WORK/demogen-ctx"
-  mkdir -p "$ctx"
-  cp "$ROOT/go.mod" "$ctx/"
-  cp -R "$QS_DIR/demogen" "$ctx/demogen"
-  cp "$QS_DIR/demogen/Dockerfile" "$ctx/Dockerfile"
-  docker build -t "$DEMOGEN_IMAGE" "$ctx"
-}
+# Querdian itself, and the small demo data generator (build_demogen in lib.sh).
 if [ "$SKIP_BUILD" != 1 ] || ! docker image inspect "$DEMOGEN_IMAGE" >/dev/null 2>&1; then
   step "building $IMAGE_REPO:$IMAGE_TAG and $DEMOGEN_IMAGE (background)"
   (
     if [ "$SKIP_BUILD" != 1 ]; then (cd "$ROOT" && make docker-build VERSION="$IMAGE_TAG") || exit 1; fi
-    build_demogen
+    build_demogen "$WORK"
   ) >"$WORK/build.log" 2>&1 &
   BUILD_PID=$!
 fi

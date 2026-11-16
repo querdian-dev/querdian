@@ -28,7 +28,11 @@ type family struct {
 func leLabel(b float64) string { return strconv.FormatFloat(b, 'g', -1, 64) }
 
 func (s *service) baseLabels() string {
-	return fmt.Sprintf(`job=%q,namespace=%q,pod=%q,instance=%q`, s.Name, s.Namespace, s.Pod, s.Instance)
+	l := fmt.Sprintf(`job=%q,namespace=%q,pod=%q,instance=%q`, s.Name, s.Namespace, s.Pod, s.Instance)
+	if s.Cluster != "" {
+		l += fmt.Sprintf(`,cluster=%q`, s.Cluster)
+	}
+	return l
 }
 
 func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
