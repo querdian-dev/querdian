@@ -112,6 +112,13 @@ Details and the known limitations are in [docs/limitations.md](docs/limitations.
 * The snapshot rebuild debounce has a maximum wait of 8 intervals (2 seconds by default) under a
   steady stream of events, and a failed rebuild runs again after one second.
 
+### Fixed
+
+* Quickstarts: Grafana stayed logged in, but after 30 minutes each query got `401` (reason `expired`).
+  Grafana forwarded the expired access token, because `use_refresh_token` was off. Grafana now gets a new
+  access token with the refresh token, and it logs the user out when the Keycloak session ends (8 hours).
+  `docs/troubleshooting.md` describes the setting for other Grafana installations.
+
 ### Security
 
 * **Go 1.27.4.** Affects 0.1.2 and earlier. The binary and the images are built with Go 1.27.4,

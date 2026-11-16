@@ -93,6 +93,21 @@ func provisionedUIDs(t *testing.T) map[string]string {
 	return out
 }
 
+// Grafana forwards the access token of the user to Querdian. Without use_refresh_token, Grafana forwards
+// the token also after it expires (30 minutes in the realm), and each query gets 401 while the user
+// stays logged in to Grafana.
+func TestGrafanaRefreshesTheToken(t *testing.T) {
+	raw, err := os.ReadFile("../manifests/grafana.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`oauthPassThru: true`, `{name: GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN, value: "true"}`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("grafana.yaml lacks %s", want)
+		}
+	}
+}
+
 func TestDashboards(t *testing.T) {
 	uids := provisionedUIDs(t)
 	files, err := filepath.Glob("*.json")
