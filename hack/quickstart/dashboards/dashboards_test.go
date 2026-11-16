@@ -1,5 +1,5 @@
 // Package dashboards only holds the demo dashboards (JSON, provisioned into Grafana by
-// hack/quickstart/up.sh) and the test that checks them.
+// hack/quickstart/up.sh) and the tests that check them and the Grafana manifest that loads them.
 package dashboards
 
 import (
@@ -11,6 +11,10 @@ import (
 	"testing"
 
 	"github.com/prometheus/prometheus/promql/parser"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/querdian-dev/querdian/pkg/logql"
 	"github.com/querdian-dev/querdian/pkg/traceql"
@@ -95,16 +99,66 @@ func provisionedUIDs(t *testing.T) map[string]string {
 
 // Grafana forwards the access token of the user to Querdian. Without use_refresh_token, Grafana forwards
 // the token also after it expires (30 minutes in the realm), and each query gets 401 while the user
-// stays logged in to Grafana.
+// stays logged in to Grafana. The test parses the manifest, so a comment or a second entry cannot hide
+// the setting.
 func TestGrafanaRefreshesTheToken(t *testing.T) {
 	raw, err := os.ReadFile("../manifests/grafana.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`oauthPassThru: true`, `{name: GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN, value: "true"}`} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("grafana.yaml lacks %s", want)
+	var env []corev1.EnvVar
+	var sources struct {
+		Datasources []struct {
+			UID      string `json:"uid"`
+			JSONData struct {
+				OAuthPassThru bool `json:"oauthPassThru"`
+			} `json:"jsonData"`
+		} `json:"datasources"`
+	}
+	for _, d := range strings.Split(string(raw), "\n---\n") {
+		var meta metav1.TypeMeta
+		if err := yaml.Unmarshal([]byte(d), &meta); err != nil {
+			t.Fatal(err)
 		}
+		switch meta.Kind {
+		case "ConfigMap":
+			var cm corev1.ConfigMap
+			if err := yaml.Unmarshal([]byte(d), &cm); err != nil {
+				t.Fatal(err)
+			}
+			if ds, ok := cm.Data["datasources.yaml"]; ok {
+				if err := yaml.Unmarshal([]byte(ds), &sources); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case "Deployment":
+			var dep appsv1.Deployment
+			if err := yaml.Unmarshal([]byte(d), &dep); err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range dep.Spec.Template.Spec.Containers {
+				if c.Name == "grafana" {
+					env = c.Env
+				}
+			}
+		}
+	}
+	if len(sources.Datasources) != 3 {
+		t.Fatalf("data sources: %+v", sources.Datasources)
+	}
+	for _, ds := range sources.Datasources {
+		if !ds.JSONData.OAuthPassThru {
+			t.Errorf("data source %s: oauthPassThru is not true", ds.UID)
+		}
+	}
+	var vals []string
+	for _, e := range env {
+		if e.Name == "GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN" {
+			vals = append(vals, e.Value)
+		}
+	}
+	if len(vals) != 1 || vals[0] != "true" {
+		t.Errorf("GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN = %q, want exactly one entry with the value true", vals)
 	}
 }
 
