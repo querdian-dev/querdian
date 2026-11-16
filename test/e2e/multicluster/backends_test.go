@@ -29,7 +29,7 @@ import (
 // Pinned upstream images: the same versions as the single-cluster suites.
 const (
 	promImage  = "docker.io/prom/prometheus:v3.15.1"
-	lokiImage  = "docker.io/grafana/loki:3.7.9"
+	lokiImage  = "docker.io/grafana/loki:3.7.10"
 	tempoImage = "docker.io/grafana/tempo:3.1.1"
 )
 
