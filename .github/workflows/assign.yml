@@ -4,6 +4,8 @@ name: Assign
 # or admin, not a bot, and not the author of the pull request. If the author is the only candidate, the
 # author gets the pull request. A pull request that has an assignee does not change. The candidates come
 # from the repository roles at run time, so a change of the maintainers needs no change here.
+# LIMIT: the filter removes accounts of the type Bot only. A machine user (type User) with the role
+# maintain or admin is a candidate too. Today the machine user querdian-meeseeks has only write.
 #
 # pull_request_target, so that the token can also write to a pull request from a fork. The job does not
 # check out or run code of the pull request. It reads only the number of the pull request from the event,
@@ -50,14 +52,21 @@ jobs:
             pool=$(grep -vxF -- "$author" <<<"$candidates" || true)
             [ -n "$pool" ] || pool="$candidates"
             pick=$(shuf -n 1 <<<"$pool")
-            gh api -X POST "repos/${REPO}/issues/${pr}/assignees" -f "assignees[]=${pick}" >/dev/null
+            # GitHub ignores an assignee that it cannot accept, and still answers 201: check the result.
+            got=$(gh api -X POST "repos/${REPO}/issues/${pr}/assignees" -f "assignees[]=${pick}" --jq '.assignees[].login')
+            if ! grep -qxF -- "$pick" <<<"$got"; then
+              echo "::error::#${pr}: GitHub did not assign ${pick}"
+              exit 1
+            fi
             echo "#${pr} (author ${author}) -> ${pick}"
           }
-          if [ -n "$PR" ]; then
+          if [ -n "${PR:-}" ]; then
             assign "$PR"
           else
-            for pr in $(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" \
-              --jq '.[] | select(.assignees | length == 0) | .number'); do
+            # A variable first: set -e does not apply to a command substitution in the word list of for.
+            prs=$(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.assignees | length == 0) | .number')
+            for pr in $prs; do
               assign "$pr"
             done
           fi
