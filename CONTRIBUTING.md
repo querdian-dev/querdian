@@ -26,7 +26,8 @@ Every commit must be signed off (`git commit -s`), certifying the
 - Dependencies must be Apache-2.0 or on the CNCF allowlist; `make licenses` enforces this.
 - The workflow `Assign` assigns each new pull request to one person with the repository role maintain
   or admin. It selects this person at random. It does not select the author if a different person is
-  available. CODEOWNERS still requests the review.
+  available. This person also gets a review request, when the pull request is ready for review.
+  CODEOWNERS still requests the review of the code owners.
 
 ## Running tests
 
