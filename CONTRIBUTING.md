@@ -24,6 +24,8 @@ Every commit must be signed off (`git commit -s`), certifying the
 - One task = one branch (`t<id>-<short-slug>`) = one pull request.
 - Conventional commits (`feat(policy): …`, `test(logql): …`).
 - Dependencies must be Apache-2.0 or on the CNCF allowlist; `make licenses` enforces this.
+- The workflow `Assign` assigns each new pull request to one random maintainer or admin, but not to its
+  author. CODEOWNERS still requests the review of the code owners.
 
 ## Running tests
 

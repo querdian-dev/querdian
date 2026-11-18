@@ -1,0 +1,63 @@
+name: Assign
+
+# Assigns each new pull request to one random maintainer or admin: a collaborator with the role maintain
+# or admin, not a bot, and not the author of the pull request. If the author is the only candidate, the
+# author gets the pull request. A pull request that has an assignee does not change. The candidates come
+# from the repository roles at run time, so a change of the maintainers needs no change here.
+#
+# pull_request_target, so that the token can also write to a pull request from a fork. The job does not
+# check out or run code of the pull request. It reads only the number of the pull request from the event,
+# through an environment variable, and gets the author from the API.
+#
+# workflow_dispatch assigns each open pull request that has no assignee (for example the pull requests
+# from before this workflow).
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  assign:
+    name: assign
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Assign a random maintainer or admin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # permission=maintain gives the collaborators with the role maintain or admin.
+          candidates=$(gh api --paginate "repos/${REPO}/collaborators?permission=maintain&per_page=100" \
+            --jq '.[] | select(.type == "User") | .login')
+          if [ -z "$candidates" ]; then
+            echo "::error::The repository has no collaborator with the role maintain or admin."
+            exit 1
+          fi
+          assign() {
+            local pr="$1" author count pool pick
+            read -r author count < <(gh api "repos/${REPO}/pulls/${pr}" --jq '"\(.user.login) \(.assignees | length)"')
+            if [ "$count" -gt 0 ]; then
+              echo "#${pr} already has an assignee"
+              return
+            fi
+            pool=$(grep -vxF -- "$author" <<<"$candidates" || true)
+            [ -n "$pool" ] || pool="$candidates"
+            pick=$(shuf -n 1 <<<"$pool")
+            gh api -X POST "repos/${REPO}/issues/${pr}/assignees" -f "assignees[]=${pick}" >/dev/null
+            echo "#${pr} (author ${author}) -> ${pick}"
+          }
+          if [ -n "$PR" ]; then
+            assign "$PR"
+          else
+            for pr in $(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.assignees | length == 0) | .number'); do
+              assign "$pr"
+            done
+          fi
