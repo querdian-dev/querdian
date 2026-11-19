@@ -1,0 +1,92 @@
+name: Assign
+
+# Assigns each new pull request to one random maintainer or admin: a collaborator with the role maintain
+# or admin, not a bot, and not the author of the pull request. If the author is the only candidate, the
+# author gets the pull request. A pull request that has an assignee keeps it. The candidates come from the
+# repository roles at run time, so a change of the maintainers needs no change here.
+#
+# The assignee also gets a review request, in addition to the code owners of CODEOWNERS. There is no
+# review request if the assignee is the author (GitHub does not accept it). A draft pull request gets its
+# assignee when it opens, and the review request when it is ready for review (ready_for_review).
+# LIMIT: the filter removes accounts of the type Bot only. A machine user (type User) with the role
+# maintain or admin is a candidate too. Today the machine user querdian-meeseeks has only write.
+#
+# pull_request_target, so that the token can also write to a pull request from a fork. The job does not
+# check out or run code of the pull request. It reads only the number of the pull request from the event,
+# through an environment variable, and gets the author from the API.
+#
+# workflow_dispatch assigns each open pull request that has no assignee (for example the pull requests
+# from before this workflow).
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  assign:
+    name: assign
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Assign a random maintainer or admin, and request a review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # permission=maintain gives the collaborators with the role maintain or admin.
+          candidates=$(gh api --paginate "repos/${REPO}/collaborators?permission=maintain&per_page=100" \
+            --jq '.[] | select(.type == "User") | .login')
+          if [ -z "$candidates" ]; then
+            echo "::error::The repository has no collaborator with the role maintain or admin."
+            exit 1
+          fi
+          assign() {
+            local pr="$1" author draft assignee pool got
+            read -r author draft assignee < <(gh api "repos/${REPO}/pulls/${pr}" \
+              --jq '"\(.user.login) \(.draft) \(.assignees[0].login // "-")"')
+            if [ "$assignee" != "-" ]; then
+              echo "#${pr} already has the assignee ${assignee}"
+            else
+              pool=$(grep -vxF -- "$author" <<<"$candidates" || true)
+              [ -n "$pool" ] || pool="$candidates"
+              assignee=$(shuf -n 1 <<<"$pool")
+              # GitHub ignores an assignee that it cannot accept, and still answers 201: check the result.
+              got=$(gh api -X POST "repos/${REPO}/issues/${pr}/assignees" -f "assignees[]=${assignee}" --jq '.assignees[].login')
+              if ! grep -qxF -- "$assignee" <<<"$got"; then
+                echo "::error::#${pr}: GitHub did not assign ${assignee}"
+                exit 1
+              fi
+              echo "#${pr} (author ${author}) -> assignee ${assignee}"
+            fi
+            if [ "$assignee" = "$author" ]; then
+              echo "#${pr}: no review request, because the assignee is the author"
+              return
+            fi
+            if [ "$draft" = true ]; then
+              echo "#${pr}: draft, the review request follows when it is ready for review"
+              return
+            fi
+            got=$(gh api -X POST "repos/${REPO}/pulls/${pr}/requested_reviewers" -f "reviewers[]=${assignee}" \
+              --jq '.requested_reviewers[].login')
+            if ! grep -qxF -- "$assignee" <<<"$got"; then
+              echo "::error::#${pr}: GitHub did not request a review from ${assignee}"
+              exit 1
+            fi
+            echo "#${pr}: review requested from ${assignee}"
+          }
+          if [ -n "${PR:-}" ]; then
+            assign "$PR"
+          else
+            # A variable first: set -e does not apply to a command substitution in the word list of for.
+            prs=$(gh api --paginate "repos/${REPO}/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.assignees | length == 0) | .number')
+            for pr in $prs; do
+              assign "$pr"
+            done
+          fi
