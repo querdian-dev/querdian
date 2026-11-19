@@ -19,7 +19,7 @@ import (
 )
 
 // Pinned upstream image (T0.4/T0.5 research used the same version).
-const promImage = "docker.io/prom/prometheus:v3.15.1"
+const promImage = "docker.io/prom/prometheus:v3.16.0"
 
 const (
 	seedPoints = 121 // 30 minutes at 15s
