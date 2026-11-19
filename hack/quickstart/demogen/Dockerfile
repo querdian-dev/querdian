@@ -2,7 +2,7 @@
 # this Dockerfile and the demogen sources) and builds it, so nothing but docker is needed on the
 # host. The final stage is the pinned Prometheus image, because the same image runs `promtool`
 # to turn the generated OpenMetrics file into TSDB blocks.
-FROM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS build
+FROM golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf AS build
 WORKDIR /src
 COPY go.mod ./
 COPY demogen ./hack/quickstart/demogen
