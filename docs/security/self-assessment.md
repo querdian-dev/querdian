@@ -196,6 +196,7 @@ quickstart (demo-only credentials), documentation tooling, Grafana panels.
   | `chart` | CRD sync check, `make chart-lint`, chart tests |
   | `e2e` | `make e2e`: the differential and equivalence suites |
   | `dco`, `codeql (go)`, Scorecard | sign-off, static analysis, OpenSSF Scorecard |
+  | `assign` | assigns each new pull request to a random person with the role maintain or admin, and requests a review from that person. It uses `pull_request_target` (a write token also for forks), but it does not check out or run code of the pull request. Permission: `pull-requests: write` only. |
 
   `chart` and `e2e` run on each pull request, but they are not required checks yet. Workflows run with
   minimal `permissions:`, and all actions are pinned by SHA.

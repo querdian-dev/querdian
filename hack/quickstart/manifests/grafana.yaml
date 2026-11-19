@@ -122,6 +122,14 @@ spec:
             - {name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET, value: grafana-demo-secret}
             - {name: GF_AUTH_GENERIC_OAUTH_SCOPES, value: "openid profile email"}
             - {name: GF_AUTH_GENERIC_OAUTH_USE_PKCE, value: "true"}
+            # Grafana forwards the access token of the user (oauthPassThru). The token lives 30 minutes
+            # (accessTokenLifespan in the realm). The Grafana session lives much longer. Without this
+            # setting (default false), Grafana does not check the expiry and forwards the expired token.
+            # Querdian then answers 401 (reason expired). With this setting, Grafana gets a new access
+            # token with the refresh token. When the Keycloak session ends (8 h), the refresh fails and
+            # Grafana logs the user out. Do not add the scope offline_access: an offline token is not
+            # bound to the Keycloak session, and it stays valid after a logout.
+            - {name: GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN, value: "true"}
             - {name: GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP, value: "true"}
             - {name: GF_AUTH_GENERIC_OAUTH_AUTH_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/auth"}
             - {name: GF_AUTH_GENERIC_OAUTH_TOKEN_URL, value: "http://keycloak.localtest.me:@@KEYCLOAK_PORT@@/realms/observability/protocol/openid-connect/token"}

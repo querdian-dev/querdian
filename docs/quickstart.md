@@ -117,6 +117,7 @@ It does not examine the policy dashboard, or how Grafana shows the results. See
 | `up.sh` does not continue after the image pulls | Run `down.sh`, then start again. |
 | The login fails with "invalid redirect", or the issuer does not match | Open `http://localhost:3000`, not `127.0.0.1`. Make sure that `keycloak.localtest.me` resolves (see [Hostnames](quickstart-details.md#hostnames)). |
 | Grafana shows `401` or "Authentication to data source failed" for the local admin | This is the intended result. Log in with Keycloak. |
-| The queries fail after 30 minutes | The tokens are valid for 30 minutes (realm setting). Log out, then log in again. |
+| Grafana logs you out after 8 hours | The Keycloak session ends after 8 hours (realm setting). Log in again. Grafana gets a new access token each 30 minutes with the refresh token. |
+| Grafana stays logged in, but the queries get `401` | See [troubleshooting](troubleshooting.md#authentication-failure-reasons) (reason `expired`). |
 
 For the decision reasons of Querdian, see [troubleshooting](troubleshooting.md).
