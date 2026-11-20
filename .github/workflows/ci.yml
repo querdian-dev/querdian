@@ -31,7 +31,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.site != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.site != 'false'
@@ -50,7 +50,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.site != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.site != 'false'
@@ -69,7 +69,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.go != 'false'
@@ -88,7 +88,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       # 30s per Fuzz* target.
@@ -108,7 +108,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       # Pinned and run from the module proxy so it stays out of go.mod;
@@ -129,7 +129,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.go != 'false'
@@ -148,7 +148,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.go != 'false'
@@ -176,7 +176,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       # helm is preinstalled on GitHub-hosted Ubuntu runners.
@@ -201,7 +201,7 @@ jobs:
       - id: changes
         uses: ./.github/actions/changes
       - if: steps.changes.outputs.go != 'false'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - if: steps.changes.outputs.go != 'false'
